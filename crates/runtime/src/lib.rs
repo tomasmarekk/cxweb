@@ -7,6 +7,8 @@ pub mod control;
 #[cfg(windows)]
 pub mod control_protocol;
 pub mod gateway;
+#[cfg(windows)]
+pub mod host;
 pub mod ledger;
 #[cfg(windows)]
 pub mod lifecycle;

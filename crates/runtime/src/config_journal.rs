@@ -199,6 +199,10 @@ impl ConfigJournal {
         self.record.phase
     }
 
+    pub(crate) fn runtime_route(&self) -> (u16, &str, &str) {
+        (self.record.port, &self.record.capability, &self.record.id)
+    }
+
     /// Match the exact live listener, including its private capability, without
     /// exporting that capability through lifecycle status or diagnostics.
     pub fn routes_to(&self, base_url: &str) -> bool {

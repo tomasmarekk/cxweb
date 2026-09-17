@@ -488,3 +488,28 @@ model discovery, native WebSocket preservation and actual pickers are proven.
   with warnings denied, formatting and diff checks. Production daemon startup,
   desktop command wiring, connect/relogin commands and live App/CLI qualification
   remain incomplete. No real account or Codex configuration was changed.
+
+## Runtime host recovery and exclusive listener
+
+- Added a runtime host that reopens a validated private journal, binds its exact
+  prior port/capability and owns both the native gateway and private control
+  service. Recovery never reapplies configuration or enables web model execution.
+  A private-control failure is retried without dropping native compatibility.
+- Added Windows SO_EXCLUSIVEADDRUSE before loopback bind. An occupied address
+  fails closed without selecting a new port or changing the selected config.
+  This protects an existing listener; it does not remove the documented risk of
+  another process occupying a stale route while the runtime is absent.
+- Restored journals can retain their original compatibility listener and report
+  pending restart. A subsequently changed configuration reports restore failure
+  instead of claiming that the recorded restored state is still current.
+- The new host test reopens a persisted journal, proves occupied-port failure
+  preserves config, performs private-IPC disconnect, restarts after restoration,
+  and preserves later user edits. Native HTTP uses fresh connections against the
+  same route; owned web requests are rejected. A separate actual Windows socket
+  test rejects a competing bind even when that socket enables address reuse.
+- All 83 workspace tests passed, with one opt-in Chrome test skipped. The expanded
+  host test passed again after adding the user-edit case; Clippy, formatting and
+  diff checks passed. These are local fixture tests, not real client qualification.
+- This host is not yet the desktop's process entry point. Executable supervision,
+  qualified installation/activation, browser ownership transfer, desktop wiring
+  and proof of client exit before final listener cleanup are still outstanding.

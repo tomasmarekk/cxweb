@@ -6,4 +6,6 @@ pub mod browser_process;
 #[cfg(windows)]
 pub mod control_pipe;
 #[cfg(windows)]
+pub mod loopback;
+#[cfg(windows)]
 pub mod state;

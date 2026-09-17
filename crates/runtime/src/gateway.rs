@@ -131,6 +131,20 @@ impl Gateway {
     pub fn base_url(&self) -> String {
         format!("http://{}/wb/{}/v1", self.authority, self.capability)
     }
+    /// Only a validated private journal may restore an existing capability.
+    #[cfg(windows)]
+    pub(crate) fn recover_native(port: u16, capability: &str, native: NativeTransport) -> Self {
+        let mut gateway = Self::new(port, native, Arc::new(UnqualifiedProvider));
+        gateway.capability = capability.to_owned();
+        gateway
+            .admission
+            .state
+            .lock()
+            .expect("new admission lock")
+            .accepting = false;
+        gateway.admission.cancel.cancel();
+        gateway
+    }
     /// Irreversibly reject new web work on this listener, request cancellation,
     /// and wait for admitted providers to finish cleanup. Timeout is not a drain
     /// success: keep the listener and do not remove configuration on that result.

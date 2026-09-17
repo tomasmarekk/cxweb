@@ -2,7 +2,7 @@
 //! The daemon must retain the listener until client restart is independently
 //! established. UI lifetime and operation lifetime are deliberately separate.
 use crate::{
-    config_journal::{ConfigJournal, Phase},
+    config_journal::{ConfigJournal, Phase, Recovery},
     gateway::Gateway,
 };
 use serde::{Deserialize, Serialize};
@@ -45,10 +45,16 @@ impl DisconnectController {
         if !journal.routes_to(&gateway.base_url()) {
             return Err("E_INTEGRATION_ROUTE_MISMATCH");
         }
-        if journal.phase() == Phase::ConfigRestored {
-            return Err("E_INTEGRATION_ALREADY_RESTORED");
-        }
-        let (state, _) = watch::channel(DisconnectState::Idle);
+        let initial = if journal.phase() == Phase::ConfigRestored {
+            if journal.recovery().map_err(|_| "E_INTEGRATION_STATE")? == Recovery::Restored {
+                DisconnectState::PendingRestart
+            } else {
+                DisconnectState::RestoreFailed
+            }
+        } else {
+            DisconnectState::Idle
+        };
+        let (state, _) = watch::channel(initial);
         Ok(Self {
             gateway,
             journal: Arc::new(Mutex::new(journal)),
