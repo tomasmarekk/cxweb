@@ -274,3 +274,23 @@ model discovery, native WebSocket preservation and actual pickers are proven.
   passed 51 cases, and Clippy passed with warnings denied. Authenticated native
   WebSocket behavior, auxiliary endpoints and full client qualification remain
   outstanding; no claim of G0/G4 completion follows from local socket tests.
+
+## Windows configuration replacement primitive
+
+- Added a bounded snapshot/stage/commit primitive. Snapshots record original bytes
+  and Windows volume/file identity. Hard-linked and reparse-point target files
+  are refused. The caller must still qualify canonical parent/home ownership.
+- Staging files are created with the private owner/SYSTEM descriptor from the
+  first CreateFile call, written and flushed. Existing files use ReplaceFileW
+  without ignore-ACL flags; absent files use a move without overwrite permission.
+  Destination bytes and identity are rechecked immediately before replacement,
+  and candidate bytes are checked afterward. Failed staging remains for recovery.
+- Existing-file sharing denies in-place writers during check/replacement, but
+  rename races are not mathematically eliminated. This is explicitly not a
+  general cross-process compare-and-swap operation. Durable journaling and real
+  editor/active-Codex qualification remain prerequisites for enabling real writes.
+- Four new Windows filesystem tests cover existing/absent writes, user edits,
+  same-content file substitution, concurrent creation, modified staging,
+  traversal rejection, hard links and active writers. All 55 workspace Rust
+  tests and Clippy with warnings denied passed. Only temporary synthetic files
+  were changed; the user's actual Codex configuration remains untouched.

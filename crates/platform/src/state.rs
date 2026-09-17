@@ -116,6 +116,38 @@ fn descriptor() -> io::Result<LocalAllocation> {
     Ok(LocalAllocation(descriptor))
 }
 
+/// Creates a new private staging file without an initially permissive ACL.
+pub(crate) fn create_private_file(path: &Path) -> io::Result<File> {
+    use windows_sys::Win32::{
+        Foundation::{GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE},
+        Storage::FileSystem::{CREATE_NEW, CreateFileW, FILE_ATTRIBUTE_NORMAL},
+    };
+    let descriptor = descriptor()?;
+    let path = wide(path.as_os_str())?;
+    let attributes = SECURITY_ATTRIBUTES {
+        nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: descriptor.0,
+        bInheritHandle: 0,
+    };
+    // SAFETY: terminated path and live descriptor; successful handle is uniquely
+    // transferred to File, failure never constructs an owner for an invalid handle.
+    unsafe {
+        let handle = CreateFileW(
+            path.as_ptr(),
+            GENERIC_READ | GENERIC_WRITE,
+            0,
+            &attributes,
+            CREATE_NEW,
+            FILE_ATTRIBUTE_NORMAL,
+            null_mut(),
+        );
+        if handle == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(File::from(OwnedHandle::from_raw_handle(handle)))
+    }
+}
+
 fn descriptor_text(descriptor: PSECURITY_DESCRIPTOR) -> io::Result<String> {
     let mut output = null_mut();
     // SAFETY: descriptor originates from successful Windows security API calls.
