@@ -108,6 +108,9 @@ impl RemoteControl {
     pub async fn connect(&self) -> Result<ControlStatus, &'static str> {
         self.perform(LoginAction::Connect).await
     }
+    pub async fn qualify(&self) -> Result<ControlStatus, &'static str> {
+        self.perform(LoginAction::Qualify).await
+    }
     pub async fn status(&self, refresh: bool) -> Result<ControlStatus, &'static str> {
         if refresh {
             return self.perform(LoginAction::Refresh).await;
@@ -200,6 +203,9 @@ mod tests {
                 LoginAction::Refresh => {
                     self.refreshes.fetch_add(1, Ordering::SeqCst);
                 }
+                LoginAction::Qualify => {
+                    self.refreshes.fetch_add(1, Ordering::SeqCst);
+                }
             }
             self.started.notify_one();
             let finish = self.finish.clone();
@@ -209,6 +215,7 @@ mod tests {
                     phase: match action {
                         LoginAction::Connect => "authenticating",
                         LoginAction::Refresh => "awaiting_qualification",
+                        LoginAction::Qualify => "candidates_observed",
                     }
                     .into(),
                     ..ControlStatus::default()

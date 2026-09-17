@@ -8,6 +8,15 @@ Manual login and managed reuse of the saved session are user-confirmed. Account/
 model qualification and actual App/CLI picker checks remain incomplete. Production
 integration must remain disabled until the relevant evidence exists.
 
+Latest manual check: the user reports `ChatGPT: Session detected` and
+`Codex connection: Awaiting verification` after checking the desktop status.
+This confirms the login controller recognized the saved session in this run;
+it does not establish the selected account/workspace, model inventory, Temporary
+Chat behavior or a successful generation. After restarting Codex App, its real
+picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
+GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
+entry was visible, which is the expected evidence while activation remains absent.
+
 ## Observed environment (2026-09-17)
 
 - Windows x64; Rust/Cargo 1.97.0.
@@ -63,11 +72,38 @@ ignored local research; no native authentication was accessed.
 
 ## Next
 
-Build and run the isolated client harness against both backend binaries. Record
-model/list and provider request evidence separately from actual renderer/picker
-evidence. Inspect desktop backend exact source/schema, then implement the native
-mock upstream and private browser transport. Do not report G0 complete from an
-app-server listing alone.
+The isolated client harness, native mock upstream and private browser transport
+now exist; their results are recorded below. The next integration step is to
+qualify the authenticated account/workspace, selectable models and Temporary Chat
+behavior, then connect a real browser driver to the coordinator and activation
+owner. The desktop now includes an explicit non-generative model-discovery action;
+its results remain candidate-only and cannot activate routing.
+
+Windows Computer Use could not establish the current browser URL and explicitly
+stopped external UI inspection. The product's own reviewed browser adapter now
+opens the ordinary model menu only after an explicit `Verify available models`
+action, reads the bounded structural effort surface, then closes the menu. It does
+not read auth data or submit a prompt. The synthetic Chrome pipe fixture passed
+this operation on Chrome 152. Do not report G0 complete from an app-server listing,
+candidate discovery or a visible login alone.
+
+Authenticated model discovery subsequently passed on the user's cxweb profile.
+The current ChatGPT composer exposes a structural reasoning-effort slider rather
+than a conventional model list: five positions were observed, with position four
+selected and the visible localized label `Intenzita přemýšlení`. The adapter maps
+these positions to opaque `webbridge/` candidate IDs; it does not infer a hidden
+server model name. A separate owned tab at
+`https://chatgpt.com/?temporary-chat=true` passed exact URL, single visible composer
+and signed-in/no-login-control checks, then was closed without submitting a prompt.
+
+The supplied competitor implementation was inspected only after the user asked
+for it as a behavioral hint. It showed that the current picker is scoped to the
+composer form and can expose `composer-intelligence-picker-content`, a `role=group`
+surface and an ARIA reasoning slider; it also validates Temporary Chat by exact
+URL rather than by assuming a button exists. No source or fixed model/limit values
+were copied. cxweb implements these observations independently in its Rust-owned,
+fixed-operation adapter. Real Codex App and CLI picker qualification and all live
+generation/tool evidence remain pending.
 
 ## Additional implementation and evidence
 

@@ -1,7 +1,10 @@
 //! Non-generative login worker. All browser IPC runs off the UI/async reactor.
-use cxweb_browser_adapter::{LoginObservation, ManagedBrowser, ManagedPage};
+use cxweb_browser_adapter::{
+    LoginObservation, ManagedBrowser, ManagedPage, ModelSurfaceDiagnostic,
+};
 use cxweb_platform::state::{StatePaths, installed_browser};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 
@@ -13,6 +16,20 @@ pub struct ControlStatus {
     pub observation: Option<LoginObservation>,
     pub routing_installed: bool,
     pub live_qualified: bool,
+    #[serde(default)]
+    pub candidate_models: Vec<QualifiedModel>,
+    #[serde(default)]
+    pub temporary_chat_available: Option<bool>,
+    #[serde(default)]
+    pub model_discovery_diagnostic: Option<ModelSurfaceDiagnostic>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QualifiedModel {
+    pub id: String,
+    pub label: String,
+    pub selected: bool,
 }
 impl Default for ControlStatus {
     fn default() -> Self {
@@ -22,17 +39,21 @@ impl Default for ControlStatus {
             observation: None,
             routing_installed: false,
             live_qualified: false,
+            candidate_models: Vec::new(),
+            temporary_chat_available: None,
+            model_discovery_diagnostic: None,
         }
     }
 }
 type Reply = oneshot::Sender<Result<ControlStatus, &'static str>>;
-enum Command {
+enum WorkerCommand {
     Connect(Reply),
     Status(Reply),
+    Qualify(Reply),
 }
 #[derive(Clone)]
 pub struct Control {
-    commands: mpsc::Sender<Command>,
+    commands: mpsc::Sender<WorkerCommand>,
 }
 
 impl Control {
@@ -49,9 +70,10 @@ impl Control {
                 let mut page: Option<ManagedPage> = None;
                 let mut status = ControlStatus::default();
                 while let Some(command) = incoming.blocking_recv() {
-                    let (connect, reply) = match command {
-                        Command::Connect(reply) => (true, reply),
-                        Command::Status(reply) => (false, reply),
+                    let (connect, qualify, reply) = match command {
+                        WorkerCommand::Connect(reply) => (true, false, reply),
+                        WorkerCommand::Status(reply) => (false, false, reply),
+                        WorkerCommand::Qualify(reply) => (false, true, reply),
                     };
                     if reply.is_closed() {
                         continue;
@@ -105,6 +127,63 @@ impl Control {
                                     "authenticating".into()
                                 };
                                 status.observation = Some(observation);
+                                if qualify && status.phase == "awaiting_qualification" {
+                                    match browser.discover_models(page) {
+                                        Ok(surface) => {
+                                            let temporary_chat =
+                                                browser.verify_temporary_chat().unwrap_or(false);
+                                            status.candidate_models = surface
+                                                .candidates
+                                                .into_iter()
+                                                .map(|candidate| {
+                                                    let mut hash = Sha256::new();
+                                                    for value in
+                                                        [&candidate.identity, &candidate.label]
+                                                    {
+                                                        hash.update(
+                                                            (value.len() as u64).to_le_bytes(),
+                                                        );
+                                                        hash.update(value.as_bytes());
+                                                    }
+                                                    QualifiedModel {
+                                                        id: format!(
+                                                            "webbridge/{:x}",
+                                                            hash.finalize()
+                                                        )[..34]
+                                                            .to_owned(),
+                                                        label: candidate.label,
+                                                        selected: candidate.selected,
+                                                    }
+                                                })
+                                                .collect();
+                                            status.temporary_chat_available = Some(temporary_chat);
+                                            status.model_discovery_diagnostic =
+                                                Some(surface.diagnostic);
+                                            status.phase = if status.candidate_models.is_empty() {
+                                                "discovery_failed"
+                                            } else {
+                                                "candidates_observed"
+                                            }
+                                            .into();
+                                        }
+                                        Err(error) => {
+                                            status.candidate_models.clear();
+                                            status.temporary_chat_available = None;
+                                            status.model_discovery_diagnostic = None;
+                                            let code = match error.to_string().as_str() {
+                                                "E_LOGIN_REQUIRED" => "E_LOGIN_REQUIRED",
+                                                "E_MODEL_OPEN" => "E_MODEL_OPEN",
+                                                "E_MODEL_READ" => "E_MODEL_READ",
+                                                "E_MODEL_CLOSE" => "E_MODEL_CLOSE",
+                                                "E_MODEL_PARSE" => "E_MODEL_PARSE",
+                                                "E_MODEL_RESULT" => "E_MODEL_RESULT",
+                                                _ => "E_MODEL_DISCOVERY",
+                                            };
+                                            let _ = reply.send(Err(code));
+                                            continue;
+                                        }
+                                    }
+                                }
                             }
                             Err(_) => {
                                 status.phase = "browser_unavailable".into();
@@ -129,13 +208,23 @@ impl Control {
     pub async fn status(&self) -> Result<ControlStatus, &'static str> {
         self.request(false).await
     }
+    pub async fn qualify(&self) -> Result<ControlStatus, &'static str> {
+        let (reply, receive) = oneshot::channel();
+        self.commands
+            .try_send(WorkerCommand::Qualify(reply))
+            .map_err(|_| "E_CONTROL_BUSY")?;
+        tokio::time::timeout(Duration::from_secs(30), receive)
+            .await
+            .map_err(|_| "E_CONTROL_TIMEOUT")?
+            .map_err(|_| "E_CONTROL_CLOSED")?
+    }
     async fn request(&self, connect: bool) -> Result<ControlStatus, &'static str> {
         let (reply, receive) = oneshot::channel();
         self.commands
             .try_send(if connect {
-                Command::Connect(reply)
+                WorkerCommand::Connect(reply)
             } else {
-                Command::Status(reply)
+                WorkerCommand::Status(reply)
             })
             .map_err(|_| "E_CONTROL_BUSY")?;
         tokio::time::timeout(Duration::from_secs(30), receive)

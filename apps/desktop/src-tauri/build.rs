@@ -1,7 +1,8 @@
 fn main() {
     tauri_build::try_build(
-        tauri_build::Attributes::new()
-            .app_manifest(tauri_build::AppManifest::new().commands(&["connect", "status"])),
+        tauri_build::Attributes::new().app_manifest(
+            tauri_build::AppManifest::new().commands(&["connect", "status", "qualify"]),
+        ),
     )
     .expect("Tauri build configuration");
 }

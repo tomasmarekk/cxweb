@@ -32,6 +32,16 @@ mod desktop {
             .await
             .map_err(str::to_owned)
     }
+    #[tauri::command]
+    async fn qualify(state: tauri::State<'_, AppState>) -> Result<ControlStatus, String> {
+        state
+            .control
+            .as_ref()
+            .map_err(|e| e.to_string())?
+            .qualify()
+            .await
+            .map_err(str::to_owned)
+    }
 
     pub fn run() {
         tauri::Builder::default()
@@ -54,7 +64,7 @@ mod desktop {
                 .build()?;
                 Ok(())
             })
-            .invoke_handler(tauri::generate_handler![connect, status])
+            .invoke_handler(tauri::generate_handler![connect, status, qualify])
             .run(tauri::generate_context!())
             .expect("cxweb desktop runtime");
     }

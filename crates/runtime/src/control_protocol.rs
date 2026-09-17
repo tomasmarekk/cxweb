@@ -30,6 +30,7 @@ pub trait Lifecycle: Send + Sync + 'static {
 pub enum LoginAction {
     Connect,
     Refresh,
+    Qualify,
 }
 pub type LoginWork = Pin<Box<dyn Future<Output = Result<ControlStatus, &'static str>> + Send>>;
 pub trait LoginBackend: Send + Sync + 'static {
@@ -42,6 +43,7 @@ impl LoginBackend for Control {
             match action {
                 LoginAction::Connect => control.connect().await,
                 LoginAction::Refresh => control.status().await,
+                LoginAction::Qualify => control.qualify().await,
             }
         })
     }

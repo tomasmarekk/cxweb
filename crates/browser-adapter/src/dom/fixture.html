@@ -1,8 +1,21 @@
 <!doctype html><html><head><meta charset="utf-8"><title>cxweb synthetic fixture</title></head><body>
-<button data-testid="model-switcher-dropdown-button">Fixture text mode</button>
+<form><button type="button" data-testid="model-switcher-dropdown-button" aria-haspopup="menu">Fixture text mode</button>
+<button data-testid="accounts-profile-button">Fixture account</button>
+<button data-testid="temporary-chat-button">Temporary chat</button>
+<div id="model-menu" role="group" data-testid="composer-intelligence-picker-content" hidden>
+  <button role="menuitemradio" data-testid="model-fixture-text" aria-checked="true">Fixture text mode</button>
+  <button role="menuitemradio" data-testid="model-fixture-reasoning" aria-checked="false">Fixture reasoning mode</button>
+  <div data-model-reasoning-effort-slider><input role="slider" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0"></div>
+</div>
 <section data-testid="conversation-turn-old"><div data-message-id="old-assistant" data-message-author-role="assistant"><div class="markdown">historical message must not be returned</div></div><button data-testid="copy-turn-action-button">Copy</button></section>
-<div id="prompt-textarea" contenteditable="true"></div><button data-testid="send-button">Send</button>
+<div id="prompt-textarea" contenteditable="true"></div><button data-testid="send-button">Send</button></form>
 <script>
+document.querySelector('[data-testid="model-switcher-dropdown-button"]').onclick = () => {
+  const menu = document.querySelector('#model-menu'); menu.hidden = !menu.hidden;
+};
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') document.querySelector('#model-menu').hidden = true;
+});
 document.querySelector('[data-testid="send-button"]').onclick = () => {
   const composer = document.querySelector('#prompt-textarea');
   const user = document.createElement('div');

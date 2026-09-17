@@ -26,6 +26,32 @@ pub struct LoginObservation {
     pub selected_label: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelCandidate {
+    pub label: String,
+    pub identity: String,
+    pub selected: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelSurface {
+    pub candidates: Vec<ModelCandidate>,
+    pub temporary_chat: bool,
+    pub diagnostic: ModelSurfaceDiagnostic,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelSurfaceDiagnostic {
+    pub switcher_expanded: Option<bool>,
+    pub visible_roots: usize,
+    pub candidate_nodes: usize,
+    pub model_testids: Vec<String>,
+    pub visible_roles: Vec<String>,
+}
+
 pub struct ManagedBrowser {
     process: BrowserProcess,
     replies: Receiver<io::Result<Value>>,
@@ -180,6 +206,149 @@ impl ManagedBrowser {
             .map_err(|_| io::Error::other("E_BROWSER_ADAPTER"))
     }
 
+    /// Opens the ordinary model menu, observes its currently rendered choices,
+    /// then closes it. This is non-generative and never reads cookies or auth data.
+    pub fn discover_models(&mut self, page: &ManagedPage) -> io::Result<ModelSurface> {
+        if !page.fixture {
+            let login = self.login_observation(page)?;
+            if !login.official_page
+                || !login.composer
+                || !login.account_surface
+                || login.login_action
+            {
+                return Err(io::Error::other("E_LOGIN_REQUIRED"));
+            }
+        }
+        self.click_model_switcher(page)
+            .map_err(|_| io::Error::other("E_MODEL_OPEN"))?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let observed = loop {
+            let observed = self
+                .dom(page, include_str!("dom/model_surface.js"), vec![])
+                .map_err(|_| io::Error::other("E_MODEL_READ"));
+            match &observed {
+                Ok(value)
+                    if value["candidates"]
+                        .as_array()
+                        .is_some_and(|items| !items.is_empty()) =>
+                {
+                    break observed;
+                }
+                Err(_) => break observed,
+                _ if Instant::now() >= deadline => break observed,
+                _ => std::thread::sleep(Duration::from_millis(200)),
+            }
+        };
+        let closed = self
+            .close_model_menu(page)
+            .map_err(|_| io::Error::other("E_MODEL_CLOSE"));
+        let value = observed?;
+        closed?;
+        let surface: ModelSurface =
+            serde_json::from_value(value).map_err(|_| io::Error::other("E_MODEL_PARSE"))?;
+        if surface.candidates.len() > 64
+            || surface.candidates.iter().any(|candidate| {
+                candidate.label.is_empty()
+                    || candidate.label.len() > 120
+                    || candidate.identity.is_empty()
+                    || candidate.identity.len() > 240
+                    || candidate.label.chars().any(char::is_control)
+                    || candidate.identity.chars().any(char::is_control)
+            })
+            || surface.diagnostic.model_testids.len() > 32
+            || surface.diagnostic.visible_roles.len() > 32
+            || surface
+                .diagnostic
+                .model_testids
+                .iter()
+                .chain(&surface.diagnostic.visible_roles)
+                .any(|value| {
+                    value.is_empty() || value.len() > 120 || value.chars().any(char::is_control)
+                })
+        {
+            return Err(io::Error::other("E_MODEL_RESULT"));
+        }
+        Ok(surface)
+    }
+
+    /// Opens an owned, isolated tab at ChatGPT's explicit Temporary Chat URL,
+    /// verifies its URL and authenticated composer, then closes only that tab.
+    pub fn verify_temporary_chat(&mut self) -> io::Result<bool> {
+        let value = self.call(
+            "Target.createTarget",
+            json!({"url":"https://chatgpt.com/?temporary-chat=true","newWindow":false}),
+            None,
+        )?;
+        let target = value["targetId"]
+            .as_str()
+            .ok_or_else(|| io::Error::other("missing target identity"))?
+            .to_owned();
+        let page = match self.attach(target.clone(), false) {
+            Ok(page) => page,
+            Err(error) => {
+                let _ = self.call("Target.closeTarget", json!({"targetId":target}), None);
+                return Err(error);
+            }
+        };
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let verified = loop {
+            if self
+                .dom(&page, include_str!("dom/temporary_chat.js"), vec![])
+                .is_ok_and(|value| value == true)
+            {
+                break true;
+            }
+            if Instant::now() >= deadline {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        };
+        self.close_page(page)?;
+        Ok(verified)
+    }
+
+    fn click_model_switcher(&mut self, page: &ManagedPage) -> io::Result<()> {
+        let point = self.dom(page, include_str!("dom/open_models.js"), vec![])?;
+        let (Some(x), Some(y)) = (point["x"].as_f64(), point["y"].as_f64()) else {
+            return Err(io::Error::other("E_MODEL_MENU"));
+        };
+        if !x.is_finite()
+            || !y.is_finite()
+            || !(0.0..=10_000.0).contains(&x)
+            || !(0.0..=10_000.0).contains(&y)
+        {
+            return Err(io::Error::other("E_MODEL_MENU"));
+        }
+        self.call(
+            "Input.dispatchMouseEvent",
+            json!({"type":"mousePressed","x":x,"y":y,"button":"left","clickCount":1}),
+            Some(&page.session),
+        )?;
+        self.call(
+            "Input.dispatchMouseEvent",
+            json!({"type":"mouseReleased","x":x,"y":y,"button":"left","clickCount":1}),
+            Some(&page.session),
+        )?;
+        Ok(())
+    }
+
+    fn close_model_menu(&mut self, page: &ManagedPage) -> io::Result<()> {
+        for event_type in ["keyDown", "keyUp"] {
+            self.call(
+                "Input.dispatchKeyEvent",
+                json!({
+                    "type":event_type,
+                    "key":"Escape",
+                    "code":"Escape",
+                    "windowsVirtualKeyCode":27,
+                    "nativeVirtualKeyCode":27
+                }),
+                Some(&page.session),
+            )?;
+        }
+        Ok(())
+    }
+
     pub fn insert_prompt(&mut self, page: &ManagedPage, prompt: &str) -> io::Result<()> {
         if prompt.len() > 512 * 1024 {
             return Err(io::Error::other("E_CONTEXT_BUDGET"));
@@ -255,6 +424,18 @@ impl ManagedBrowser {
         let frame = self.call("Page.getFrameTree", json!({}), Some(&page.session))?;
         self.call("Page.setDocumentContent", json!({"frameId":frame["frameTree"]["frame"]["id"],"html":include_str!("dom/fixture.html")}), Some(&page.session))?;
         let baseline = self.baseline(page)?;
+        let surface = self.discover_models(page)?;
+        if surface.candidates.len() != 2
+            || !surface.temporary_chat
+            || surface
+                .candidates
+                .iter()
+                .filter(|route| route.selected)
+                .count()
+                != 1
+        {
+            return Err(io::Error::other("E_MODEL_FIXTURE"));
+        }
         let mut tracker =
             TurnTracker::new(baseline.clone(), "Fixture text mode").map_err(io::Error::other)?;
         let prompt = "Literal input: quotes \" ' ` ${never_execute()} <script>throw 1</script>\nUnicode: 🦀 🦀";
