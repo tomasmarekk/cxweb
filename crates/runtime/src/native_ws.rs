@@ -179,6 +179,7 @@ mod tests {
         );
         let url = format!("{}/responses?client_version=test", gateway.base_url())
             .replacen("http:", "ws:", 1);
+        let control = gateway.clone();
         let task = tokio::spawn(async move {
             axum::serve(listener, gateway.router()).await.unwrap();
         });
@@ -202,6 +203,12 @@ mod tests {
                 .unwrap()
                 .unwrap();
             assert_eq!(echoed.into_text().unwrap(), text);
+            // The same established native socket remains usable after web
+            // admission is closed, including reuse of previous_response_id.
+            control
+                .disconnect_web(Duration::from_secs(1))
+                .await
+                .unwrap();
         }
         socket
             .send(Message::Text(

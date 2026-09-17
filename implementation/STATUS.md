@@ -402,3 +402,27 @@ model discovery, native WebSocket preservation and actual pickers are proven.
 - Desktop wiring, live editor qualification, staging cleanup, activation and
   daemon/client restart coordination are still outstanding. No real Codex
   configuration or authenticated browser session was changed in this work.
+
+## Gateway disconnect admission and native compatibility
+
+- The shared gateway now closes web admission irreversibly, propagates per-request
+  cancellation and waits for admitted providers to finish their cleanup. Dropping
+  an HTTP request cancels its work without dropping the provider cleanup future
+  or prematurely reporting a successful drain. Providers must return buffered
+  delivery after cleanup, consistent with the current turn coordinator.
+- Owned HTTP responses/compaction receive E_WEB_DISCONNECTED after closure and
+  later model-list requests use the native catalog. Native forwarding retains
+  the original listener, URL/capability and transport behavior. Unqualified owned
+  WebSocket messages retain their existing explicit rejection; they never escape
+  to native generation.
+- Timeout does not reopen admission or certify cleanup. Worker panic closes web
+  admission and reports E_WEB_CLEANUP_UNCONFIRMED, so lifecycle integration must
+  not proceed as if browser work had safely finished.
+- Added mock-integration tests for native HTTP after disconnect, owned request
+  rejection, provider cleanup after cancellation/client drop, timeout and panic.
+  Extended catalog checks and the real local WebSocket relay test to verify an
+  established native socket remains usable across web disconnect. All 70 Rust
+  workspace tests, Clippy with warnings denied, formatting and diff checks passed.
+- Production daemon ownership and orchestration with the configuration journal
+  still need wiring. No real account generation or native config mutation was
+  performed; actual App/CLI qualification remains outstanding.
