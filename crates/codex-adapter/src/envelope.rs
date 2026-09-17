@@ -32,6 +32,7 @@ pub struct Tool {
     pub kind: ToolKind,
     schema: Option<jsonschema::Validator>,
     definition: Value,
+    patch_grammar: bool,
 }
 
 pub struct Registry {
@@ -79,6 +80,13 @@ impl Registry {
             .as_str()
             .filter(|s| !s.is_empty() && !s.contains('\0'))
             .ok_or(ProtocolError::UnsupportedTool)?;
+        let patch_grammar = definition["type"] == "custom"
+            && name == "apply_patch"
+            && definition["format"]["type"] == "grammar"
+            && definition["format"]["syntax"] == "lark"
+            && definition["format"]["definition"]
+                .as_str()
+                .is_some_and(crate::patch_grammar::recognizes);
         let (kind, schema) = match definition["type"].as_str() {
             Some("function") => {
                 let schema = definition
@@ -91,7 +99,10 @@ impl Registry {
                     .map_err(|_| ProtocolError::UnsupportedTool)?;
                 (ToolKind::Function, Some(validator))
             }
-            Some("custom") if definition.get("format").is_none_or(|f| f["type"] == "text") => {
+            Some("custom")
+                if patch_grammar
+                    || definition.get("format").is_none_or(|f| f["type"] == "text") =>
+            {
                 (ToolKind::Custom, None)
             }
             // A grammar is not just a string type. Unqualified grammars fail before submission.
@@ -104,6 +115,7 @@ impl Registry {
             kind,
             schema,
             definition: definition.clone(),
+            patch_grammar,
         });
         Ok(())
     }
@@ -113,6 +125,13 @@ impl Registry {
             .iter()
             .map(|t| json!({"tool_key":t.key,"definition":t.definition,"namespace":t.namespace}))
             .collect()
+    }
+
+    pub fn key_for(&self, name: &str, namespace: Option<&str>) -> Option<&str> {
+        self.tools
+            .iter()
+            .find(|t| t.name == name && t.namespace.as_deref() == namespace)
+            .map(|t| t.key.as_str())
     }
 }
 
@@ -266,6 +285,11 @@ pub fn validate(bytes: &[u8], context: &Context<'_>) -> Result<ValidatedOutput, 
                         return Err(ProtocolError::InvalidInput);
                     }
                     _ => {}
+                }
+                if tool.patch_grammar
+                    && !call.input.as_str().is_some_and(crate::patch_grammar::valid)
+                {
+                    return Err(ProtocolError::InvalidInput);
                 }
                 validated.push(ValidatedCall {
                     native_name: tool.name.clone(),

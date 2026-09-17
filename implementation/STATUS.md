@@ -105,3 +105,31 @@ or real configuration mutation is enabled yet.
 Next independent work: canonical request/response wire mapping, native transport
 completion, browser DOM fixture adapter and protected state/config lifecycle.
 User login is not yet requested: the runnable app flow is still being assembled.
+
+## Canonical protocol increment
+
+- Added complete-history canonical decoding, role/tool-result preservation,
+  nonportable reasoning/compaction rejection, explicit image/output-format errors,
+  byte-budget refusal without truncation, and observed model/effort fidelity checks.
+- Added complete buffered Responses/SSE encoding for text, native functions and
+  custom calls, stable caller-owned IDs and ordered terminal events. Browser
+  token counts are unavailable and are not fabricated.
+- Added an original syntax-only recognizer for the exact native apply_patch Lark
+  contract with SHA-256 `d6367f4826ed608c424b0a308f3d6163527df63c22513d089b91863552f8bfeb`.
+  Unknown/custom grammar definitions still fail closed. This code never applies
+  patches. The grammar source was inspected from the official pinned Codex release;
+  no competitor source was used or copied.
+- Extended the opt-in synthetic backend probe to capture ONLY tool definitions
+  into ignored `.local`, never headers, prompts or conversation history. The
+  desktop backend probe still passes. Its default synthetic model request includes
+  `request_user_input`, `view_image`, `multi_agent_v1` namespace and server-side
+  `web_search`. The canonical adapter currently rejects server-side built-ins;
+  this integration gap must be resolved explicitly, not silently dropped.
+- `cargo clippy --locked --workspace --all-targets -- -D warnings` and
+  `cargo test --locked --workspace` pass, now 31 tests. `cargo fmt --all` and
+  `git diff --check` pass. No actual web model/tool loop is claimed yet.
+
+Next: connect these modules into a browser/session provider with deterministic
+DOM fixtures, qualify native WebSocket/catalog behavior, protect persistent
+state and implement the login/control surface. Real App/CLI picker tests and
+account login remain NOT RUN; user action is not requested prematurely.

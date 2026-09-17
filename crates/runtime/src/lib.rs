@@ -21,6 +21,7 @@ pub struct ProbeState {
     capability: String,
     authority: String,
     pub observations: Arc<Mutex<Vec<&'static str>>>,
+    registry_capture: Option<std::path::PathBuf>,
 }
 
 impl ProbeState {
@@ -29,10 +30,18 @@ impl ProbeState {
             capability: URL_SAFE_NO_PAD.encode(rand::random::<[u8; 32]>()),
             authority: format!("127.0.0.1:{port}"),
             observations: Arc::default(),
+            registry_capture: None,
         }
     }
     pub fn base_url(&self) -> String {
         format!("http://{}/wb/{}/v1", self.authority, self.capability)
+    }
+
+    /// Synthetic development harness only. Captures tool definitions, never
+    /// request history, headers, account state or authentication.
+    pub fn with_registry_capture(mut self, path: std::path::PathBuf) -> Self {
+        self.registry_capture = Some(path);
+        self
     }
 }
 
@@ -90,6 +99,15 @@ async fn probe(
                 Some("webbridge/diagnostic") => {
                     // Native authorization deliberately never enters the response adapter.
                     record(&state, "owned_response");
+                    if let Some(path) = &state.registry_capture
+                        && let Ok(mut file) = std::fs::OpenOptions::new()
+                            .write(true)
+                            .create_new(true)
+                            .open(path)
+                    {
+                        use std::io::Write;
+                        let _ = file.write_all(request["tools"].to_string().as_bytes());
+                    }
                     let events = diagnostic_events();
                     let wire: String = events
                         .iter()

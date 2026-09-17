@@ -16,7 +16,7 @@ const cwd = join(work, 'workspace');
 await mkdir(home); await mkdir(cwd);
 const bridge = resolve('target/debug/cxweb.exe');
 const descriptor = join(work, 'probe.json');
-const server = spawn(bridge, ['probe', '--output', descriptor], { windowsHide: true, stdio: 'ignore' });
+const server = spawn(bridge, ['probe', '--output', descriptor, '--tools-output', join(work, 'tools.json')], { windowsHide: true, stdio: 'ignore' });
 let client;
 const evidence = { schema: 'cxweb.client-probe.v1', client: execFileSync(executable, ['--version'], { encoding: 'utf8', windowsHide: true }).trim(), synthetic: true, actualPicker: 'NOT RUN', authentication: 'synthetic API key in isolated child environment', events: [] };
 try {
