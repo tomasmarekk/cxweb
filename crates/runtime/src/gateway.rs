@@ -196,8 +196,12 @@ async fn handle(
         (&Method::GET, "models") => NativeRoute::Models,
         (&Method::POST, "responses") => NativeRoute::Responses,
         (&Method::POST, "responses/compact") => NativeRoute::Compact,
-        // Native auxiliary routes are not yet qualified. Never claim
-        // integration ready while this explicit gap remains.
+        (&Method::POST, "memories/trace_summarize") => NativeRoute::MemorySummarize,
+        (&Method::POST, "alpha/search") => NativeRoute::Search,
+        (&Method::POST, "images/generations") => NativeRoute::ImageGeneration,
+        (&Method::POST, "images/edits") => NativeRoute::ImageEdit,
+        // Only exact reviewed routes are admitted. Realtime and other auxiliary
+        // endpoints still require separate transport qualification.
         _ => return StatusCode::NOT_FOUND.into_response(),
     };
     if matches!(route, NativeRoute::Models)
@@ -214,7 +218,13 @@ async fn handle(
         let Some(model) = payload.get("model").and_then(Value::as_str) else {
             return StatusCode::BAD_REQUEST.into_response();
         };
+        let generation = matches!(route, NativeRoute::Responses | NativeRoute::Compact);
         if model.starts_with(cxweb_domain::OWNED_MODEL_PREFIX) {
+            // Native-only capabilities must never turn an owned web model into
+            // an authenticated native inference request or a browser tool call.
+            if !generation {
+                return unavailable("E_WEB_CAPABILITY_UNSUPPORTED");
+            }
             if bytes.len() > 8 * 1024 * 1024 {
                 return StatusCode::PAYLOAD_TOO_LARGE.into_response();
             }
@@ -268,6 +278,161 @@ mod tests {
             assert!(!request.payload.to_string().contains("NATIVE_SECRET"));
             Box::pin(async { "web branch".into_response() })
         }
+    }
+
+    #[tokio::test]
+    async fn native_auxiliary_routes_preserve_payload_and_never_enter_browser() {
+        let received = Arc::new(AtomicUsize::new(0));
+        let count = received.clone();
+        let upstream = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let native =
+            NativeTransport::new(format!("http://{}", upstream.local_addr().unwrap())).unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                upstream,
+                Router::new().fallback(any(
+                    move |method: Method, uri: Uri, headers: HeaderMap, body: Bytes| {
+                        let count = count.clone();
+                        async move {
+                            assert_eq!(method, Method::POST);
+                            assert_eq!(uri.query(), Some("client_version=0.153.4"));
+                            assert_eq!(headers["authorization"], "Bearer MOCK_NATIVE_SECRET");
+                            assert_eq!(headers["chatgpt-account-id"], "mock-account");
+                            count.fetch_add(1, Ordering::SeqCst);
+                            Response::builder()
+                                .status(StatusCode::TOO_MANY_REQUESTS)
+                                .header("content-type", "application/json")
+                                .header("retry-after", "7")
+                                .header("x-reviewed-path", uri.path())
+                                .body(Body::from(body))
+                                .unwrap()
+                        }
+                    },
+                )),
+            )
+            .await
+            .unwrap();
+        });
+        let spy = Arc::new(Spy {
+            calls: AtomicUsize::new(0),
+        });
+        let gateway = Gateway::new(12345, native, spy.clone());
+        // Native functions remain available after web admission is disabled.
+        gateway
+            .disconnect_web(Duration::from_secs(1))
+            .await
+            .unwrap();
+        let base = gateway.base_url();
+        let router = gateway.router();
+        for (path, body) in [
+            (
+                "memories/trace_summarize",
+                "{ \"model\":\"native\",\"traces\":[] }\n",
+            ),
+            (
+                "alpha/search",
+                "{\"model\":\"native\",\"input\":\"webbridge/reference in ordinary data\"}\n",
+            ),
+            (
+                "images/generations",
+                "{\"model\":\"native-image\", \"prompt\":\"fixture\"}",
+            ),
+            (
+                "images/edits",
+                "{\"model\":\"native-image\",\"images\":[], \"prompt\":\"fixture\"}",
+            ),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(format!("{base}/{path}?client_version=0.153.4"))
+                        .header("host", "127.0.0.1:12345")
+                        .header("authorization", "Bearer MOCK_NATIVE_SECRET")
+                        .header("chatgpt-account-id", "mock-account")
+                        .header("content-type", "application/json")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+            assert_eq!(response.headers()["retry-after"], "7");
+            assert_eq!(response.headers()["x-reviewed-path"], format!("/{path}"));
+            assert_eq!(
+                response.into_body().collect().await.unwrap().to_bytes(),
+                body
+            );
+        }
+        assert_eq!(received.load(Ordering::SeqCst), 4);
+        assert_eq!(spy.calls.load(Ordering::SeqCst), 0);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn auxiliary_owned_models_and_unreviewed_paths_never_reach_upstream() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let native =
+            NativeTransport::new(format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        let spy = Arc::new(Spy {
+            calls: AtomicUsize::new(0),
+        });
+        let gateway = Gateway::new(12345, native, spy.clone());
+        let base = gateway.base_url();
+        let router = gateway.router();
+        for path in [
+            "memories/trace_summarize",
+            "alpha/search",
+            "images/generations",
+            "images/edits",
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(format!("{base}/{path}"))
+                        .header("host", "127.0.0.1:12345")
+                        .body(Body::from(r#"{"model":"webbridge/test"}"#))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+            let error = response.into_body().collect().await.unwrap().to_bytes();
+            assert!(
+                std::str::from_utf8(&error)
+                    .unwrap()
+                    .contains("E_WEB_CAPABILITY_UNSUPPORTED")
+            );
+        }
+        for (method, path) in [
+            ("GET", "alpha/search"),
+            ("POST", "alpha/search/extra"),
+            ("POST", "images%2fedits"),
+            ("POST", "realtime/calls"),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(format!("{base}/{path}"))
+                        .header("host", "127.0.0.1:12345")
+                        .body(Body::from("{}"))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        }
+        assert_eq!(spy.calls.load(Ordering::SeqCst), 0);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), listener.accept())
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

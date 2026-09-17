@@ -619,3 +619,29 @@ model discovery, native WebSocket preservation and actual pickers are proven.
   Activation, browser execution, live model qualification and Codex App/CLI checks
   remain outstanding. The operation receipt bound is 256 per process; long-lived
   receipt retirement still needs an explicit protocol before production use.
+
+## Native auxiliary HTTP routes
+
+- Reviewed the official `codex-api` endpoint implementations for CLI tag
+  `rust-v0.153.4` and App backend tag `rust-v0.155.0-alpha.2.6`. Both use POST
+  `memories/trace_summarize`, `alpha/search`, `images/generations` and
+  `images/edits`. These exact paths now forward to the fixed native destination.
+  The client's JSON payload bytes, query, end-to-end headers, response status and
+  body are preserved; no auxiliary request is delegated to the browser adapter.
+- An owned web model on a native-only endpoint is explicitly rejected rather
+  than silently selecting native inference. Unknown paths, encoded path aliases
+  and unsupported methods still fail locally. Native auxiliary traffic remains
+  available after web admission is disconnected.
+- Added loopback integration tests for all four paths, native authorization and
+  account-header preservation, rate-limit response preservation, and rejection
+  without any upstream connection or browser call. The full workspace passed
+  94 tests with two opt-in tests ignored. After tightening model validation to
+  the reviewed request structs, all eight gateway tests passed again. Clippy
+  with warnings denied and diff checks passed; formatting was applied.
+- Source references: [CLI endpoint implementations](https://github.com/openai/codex/tree/3d2ee51ca2d5db578f328aa75e20aa22c0197c9a/codex-rs/codex-api/src/endpoint)
+  and [App endpoint implementations](https://github.com/openai/codex/tree/bf6f0a4ec97919bf697cdc532e7b8af4ec482fc6/codex-rs/codex-api/src/endpoint).
+  Downloaded research stays ignored under `.local/research/native-endpoints`.
+- This closes four known HTTP gaps, not the entire native feature gate. Realtime
+  call/signaling transports, the complete client call-site audit and authenticated
+  compatibility checks remain outstanding. No real account request or user
+  configuration change was made.

@@ -12,6 +12,10 @@ pub enum NativeRoute {
     Models,
     Responses,
     Compact,
+    MemorySummarize,
+    Search,
+    ImageGeneration,
+    ImageEdit,
 }
 impl NativeRoute {
     fn path(self) -> &'static str {
@@ -19,6 +23,10 @@ impl NativeRoute {
             Self::Models => "/models",
             Self::Responses => "/responses",
             Self::Compact => "/responses/compact",
+            Self::MemorySummarize => "/memories/trace_summarize",
+            Self::Search => "/alpha/search",
+            Self::ImageGeneration => "/images/generations",
+            Self::ImageEdit => "/images/edits",
         }
     }
     fn method(self) -> Method {
