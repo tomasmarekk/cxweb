@@ -16,7 +16,7 @@ pub struct ManagedPage {
     fixture: bool,
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LoginObservation {
     pub official_page: bool,

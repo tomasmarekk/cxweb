@@ -1,6 +1,9 @@
 //! Versioned private control commands. Operation receipts belong to one runtime
 //! instance; stale desktop clients cannot replay mutations into a replacement.
-use crate::lifecycle::{DisconnectController, DisconnectState};
+use crate::{
+    control::{Control, ControlStatus},
+    lifecycle::{DisconnectController, DisconnectState},
+};
 use cxweb_platform::control_pipe::{self, ControlListener};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -22,6 +25,32 @@ pub trait Lifecycle: Send + Sync + 'static {
     fn state(&self) -> DisconnectState;
     fn disconnect(&self) -> Work;
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LoginAction {
+    Connect,
+    Refresh,
+}
+pub type LoginWork = Pin<Box<dyn Future<Output = Result<ControlStatus, &'static str>> + Send>>;
+pub trait LoginBackend: Send + Sync + 'static {
+    fn request(&self, action: LoginAction) -> LoginWork;
+}
+impl LoginBackend for Control {
+    fn request(&self, action: LoginAction) -> LoginWork {
+        let control = self.clone();
+        Box::pin(async move {
+            match action {
+                LoginAction::Connect => control.connect().await,
+                LoginAction::Refresh => control.status().await,
+            }
+        })
+    }
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OperationKind {
+    Disconnect,
+    Login(LoginAction),
+}
 impl Lifecycle for DisconnectController {
     fn state(&self) -> DisconnectState {
         *self.subscribe().borrow()
@@ -42,12 +71,29 @@ pub struct Request {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
     Status {},
-    Disconnect { instance: String, operation: String },
-    Operation { instance: String, operation: String },
+    BrowserStatus {},
+    Browser {
+        instance: String,
+        operation: String,
+        action: LoginAction,
+    },
+    Disconnect {
+        instance: String,
+        operation: String,
+    },
+    Operation {
+        instance: String,
+        operation: String,
+    },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Reply {
+    BrowserStatus {
+        version: u32,
+        instance: String,
+        status: ControlStatus,
+    },
     Status {
         version: u32,
         instance: String,
@@ -67,6 +113,7 @@ pub enum Outcome {
     Running {},
     Completed { result: DisconnectState },
     Failed {},
+    LoginCompleted { status: ControlStatus },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -78,19 +125,34 @@ pub enum ErrorCode {
     UnknownOperation,
     Busy,
     Capacity,
+    Unsupported,
+    OperationConflict,
 }
 
 #[derive(Clone)]
 pub struct Service {
     instance: String,
-    backend: Arc<dyn Lifecycle>,
-    receipts: Arc<Mutex<HashMap<String, Outcome>>>,
+    backend: Option<Arc<dyn Lifecycle>>,
+    login: Option<Arc<dyn LoginBackend>>,
+    login_status: Arc<Mutex<ControlStatus>>,
+    receipts: Arc<Mutex<HashMap<String, (OperationKind, Outcome)>>>,
 }
 impl Service {
     pub fn new(backend: Arc<dyn Lifecycle>) -> Self {
         Self {
             instance: format!("{:032x}", rand::random::<u128>()),
-            backend,
+            backend: Some(backend),
+            login: None,
+            login_status: Arc::default(),
+            receipts: Arc::default(),
+        }
+    }
+    pub fn login(backend: Arc<dyn LoginBackend>) -> Self {
+        Self {
+            instance: format!("{:032x}", rand::random::<u128>()),
+            backend: None,
+            login: Some(backend),
+            login_status: Arc::default(),
             receipts: Arc::default(),
         }
     }
@@ -106,20 +168,42 @@ impl Service {
         }
         let (instance, operation, start) = match request.command {
             Command::Status {} => {
+                let Some(backend) = &self.backend else {
+                    return error(ErrorCode::Unsupported);
+                };
                 return Reply::Status {
                     version: VERSION,
                     instance: self.instance.clone(),
-                    state: self.backend.state(),
+                    state: backend.state(),
                 };
             }
+            Command::BrowserStatus {} => {
+                if self.login.is_none() {
+                    return error(ErrorCode::Unsupported);
+                }
+                return Reply::BrowserStatus {
+                    version: VERSION,
+                    instance: self.instance.clone(),
+                    status: self
+                        .login_status
+                        .lock()
+                        .expect("login status lock poisoned")
+                        .clone(),
+                };
+            }
+            Command::Browser {
+                instance,
+                operation,
+                action,
+            } => (instance, operation, Some(OperationKind::Login(action))),
             Command::Disconnect {
                 instance,
                 operation,
-            } => (instance, operation, true),
+            } => (instance, operation, Some(OperationKind::Disconnect)),
             Command::Operation {
                 instance,
                 operation,
-            } => (instance, operation, false),
+            } => (instance, operation, None),
         };
         if instance != self.instance {
             return error(ErrorCode::Instance);
@@ -132,18 +216,26 @@ impl Service {
             return error(ErrorCode::OperationId);
         }
         let mut receipts = self.receipts.lock().expect("control receipt lock poisoned");
-        if let Some(outcome) = receipts.get(&operation) {
+        if let Some((kind, outcome)) = receipts.get(&operation) {
+            if start.is_some_and(|requested| requested != *kind) {
+                return error(ErrorCode::OperationConflict);
+            }
             return Reply::Operation {
                 operation,
                 outcome: outcome.clone(),
             };
         }
-        if !start {
+        let Some(kind) = start else {
             return error(ErrorCode::UnknownOperation);
+        };
+        if (kind == OperationKind::Disconnect && self.backend.is_none())
+            || (matches!(kind, OperationKind::Login(_)) && self.login.is_none())
+        {
+            return error(ErrorCode::Unsupported);
         }
         if receipts
             .values()
-            .any(|outcome| *outcome == Outcome::Running {})
+            .any(|(_, outcome)| *outcome == Outcome::Running {})
         {
             return error(ErrorCode::Busy);
         }
@@ -151,22 +243,43 @@ impl Service {
         if receipts.len() >= RECEIPTS {
             return error(ErrorCode::Capacity);
         }
-        receipts.insert(operation.clone(), Outcome::Running {});
+        receipts.insert(operation.clone(), (kind, Outcome::Running {}));
         let backend = self.backend.clone();
+        let login = self.login.clone();
+        let status = self.login_status.clone();
         let completed = self.receipts.clone();
         let id = operation.clone();
         // Ownership transfers before replying. A disconnected/slow UI cannot
         // cancel a mutation, and a worker panic produces only a fixed error.
         tokio::spawn(async move {
-            let worker = tokio::spawn(async move { backend.disconnect().await });
-            let outcome = match worker.await {
-                Ok(Ok(result)) => Outcome::Completed { result },
-                _ => Outcome::Failed {},
-            };
+            let worker = tokio::spawn(async move {
+                match kind {
+                    OperationKind::Disconnect => match backend
+                        .expect("validated disconnect backend")
+                        .disconnect()
+                        .await
+                    {
+                        Ok(result) => Outcome::Completed { result },
+                        Err(_) => Outcome::Failed {},
+                    },
+                    OperationKind::Login(action) => match login
+                        .expect("validated login backend")
+                        .request(action)
+                        .await
+                    {
+                        Ok(result) => {
+                            *status.lock().expect("login status lock poisoned") = result.clone();
+                            Outcome::LoginCompleted { status: result }
+                        }
+                        Err(_) => Outcome::Failed {},
+                    },
+                }
+            });
+            let outcome = worker.await.unwrap_or(Outcome::Failed {});
             completed
                 .lock()
                 .expect("control receipt lock poisoned")
-                .insert(id, outcome);
+                .insert(id, (kind, outcome));
         });
         Reply::Operation {
             operation,
@@ -238,8 +351,13 @@ pub async fn exchange(installation: &str, request: &Request) -> io::Result<Reply
         let matches = match (&request.command, &reply) {
             (_, Reply::Error { .. }) => true,
             (Command::Status {}, Reply::Status { version, .. }) => *version == VERSION,
+            (Command::BrowserStatus {}, Reply::BrowserStatus { version, .. }) => {
+                *version == VERSION
+            }
             (
-                Command::Disconnect { operation, .. } | Command::Operation { operation, .. },
+                Command::Disconnect { operation, .. }
+                | Command::Operation { operation, .. }
+                | Command::Browser { operation, .. },
                 Reply::Operation {
                     operation: received,
                     ..
@@ -344,6 +462,21 @@ mod tests {
         assert_eq!(
             dispatch(
                 &service,
+                Command::Browser {
+                    instance: service.instance.clone(),
+                    operation: "a".repeat(32),
+                    action: LoginAction::Refresh,
+                }
+            ),
+            error(ErrorCode::OperationConflict)
+        );
+        assert_eq!(
+            dispatch(&service, Command::BrowserStatus {}),
+            error(ErrorCode::Unsupported)
+        );
+        assert_eq!(
+            dispatch(
+                &service,
                 Command::Disconnect {
                     instance: service.instance.clone(),
                     operation: "b".repeat(32)
@@ -371,11 +504,10 @@ mod tests {
         .unwrap();
         assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
         for n in 0..RECEIPTS {
-            service
-                .receipts
-                .lock()
-                .unwrap()
-                .insert(format!("{n:032x}"), Outcome::Failed {});
+            service.receipts.lock().unwrap().insert(
+                format!("{n:032x}"),
+                (OperationKind::Disconnect, Outcome::Failed {}),
+            );
         }
         assert_eq!(
             dispatch(

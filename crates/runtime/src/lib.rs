@@ -14,6 +14,8 @@ pub mod ledger;
 pub mod lifecycle;
 pub mod native;
 mod native_ws;
+#[cfg(windows)]
+pub mod remote_control;
 pub mod scheduler;
 pub mod turn;
 use axum::{

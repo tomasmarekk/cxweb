@@ -2,11 +2,11 @@
 
 #[cfg(windows)]
 mod desktop {
-    use cxweb_runtime::control::{Control, ControlStatus};
+    use cxweb_runtime::{control::ControlStatus, remote_control::RemoteControl};
     use tauri::Manager;
 
     pub struct AppState {
-        control: Result<Control, &'static str>,
+        control: Result<RemoteControl, &'static str>,
     }
 
     #[tauri::command]
@@ -20,12 +20,15 @@ mod desktop {
             .map_err(str::to_owned)
     }
     #[tauri::command]
-    async fn status(state: tauri::State<'_, AppState>) -> Result<ControlStatus, String> {
+    async fn status(
+        state: tauri::State<'_, AppState>,
+        refresh: bool,
+    ) -> Result<ControlStatus, String> {
         state
             .control
             .as_ref()
             .map_err(|e| e.to_string())?
-            .status()
+            .status(refresh)
             .await
             .map_err(str::to_owned)
     }
@@ -34,7 +37,7 @@ mod desktop {
         tauri::Builder::default()
             .setup(|app| {
                 app.manage(AppState {
-                    control: Control::start(),
+                    control: RemoteControl::new(),
                 });
                 tauri::WebviewWindowBuilder::new(
                     app,

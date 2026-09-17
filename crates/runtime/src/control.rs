@@ -1,13 +1,14 @@
 //! Non-generative login worker. All browser IPC runs off the UI/async reactor.
 use cxweb_browser_adapter::{LoginObservation, ManagedBrowser, ManagedPage};
 use cxweb_platform::state::{StatePaths, installed_browser};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ControlStatus {
-    pub phase: &'static str,
+    pub phase: String,
     pub browser_version: Option<String>,
     pub observation: Option<LoginObservation>,
     pub routing_installed: bool,
@@ -16,7 +17,7 @@ pub struct ControlStatus {
 impl Default for ControlStatus {
     fn default() -> Self {
         Self {
-            phase: "disconnected",
+            phase: "disconnected".into(),
             browser_version: None,
             observation: None,
             routing_installed: false,
@@ -75,7 +76,7 @@ impl Control {
                             let version = browser.version().map_err(|_| "E_BROWSER_PIPE")?;
                             status.browser_version = version["product"].as_str().map(str::to_owned);
                             page = Some(browser.open_login().map_err(|_| "E_BROWSER_LOGIN")?);
-                            status.phase = "authenticating";
+                            status.phase = "authenticating".into();
                             Ok(())
                         })();
                         if let Err(error) = opened {
@@ -99,14 +100,14 @@ impl Control {
                                     && observation.account_surface
                                     && !observation.login_action
                                 {
-                                    "awaiting_qualification"
+                                    "awaiting_qualification".into()
                                 } else {
-                                    "authenticating"
+                                    "authenticating".into()
                                 };
                                 status.observation = Some(observation);
                             }
                             Err(_) => {
-                                status.phase = "browser_unavailable";
+                                status.phase = "browser_unavailable".into();
                                 status.observation = None;
                             }
                         }
@@ -114,7 +115,7 @@ impl Control {
                     let _ = reply.send(Ok(status.clone()));
                 }
                 // There are no generation requests in this login-only controller.
-                // Production daemon ownership is a separate integration milestone.
+                // The daemon owns this worker; closing a remote UI does not drop it.
                 if let Some(mut browser) = browser {
                     let _ = browser.close();
                 }

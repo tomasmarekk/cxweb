@@ -596,3 +596,26 @@ model discovery, native WebSocket preservation and actual pickers are proven.
   pending recovery case; automatic adoption is intentionally not implemented.
   Full activation, client-exit-qualified scheduler cleanup and desktop/browser
   ownership transfer still require orchestration before production use.
+
+## Desktop attachment to the login runtime
+
+- The desktop now attaches to a separate sibling daemon through the private
+  Windows control pipe. Only an absent endpoint permits a hidden process launch;
+  a slow, busy or rejected peer does not trigger a competing launch or restart.
+  The login runtime owns the browser worker independently of desktop windows.
+- Startup reads cached status without inspecting the browser. Connect and refresh
+  remain explicit user actions. Accepted operations survive client loss, retries
+  preserve their operation ID and runtime instance, and reusing an ID for another
+  command is rejected. The UI clears stale session indicators after runtime loss.
+- Regression tests use real private pipes and a fake browser backend to check
+  reopening without browser reads, completion after a UI waiter is closed, and
+  refusal to launch another runtime when an existing peer is slow. No account
+  interaction occurs in these tests.
+- All 92 ordinary workspace tests passed; Chrome and scheduler qualification tests
+  remain opt-in. Clippy with warnings denied, four desktop JavaScript tests,
+  formatting and diff checks passed. Both desktop and daemon release builds
+  succeeded. The existing desktop and browser were left running unchanged.
+- This is the login bootstrap runtime, not a fully supervised active integration.
+  Activation, browser execution, live model qualification and Codex App/CLI checks
+  remain outstanding. The operation receipt bound is 256 per process; long-lived
+  receipt retirement still needs an explicit protocol before production use.

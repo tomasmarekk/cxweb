@@ -1,17 +1,20 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
-//! Recovery process entry point. No browser or configuration activation occurs.
+//! Recovery or login runtime entry point. Login mode opens the browser only
+//! after an explicit private control request; recovery does not activate config.
 //! Launch hidden through the supervisor; paths are trusted local launch inputs,
 //! never private IPC arguments or destinations obtained from journal content.
 use clap::Parser;
 use std::{path::PathBuf, process::ExitCode};
 
 #[derive(Parser)]
-#[command(version, about = "cxweb runtime recovery service")]
+#[command(version, about = "cxweb runtime service")]
 struct Args {
-    #[arg(long)]
-    journal: PathBuf,
-    #[arg(long)]
-    config: PathBuf,
+    #[arg(long, conflicts_with_all = ["journal", "config"])]
+    login_runtime: bool,
+    #[arg(long, required_unless_present = "login_runtime")]
+    journal: Option<PathBuf>,
+    #[arg(long, required_unless_present = "login_runtime")]
+    config: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -19,12 +22,21 @@ async fn main() -> ExitCode {
     let Ok(args) = Args::try_parse() else {
         return ExitCode::from(2);
     };
-    if !args.journal.is_absolute() || !args.config.is_absolute() {
-        return ExitCode::from(2);
-    }
     #[cfg(windows)]
     {
-        let Ok(host) = cxweb_runtime::host::Host::recover(&args.journal, &args.config) else {
+        if args.login_runtime {
+            return match cxweb_runtime::remote_control::serve_login().await {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(_) => ExitCode::from(3),
+            };
+        }
+        let (Some(journal), Some(config)) = (args.journal, args.config) else {
+            return ExitCode::from(2);
+        };
+        if !journal.is_absolute() || !config.is_absolute() {
+            return ExitCode::from(2);
+        }
+        let Ok(host) = cxweb_runtime::host::Host::recover(&journal, &config) else {
             return ExitCode::from(3);
         };
         // No stdout/stderr metadata: the supervisor observes process exit and
