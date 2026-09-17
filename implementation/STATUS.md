@@ -676,3 +676,35 @@ model discovery, native WebSocket preservation and actual pickers are proven.
   and [App realtime calls](https://github.com/openai/codex/blob/bf6f0a4ec97919bf697cdc532e7b8af4ec482fc6/codex-rs/codex-api/src/endpoint/realtime_call.rs).
   Realtime WebSocket normalization/sideband routing and live feature qualification
   remain open; HTTP call creation alone does not qualify complete voice support.
+
+## Standalone native realtime WebSocket forwarding
+
+- Reviewed both client call sites as well as their URL normalization. Standalone
+  realtime uses the provider's API-key mode and defaults to api.openai.com/v1;
+  subscription Responses and WebRTC call creation use the separate ChatGPT
+  destination. WebRTC/existing-call sidebands use their direct client-controlled
+  address and are not rewritten by cxweb. The product does not supply an API key
+  or substitute web login for this native optional feature's authentication.
+- The private gateway now forwards standalone realtime to fixed `/realtime` or
+  `/live` destinations selected by the reviewed protocol header. Client query
+  parameters cannot choose the destination. Both the current subscription-shaped
+  local URL and the old normalized v1 URL layouts are accepted under the original
+  capability. Unknown protocol modes fail explicitly.
+- Native JSON events, audio payloads, cancellation and handshake metadata retain
+  their bytes. Each outgoing frame rechecks protocol model fields; query model
+  IDs are decoded and checked before connecting. Owned web routes cannot escape
+  through nested session/response model fields or duplicate model parameters.
+  No browser operation or tool execution occurs in this transport.
+- Tests cover three protocol variants across both local URL layouts, operation
+  after web disconnect, exact frame/query/header preservation and refusal of
+  owned-model changes. Encoded owned query models and unknown modes produce no
+  upstream connection. Responses framing retains its separate classifier.
+- All 101 workspace tests passed, with the two opt-in tests ignored. After adding
+  legacy URL coverage, all five WebSocket tests passed again. Clippy with warnings
+  denied passed. Tests used local mock servers and synthetic credentials only.
+- Sources: [App realtime preparation/authentication](https://github.com/openai/codex/blob/bf6f0a4ec97919bf697cdc532e7b8af4ec482fc6/codex-rs/core/src/realtime_conversation.rs),
+  [CLI realtime preparation/authentication](https://github.com/openai/codex/blob/3d2ee51ca2d5db578f328aa75e20aa22c0197c9a/codex-rs/core/src/realtime_conversation.rs),
+  and [App URL normalization and sideband ownership](https://github.com/openai/codex/blob/bf6f0a4ec97919bf697cdc532e7b8af4ec482fc6/codex-rs/codex-api/src/endpoint/realtime_websocket/methods.rs).
+- Live voice/media negotiation, account authentication, client pickers and complete
+  native feature qualification remain open. Outgoing client binary frames remain
+  unqualified; the reviewed clients serialize their outgoing messages as JSON text.

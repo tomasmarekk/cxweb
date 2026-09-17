@@ -1,4 +1,4 @@
-//! Native transport has a fixed reviewed destination and never calls the browser.
+//! Native transports use fixed reviewed destinations and never call the browser.
 use axum::{
     body::{Body, Bytes},
     http::{HeaderMap, Method, Response, StatusCode},
@@ -43,22 +43,34 @@ impl NativeRoute {
 pub struct NativeTransport {
     client: reqwest::Client,
     base: String,
+    realtime_base: String,
     slots: Arc<Semaphore>,
 }
 
 impl NativeTransport {
-    pub async fn upgrade(
+    pub(crate) async fn upgrade(
         &self,
+        route: crate::native_ws::SocketRoute,
         upgrade: axum::extract::WebSocketUpgrade,
         query: Option<&str>,
         headers: HeaderMap,
     ) -> Response<Body> {
-        crate::native_ws::upgrade(&self.base, self.slots.clone(), upgrade, query, headers).await
+        let base = if route == crate::native_ws::SocketRoute::Responses {
+            &self.base
+        } else {
+            &self.realtime_base
+        };
+        crate::native_ws::upgrade(base, route, self.slots.clone(), upgrade, query, headers).await
     }
-    /// Only the subscription route is reviewed. API keys, residency overrides
-    /// and existing third-party proxies require separately qualified adapters.
+    /// Subscription HTTP/Responses plus the client's standalone realtime API
+    /// route. General API-key inference, residency overrides and existing
+    /// third-party proxies require separately qualified adapters.
     pub fn subscription() -> Result<Self, &'static str> {
-        Self::new("https://chatgpt.com/backend-api/codex".to_owned())
+        let mut transport = Self::new("https://chatgpt.com/backend-api/codex".to_owned())?;
+        // The reviewed client uses API-key auth for standalone realtime sockets,
+        // even when Responses and WebRTC call creation use subscription auth.
+        transport.realtime_base = "https://api.openai.com/v1".to_owned();
+        Ok(transport)
     }
     pub(crate) fn new(base: String) -> Result<Self, &'static str> {
         let client = reqwest::Client::builder()
@@ -71,6 +83,7 @@ impl NativeTransport {
             .map_err(|_| "E_NATIVE_TRANSPORT")?;
         Ok(Self {
             client,
+            realtime_base: base.clone(),
             base,
             slots: Arc::new(Semaphore::new(16)),
         })

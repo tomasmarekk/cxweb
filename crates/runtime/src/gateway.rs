@@ -187,6 +187,25 @@ async fn handle(
     }
     let prefix = format!("/wb/{}/backend-api/codex/", gateway.capability);
     let legacy = format!("/wb/{}/v1/", gateway.capability);
+    if method == Method::GET
+        && (uri.path() == prefix.trim_end_matches('/')
+            || uri.path() == legacy.trim_end_matches('/')
+            || uri.path() == format!("{legacy}realtime"))
+        && let Ok(upgrade) = upgrade
+    {
+        let route = match headers
+            .get("openai-alpha")
+            .and_then(|value| value.to_str().ok())
+        {
+            Some("quicksilver=v2") => crate::native_ws::SocketRoute::Live,
+            None | Some("quicksilver=v1") => crate::native_ws::SocketRoute::Realtime,
+            _ => return StatusCode::BAD_REQUEST.into_response(),
+        };
+        return gateway
+            .native
+            .upgrade(route, upgrade, uri.query(), headers)
+            .await;
+    }
     let Some(path) = uri
         .path()
         .strip_prefix(&prefix)
@@ -198,7 +217,15 @@ async fn handle(
         && path == "responses"
         && let Ok(upgrade) = upgrade
     {
-        return gateway.native.upgrade(upgrade, uri.query(), headers).await;
+        return gateway
+            .native
+            .upgrade(
+                crate::native_ws::SocketRoute::Responses,
+                upgrade,
+                uri.query(),
+                headers,
+            )
+            .await;
     }
     let route = match (&method, path) {
         (&Method::GET, "models") => NativeRoute::Models,

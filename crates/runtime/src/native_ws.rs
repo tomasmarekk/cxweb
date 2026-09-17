@@ -1,4 +1,4 @@
-//! Bounded native Responses WebSocket relay. No browser driver or tool execution.
+//! Bounded native WebSocket relay. No browser driver or tool execution.
 use crate::native::{end_to_end_headers, unavailable};
 use axum::{
     body::Body,
@@ -19,8 +19,25 @@ use tokio_tungstenite::{
 
 const LIMIT: usize = 32 * 1024 * 1024;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SocketRoute {
+    Responses,
+    Realtime,
+    Live,
+}
+impl SocketRoute {
+    fn path(self) -> &'static str {
+        match self {
+            Self::Responses => "/responses",
+            Self::Realtime => "/realtime",
+            Self::Live => "/live",
+        }
+    }
+}
+
 pub(crate) async fn upgrade(
     base: &str,
+    route: SocketRoute,
     slots: Arc<Semaphore>,
     upgrade: WebSocketUpgrade,
     query: Option<&str>,
@@ -32,10 +49,26 @@ pub(crate) async fn upgrade(
     let base = base
         .replacen("https://", "wss://", 1)
         .replacen("http://", "ws://", 1);
-    let mut url = format!("{base}/responses");
+    let mut url = format!("{base}{}", route.path());
     if let Some(query) = query {
         url.push('?');
         url.push_str(query);
+    }
+    if route != SocketRoute::Responses {
+        let Ok(parsed) = reqwest::Url::parse(&url) else {
+            return unavailable("E_NATIVE_TRANSPORT");
+        };
+        let models: Vec<_> = parsed
+            .query_pairs()
+            .filter(|(name, _)| name == "model")
+            .collect();
+        if models.len() > 1
+            || models
+                .iter()
+                .any(|(_, model)| model.starts_with(cxweb_domain::OWNED_MODEL_PREFIX))
+        {
+            return unavailable("E_WEB_CAPABILITY_UNSUPPORTED");
+        }
     }
     let Ok(mut request) = url.into_client_request() else {
         return unavailable("E_NATIVE_TRANSPORT");
@@ -73,7 +106,7 @@ pub(crate) async fn upgrade(
         .max_frame_size(LIMIT)
         .on_upgrade(move |socket| async move {
             let _permit = permit;
-            relay(socket, upstream).await;
+            relay(socket, upstream, route).await;
         });
     for (name, value) in &end_to_end_headers(handshake.headers()) {
         if !name.as_str().starts_with("sec-websocket-") && name != "content-length" {
@@ -83,7 +116,51 @@ pub(crate) async fn upgrade(
     response
 }
 
-async fn relay(mut local: WebSocket, mut upstream: WebSocketStream<MaybeTlsStream<TcpStream>>) {
+fn validate_message(text: &str, route: SocketRoute) -> Result<(), &'static str> {
+    let value = strict_json::parse(text.as_bytes(), LIMIT).map_err(|_| "E_NATIVE_FRAME")?;
+    let kind = value
+        .get("type")
+        .and_then(|v| v.as_str())
+        .ok_or("E_NATIVE_FRAME")?;
+    if route == SocketRoute::Responses {
+        if kind != "response.create" {
+            return Err("E_NATIVE_FRAME");
+        }
+        let model = value
+            .get("model")
+            .and_then(|v| v.as_str())
+            .ok_or("E_NATIVE_FRAME")?;
+        if model.starts_with(cxweb_domain::OWNED_MODEL_PREFIX) {
+            return Err("E_WEB_WEBSOCKET_UNQUALIFIED");
+        }
+    } else {
+        // Preserve native event types and audio payloads verbatim. Inspect only
+        // protocol model fields, never references inside conversation content.
+        for model in [
+            value.get("model"),
+            value.get("session").and_then(|v| v.get("model")),
+            value.get("response").and_then(|v| v.get("model")),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if model.is_null() {
+                continue;
+            }
+            let model = model.as_str().ok_or("E_NATIVE_FRAME")?;
+            if model.starts_with(cxweb_domain::OWNED_MODEL_PREFIX) {
+                return Err("E_WEB_CAPABILITY_UNSUPPORTED");
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn relay(
+    mut local: WebSocket,
+    mut upstream: WebSocketStream<MaybeTlsStream<TcpStream>>,
+    route: SocketRoute,
+) {
     loop {
         let outcome = tokio::time::timeout(Duration::from_secs(300), async {
             tokio::select! {
@@ -91,13 +168,11 @@ async fn relay(mut local: WebSocket, mut upstream: WebSocketStream<MaybeTlsStrea
                     let Some(Ok(message)) = incoming else { return false; };
                     let message = match message {
                         LocalMessage::Text(text) => {
-                            // Reclassify every create, including reused connections.
-                            // Unknown/binary requests fail rather than bypass routing.
-                            let Ok(value) = strict_json::parse(text.as_bytes(), LIMIT) else { return false; };
-                            if value.get("type").and_then(|v| v.as_str()) != Some("response.create") { return false; }
-                            let Some(model) = value.get("model").and_then(|v| v.as_str()) else { return false; };
-                            if model.starts_with(cxweb_domain::OWNED_MODEL_PREFIX) {
-                                let _ = local.send(LocalMessage::Text("{\"type\":\"error\",\"error\":{\"code\":\"E_WEB_WEBSOCKET_UNQUALIFIED\",\"message\":\"Web routes require the qualified HTTP transport\"}}".into())).await;
+                            // Validate model fields on every message, including
+                            // reused connections. Client binary frames remain unqualified.
+                            if let Err(code) = validate_message(&text, route) {
+                                let error = serde_json::json!({"type":"error","error":{"code":code,"message":code}}).to_string();
+                                let _ = local.send(LocalMessage::Text(error.into())).await;
                                 return false;
                             }
                             Message::Text(text.to_string().into())
@@ -145,6 +220,165 @@ mod tests {
         native::NativeTransport,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[tokio::test]
+    #[allow(clippy::result_large_err)]
+    async fn realtime_modes_preserve_session_audio_cancel_and_native_metadata() {
+        for (alpha, expected_path, suffix) in [
+            (None, "/realtime", "/backend-api/codex"),
+            (Some("quicksilver=v1"), "/realtime", "/backend-api/codex"),
+            (Some("quicksilver=v2"), "/live", "/backend-api/codex"),
+            (None, "/realtime", "/v1/realtime"),
+            (Some("quicksilver=v1"), "/realtime", "/v1/realtime"),
+            (Some("quicksilver=v2"), "/live", "/v1"),
+        ] {
+            let upstream_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let native = NativeTransport::new(format!(
+                "http://{}",
+                upstream_listener.local_addr().unwrap()
+            ))
+            .unwrap();
+            let received = Arc::new(AtomicUsize::new(0));
+            let counter = received.clone();
+            let upstream_task = tokio::spawn(async move {
+                let (stream, _) = upstream_listener.accept().await.unwrap();
+                let mut socket = tokio_tungstenite::accept_hdr_async(stream,
+                    |request: &tokio_tungstenite::tungstenite::handshake::server::Request,
+                     mut response: tokio_tungstenite::tungstenite::handshake::server::Response| {
+                        assert_eq!(request.uri().path(), expected_path);
+                        assert_eq!(request.uri().query(), Some("model=native-realtime&trace=1"));
+                        assert_eq!(request.headers()["authorization"], "Bearer SYNTHETIC_REALTIME");
+                        assert_eq!(request.headers().get("openai-alpha").and_then(|v| v.to_str().ok()), alpha);
+                        response.headers_mut().insert("x-request-id", "fixture-realtime".parse().unwrap());
+                        Ok(response)
+                    }).await.unwrap();
+                while let Some(Ok(Message::Text(text))) = socket.next().await {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    socket.send(Message::Text(text)).await.unwrap();
+                }
+            });
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let gateway = Gateway::new(
+                listener.local_addr().unwrap().port(),
+                native,
+                Arc::new(UnqualifiedProvider),
+            );
+            let base = gateway.base_url().replace("/backend-api/codex", suffix);
+            let url = format!("{base}?model=native-realtime&trace=1").replacen("http:", "ws:", 1);
+            gateway
+                .disconnect_web(Duration::from_secs(1))
+                .await
+                .unwrap();
+            let task = tokio::spawn(async move {
+                axum::serve(listener, gateway.router()).await.unwrap();
+            });
+            let mut request = url.into_client_request().unwrap();
+            request.headers_mut().insert(
+                "authorization",
+                "Bearer SYNTHETIC_REALTIME".parse().unwrap(),
+            );
+            if let Some(alpha) = alpha {
+                request
+                    .headers_mut()
+                    .insert("openai-alpha", alpha.parse().unwrap());
+            }
+            let (mut socket, response) = tokio_tungstenite::connect_async(request).await.unwrap();
+            assert_eq!(response.headers()["x-request-id"], "fixture-realtime");
+            for text in [
+                r#"{"type":"session.update", "session":{"model":"native-realtime","instructions":"mention webbridge/reference"}}"#,
+                r#"{"type":"input_audio_buffer.append","audio":"AQIDBA=="}"#,
+                r#"{"type":"response.cancel"}"#,
+                r#"{"type":"session.context.append","content":[{"type":"input_text","text":"fixture"}]}"#,
+            ] {
+                socket.send(Message::Text(text.into())).await.unwrap();
+                let echoed = tokio::time::timeout(Duration::from_secs(2), socket.next())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(echoed.into_text().unwrap(), text);
+            }
+            socket
+                .send(Message::Text(
+                    r#"{"type":"session.update","session":{"model":"webbridge/test"}}"#.into(),
+                ))
+                .await
+                .unwrap();
+            let error = tokio::time::timeout(Duration::from_secs(2), socket.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            assert!(
+                error
+                    .into_text()
+                    .unwrap()
+                    .contains("E_WEB_CAPABILITY_UNSUPPORTED")
+            );
+            assert_eq!(received.load(Ordering::SeqCst), 4);
+            task.abort();
+            upstream_task.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn realtime_query_and_unknown_mode_rejections_do_not_connect_upstream() {
+        let upstream = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let native =
+            NativeTransport::new(format!("http://{}", upstream.local_addr().unwrap())).unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let gateway = Gateway::new(
+            listener.local_addr().unwrap().port(),
+            native,
+            Arc::new(UnqualifiedProvider),
+        );
+        let base = gateway.base_url().replacen("http:", "ws:", 1);
+        let task = tokio::spawn(async move {
+            axum::serve(listener, gateway.router()).await.unwrap();
+        });
+        for (query, alpha) in [
+            ("model=webbridge%2Ftest", None),
+            ("model=native&model=webbridge%2ftest", None),
+            ("model=native", Some("quicksilver=unknown")),
+        ] {
+            let mut request = format!("{base}?{query}").into_client_request().unwrap();
+            if let Some(alpha) = alpha {
+                request
+                    .headers_mut()
+                    .insert("openai-alpha", alpha.parse().unwrap());
+            }
+            let error = tokio_tungstenite::connect_async(request).await.unwrap_err();
+            let tokio_tungstenite::tungstenite::Error::Http(response) = error else {
+                panic!("expected HTTP refusal");
+            };
+            assert_eq!(
+                response.status().as_u16(),
+                if alpha.is_some() { 400 } else { 502 }
+            );
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), upstream.accept())
+                .await
+                .is_err()
+        );
+        task.abort();
+    }
+
+    #[test]
+    fn realtime_and_responses_frames_have_separate_model_boundaries() {
+        let cancel = r#"{"type":"response.cancel"}"#;
+        assert!(validate_message(cancel, SocketRoute::Realtime).is_ok());
+        assert!(validate_message(cancel, SocketRoute::Responses).is_err());
+        for text in [
+            r#"{"type":"session.update","session":{"model":"native","model":"webbridge/test"}}"#,
+            r#"{"type":"response.create","response":{"model":"webbridge/test"}}"#,
+            r#"{"type":"session.update","session":{"model":123}}"#,
+            r#"{"session":{}}"#,
+        ] {
+            assert!(validate_message(text, SocketRoute::Realtime).is_err());
+            assert!(validate_message(text, SocketRoute::Live).is_err());
+        }
+    }
 
     #[tokio::test]
     #[allow(clippy::result_large_err)] // tungstenite's required handshake callback signature.
