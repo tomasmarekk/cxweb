@@ -10,3 +10,7 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo test --locked --workspace
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test apps/desktop/tests/app.test.mjs

@@ -16,6 +16,16 @@ pub struct ManagedPage {
     fixture: bool,
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LoginObservation {
+    pub official_page: bool,
+    pub composer: bool,
+    pub account_surface: bool,
+    pub login_action: bool,
+    pub selected_label: Option<String>,
+}
+
 pub struct ManagedBrowser {
     process: BrowserProcess,
     replies: Receiver<io::Result<Value>>,
@@ -137,6 +147,26 @@ impl ManagedBrowser {
             .map_err(|_| io::Error::other("E_BROWSER_ADAPTER"))
     }
 
+    /// Non-generative structural evidence only. A candidate is not a certified
+    /// account identity; no password fields, cookies, tokens or email are read.
+    pub fn login_observation(&mut self, page: &ManagedPage) -> io::Result<LoginObservation> {
+        let frame = self.call("Page.getFrameTree", json!({}), Some(&page.session))?;
+        if !frame["frameTree"]["frame"]["url"]
+            .as_str()
+            .is_some_and(|url| url.starts_with("https://chatgpt.com/"))
+        {
+            return Ok(LoginObservation {
+                official_page: false,
+                composer: false,
+                account_surface: false,
+                login_action: false,
+                selected_label: None,
+            });
+        }
+        serde_json::from_value(self.dom(page, include_str!("dom/login.js"), vec![])?)
+            .map_err(|_| io::Error::other("E_BROWSER_ADAPTER"))
+    }
+
     pub fn insert_prompt(&mut self, page: &ManagedPage, prompt: &str) -> io::Result<()> {
         if prompt.len() > 512 * 1024 {
             return Err(io::Error::other("E_CONTEXT_BUDGET"));
@@ -214,7 +244,7 @@ impl ManagedBrowser {
         let baseline = self.baseline(page)?;
         let mut tracker =
             TurnTracker::new(baseline.clone(), "Fixture text mode").map_err(io::Error::other)?;
-        let prompt = "Literal input: quotes \" ' ` ${never_execute()} <script>throw 1</script>\nUnicode: žluťoučký 🦀";
+        let prompt = "Literal input: quotes \" ' ` ${never_execute()} <script>throw 1</script>\nUnicode: 🦀 🦀";
         self.insert_prompt(page, prompt)?;
         tracker.begin_submission().map_err(io::Error::other)?;
         self.press_send(page, prompt, &baseline.selected_model)?;

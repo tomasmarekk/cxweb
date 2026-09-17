@@ -171,3 +171,28 @@ Next dependency-ready implementation: real browser worker with protected profile
 and account/route/session leases, then wire Coordinator into Gateway through a
 qualified provider. Keep production routing disabled until authentication,
 model discovery, native WebSocket preservation and actual pickers are proven.
+
+## Development login panel and protected state
+
+- Windows state now uses the OS LocalAppData location and protected directories
+  owned by the current user, with full access only for that user and SYSTEM.
+  Existing unexpected ownership, ACLs and reparse points are rejected. Tests
+  exercise ACL verification and exclusive instance-lock release.
+- Added a Tauri 2 development panel with two local IPC commands: connect and
+  status. A bounded browser worker opens the official sign-in page in the app's
+  dedicated profile over the private pipe. Remote pages cannot navigate the
+  privileged control window. No Codex configuration is installed by this panel.
+- Structural login observations do not certify account identity or readiness.
+  The displayed state remains awaiting verification. Reopening an unavailable
+  login browser requires an explicit action and preserves its dedicated profile.
+  This worker is non-generative; production daemon lifetime and real session
+  leases remain separate unfinished work.
+- The desktop executable built and its native window opened and closed with
+  exit code zero in a local smoke check. This is not visual or live login proof.
+- All project-facing text is English, including UI, window titles and fixtures.
+  Unicode tests use emoji instead of Czech words. User-supplied ignored source
+  material remains unchanged. README remains the minimal development placeholder.
+- Verification: `cargo test --locked --workspace` passed 41 Rust tests;
+  `node --test apps/desktop/tests/app.test.mjs` passed 3 UI behavior tests.
+  CI now includes the UI tests. Full live authentication/model discovery,
+  actual Codex pickers and coding qualification are still outstanding.

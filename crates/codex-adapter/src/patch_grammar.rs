@@ -66,7 +66,7 @@ mod tests {
     #[test]
     fn valid_multifile_and_unicode_payload_remains_literal() {
         assert!(valid(
-            "*** Begin Patch\n*** Add File: žluťoučký.txt\n+first\n+\n*** Update File: a\n*** Move to: b\n@@ context\n old\n-new\n+next\n*** End of File\n*** Delete File: c\n*** End Patch\n"
+            "*** Begin Patch\n*** Add File: 🦀.txt\n+first\n+\n*** Update File: a\n*** Move to: b\n@@ context\n old\n-new\n+next\n*** End of File\n*** Delete File: c\n*** End Patch\n"
         ));
     }
     #[test]

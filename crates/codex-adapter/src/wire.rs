@@ -107,14 +107,11 @@ mod tests {
             native_name: "apply_patch".into(),
             namespace: None,
             kind: ToolKind::Custom,
-            input: json!("first\nžluťoučký\nsecond"),
+            input: json!("first\n🦀\nsecond"),
         }]);
         let encoded = encode(&output, "webbridge/test", "resp_1", 1).unwrap();
         assert_eq!(encoded.response["output"][0]["type"], "custom_tool_call");
-        assert_eq!(
-            encoded.response["output"][0]["input"],
-            "first\nžluťoučký\nsecond"
-        );
+        assert_eq!(encoded.response["output"][0]["input"], "first\n🦀\nsecond");
         assert!(
             encoded
                 .sse()

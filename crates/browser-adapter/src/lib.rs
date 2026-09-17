@@ -3,4 +3,4 @@
 mod pipe;
 pub mod turn;
 #[cfg(windows)]
-pub use pipe::{ManagedBrowser, ManagedPage};
+pub use pipe::{LoginObservation, ManagedBrowser, ManagedPage};

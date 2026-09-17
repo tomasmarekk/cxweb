@@ -2,3 +2,4 @@
 /.local/
 /target/
 *.log
+/apps/desktop/src-tauri/gen/

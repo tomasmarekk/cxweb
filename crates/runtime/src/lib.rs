@@ -1,4 +1,6 @@
 //! Isolated G0 diagnostic gateway; production browser routing is not enabled.
+#[cfg(windows)]
+pub mod control;
 pub mod gateway;
 pub mod ledger;
 pub mod native;
