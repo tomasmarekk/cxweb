@@ -49,7 +49,10 @@ impl ProbeState {
         }
     }
     pub fn base_url(&self) -> String {
-        format!("http://{}/wb/{}/v1", self.authority, self.capability)
+        format!(
+            "http://{}/wb/{}/backend-api/codex",
+            self.authority, self.capability
+        )
     }
 
     /// Synthetic development harness only. Captures tool definitions, never
@@ -88,7 +91,7 @@ async fn probe(
     {
         return error(StatusCode::FORBIDDEN, "E_LOCAL_ORIGIN");
     }
-    let prefix = format!("/wb/{}/v1/", state.capability);
+    let prefix = format!("/wb/{}/backend-api/codex/", state.capability);
     let Some(path) = uri.path().strip_prefix(&prefix) else {
         return error(StatusCode::NOT_FOUND, "E_LOCAL_CAPABILITY");
     };
@@ -194,7 +197,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_wrong_host_origin_capability_and_admin_routes() {
         let state = ProbeState::new(12345);
-        let path = format!("/wb/{}/v1/models", state.capability);
+        let path = format!("/wb/{}/backend-api/codex/models", state.capability);
         for (uri, host, origin, expected) in [
             (path.as_str(), "evil.test", None, StatusCode::FORBIDDEN),
             (
@@ -204,7 +207,7 @@ mod tests {
                 StatusCode::FORBIDDEN,
             ),
             (
-                "/wb/wrong/v1/models",
+                "/wb/wrong/backend-api/codex/models",
                 "127.0.0.1:12345",
                 None,
                 StatusCode::NOT_FOUND,
@@ -238,7 +241,10 @@ mod tests {
         ] {
             let request = Request::builder()
                 .method("POST")
-                .uri(format!("/wb/{}/v1/responses", state.capability))
+                .uri(format!(
+                    "/wb/{}/backend-api/codex/responses",
+                    state.capability
+                ))
                 .header("host", "127.0.0.1:12345")
                 .header("authorization", "Bearer SEEDED_SECRET")
                 .body(Body::from(

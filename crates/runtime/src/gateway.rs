@@ -129,7 +129,10 @@ impl Gateway {
         }
     }
     pub fn base_url(&self) -> String {
-        format!("http://{}/wb/{}/v1", self.authority, self.capability)
+        format!(
+            "http://{}/wb/{}/backend-api/codex",
+            self.authority, self.capability
+        )
     }
     /// Only a validated private journal may restore an existing capability.
     #[cfg(windows)]
@@ -182,8 +185,13 @@ async fn handle(
     {
         return StatusCode::FORBIDDEN.into_response();
     }
-    let prefix = format!("/wb/{}/v1/", gateway.capability);
-    let Some(path) = uri.path().strip_prefix(&prefix) else {
+    let prefix = format!("/wb/{}/backend-api/codex/", gateway.capability);
+    let legacy = format!("/wb/{}/v1/", gateway.capability);
+    let Some(path) = uri
+        .path()
+        .strip_prefix(&prefix)
+        .or_else(|| uri.path().strip_prefix(&legacy))
+    else {
         return StatusCode::NOT_FOUND.into_response();
     };
     if method == Method::GET
@@ -200,6 +208,7 @@ async fn handle(
         (&Method::POST, "alpha/search") => NativeRoute::Search,
         (&Method::POST, "images/generations") => NativeRoute::ImageGeneration,
         (&Method::POST, "images/edits") => NativeRoute::ImageEdit,
+        (&Method::POST, "realtime/calls") => NativeRoute::RealtimeCall,
         // Only exact reviewed routes are admitted. Realtime and other auxiliary
         // endpoints still require separate transport qualification.
         _ => return StatusCode::NOT_FOUND.into_response(),
@@ -210,7 +219,45 @@ async fn handle(
     {
         return crate::catalog_proxy::forward(&gateway.native, uri.query(), headers, catalog).await;
     }
-    if method == Method::POST {
+    if matches!(route, NativeRoute::RealtimeCall) {
+        // Subscription clients send JSON with a nested session; older call
+        // creation also supports raw SDP. Neither is a Responses request.
+        let media = headers
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.split(';').next())
+            .map(str::trim);
+        match media {
+            Some(value) if value.eq_ignore_ascii_case("application/sdp") => (),
+            Some(value) if value.eq_ignore_ascii_case("application/json") => {
+                let Ok(payload) = strict_json::parse(&bytes, 32 * 1024 * 1024) else {
+                    return StatusCode::BAD_REQUEST.into_response();
+                };
+                let Some(session) = payload.get("session").and_then(Value::as_object) else {
+                    return StatusCode::BAD_REQUEST.into_response();
+                };
+                if payload.get("sdp").and_then(Value::as_str).is_none() {
+                    return StatusCode::BAD_REQUEST.into_response();
+                }
+                for model in [payload.get("model"), session.get("model")]
+                    .into_iter()
+                    .flatten()
+                {
+                    if model.is_null() {
+                        continue;
+                    }
+                    match model.as_str() {
+                        Some(model) if model.starts_with(cxweb_domain::OWNED_MODEL_PREFIX) => {
+                            return unavailable("E_WEB_CAPABILITY_UNSUPPORTED");
+                        }
+                        Some(_) => (),
+                        None => return StatusCode::BAD_REQUEST.into_response(),
+                    }
+                }
+            }
+            _ => return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response(),
+        }
+    } else if method == Method::POST {
         let payload = match strict_json::parse(&bytes, 32 * 1024 * 1024) {
             Ok(payload) => payload,
             Err(_) => return StatusCode::BAD_REQUEST.into_response(),
@@ -411,7 +458,7 @@ mod tests {
             ("GET", "alpha/search"),
             ("POST", "alpha/search/extra"),
             ("POST", "images%2fedits"),
-            ("POST", "realtime/calls"),
+            ("POST", "realtime/unreviewed"),
         ] {
             let response = router
                 .clone()
@@ -430,6 +477,139 @@ mod tests {
         assert_eq!(spy.calls.load(Ordering::SeqCst), 0);
         assert!(
             tokio::time::timeout(Duration::from_millis(50), listener.accept())
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn realtime_call_preserves_json_sdp_and_location_without_browser_access() {
+        let upstream = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let native =
+            NativeTransport::new(format!("http://{}", upstream.local_addr().unwrap())).unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                upstream,
+                Router::new().route(
+                    "/realtime/calls",
+                    any(|uri: Uri, headers: HeaderMap, bytes: Bytes| async move {
+                        assert_eq!(uri.query(), Some("intent=quicksilver&architecture=avas"));
+                        assert_eq!(headers["authorization"], "Bearer MOCK_NATIVE_SECRET");
+                        Response::builder()
+                            .status(StatusCode::CREATED)
+                            .header(
+                                "location",
+                                "https://api.openai.com/v1/realtime/calls/fixture-call",
+                            )
+                            .header("content-type", headers["content-type"].clone())
+                            .body(Body::from(bytes))
+                            .unwrap()
+                    }),
+                ),
+            )
+            .await
+            .unwrap();
+        });
+        let spy = Arc::new(Spy {
+            calls: AtomicUsize::new(0),
+        });
+        let gateway = Gateway::new(12345, native, spy.clone());
+        let base = gateway.base_url();
+        assert!(base.contains("/backend-api"));
+        gateway
+            .disconnect_web(Duration::from_secs(1))
+            .await
+            .unwrap();
+        let router = gateway.router();
+        for (media, body) in [
+            (
+                "application/json",
+                "{ \"sdp\":\"v=0\\r\\n\", \"session\":{\"model\":\"native-realtime\"}}\n",
+            ),
+            (
+                "application/json; charset=utf-8",
+                "{\"sdp\":\"v=0\",\"session\":{\"model\":null}}",
+            ),
+            ("application/sdp", "v=0\r\no=fixture\r\n"),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(format!(
+                            "{base}/realtime/calls?intent=quicksilver&architecture=avas"
+                        ))
+                        .header("host", "127.0.0.1:12345")
+                        .header("authorization", "Bearer MOCK_NATIVE_SECRET")
+                        .header("content-type", media)
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::CREATED);
+            assert_eq!(
+                response.headers()["location"],
+                "https://api.openai.com/v1/realtime/calls/fixture-call"
+            );
+            assert_eq!(response.headers()["content-type"], media);
+            assert_eq!(
+                response.into_body().collect().await.unwrap().to_bytes(),
+                body
+            );
+        }
+        assert_eq!(spy.calls.load(Ordering::SeqCst), 0);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn realtime_rejects_owned_nested_models_and_unqualified_media_before_connecting() {
+        let upstream = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let native =
+            NativeTransport::new(format!("http://{}", upstream.local_addr().unwrap())).unwrap();
+        let gateway = Gateway::new(12345, native, Arc::new(UnqualifiedProvider));
+        let base = gateway.base_url();
+        let router = gateway.router();
+        for (media, body, status) in [
+            (
+                "application/json",
+                r#"{"sdp":"v=0","session":{"model":"webbridge/test"}}"#,
+                StatusCode::BAD_GATEWAY,
+            ),
+            (
+                "application/json",
+                r#"{"sdp":"v=0","session":{"model":"native","model":"webbridge/test"}}"#,
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                "application/json",
+                r#"{"sdp":"v=0","session":[],"model":"native"}"#,
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                "multipart/form-data; boundary=fixture",
+                "fixture",
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            ),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(format!("{base}/realtime/calls"))
+                        .header("host", "127.0.0.1:12345")
+                        .header("content-type", media)
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status);
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), upstream.accept())
                 .await
                 .is_err()
         );

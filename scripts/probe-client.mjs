@@ -25,6 +25,8 @@ try {
     try { endpoint = JSON.parse(await readFile(descriptor, 'utf8')).base_url; break; } catch { await delay(50); }
   }
   assert.ok(endpoint, 'diagnostic gateway starts');
+  assert.ok(endpoint.endsWith('/backend-api/codex'), 'probe uses the subscription-shaped product route');
+  evidence.routeLayout = 'subscription backend-api/codex';
   const catalog = execFileSync(bridge, ['probe-catalog'], { encoding: 'utf8', windowsHide: true });
   await writeFile(join(home, 'catalog.json'), catalog);
   await writeFile(join(home, 'config.toml'), `openai_base_url = ${JSON.stringify(endpoint)}\nmodel_catalog_json = ${JSON.stringify(join(home, 'catalog.json').replaceAll('\\', '/'))}\n`);

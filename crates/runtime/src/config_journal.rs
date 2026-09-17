@@ -160,7 +160,7 @@ impl ConfigJournal {
         let original = std::str::from_utf8(prepared.original()).map_err(|_| invalid())?;
         let (_, candidate) = RoutePatch::plan(original, port, capability).map_err(|_| invalid())?;
         let record = Record {
-            version: 1,
+            version: 2,
             id: format!("{:032x}", rand::random::<u128>()),
             target: prepared.path().into(),
             phase: Phase::Prepared,
@@ -197,7 +197,7 @@ impl ConfigJournal {
             strict_json::parse(journal.original(), 2 * 1024 * 1024).map_err(|_| invalid())?;
         let record: Record = serde_json::from_value(value).map_err(|_| invalid())?;
         let selected = Snapshot::capture(target)?;
-        if record.version != 1
+        if !matches!(record.version, 1 | 2)
             || record.id.len() != 32
             || !record.id.bytes().all(|b| b.is_ascii_hexdigit())
             || record.target != selected.path()
@@ -213,8 +213,7 @@ impl ConfigJournal {
         {
             return Err(invalid());
         }
-        let (_, candidate) = RoutePatch::plan(&record.original, record.port, &record.capability)
-            .map_err(|_| invalid())?;
+        let (_, candidate) = plan_record(&record)?;
         if candidate != record.candidate {
             return Err(invalid());
         }
@@ -358,11 +357,15 @@ impl ConfigJournal {
     /// Match the exact live listener, including its private capability, without
     /// exporting that capability through lifecycle status or diagnostics.
     pub fn routes_to(&self, base_url: &str) -> bool {
-        base_url
-            == format!(
-                "http://127.0.0.1:{}/wb/{}/v1",
-                self.record.port, self.record.capability
-            )
+        // The recovered listener serves both layouts under the same capability;
+        // this does not rewrite or upgrade the original configuration receipt.
+        ["/v1", "/backend-api/codex"].iter().any(|suffix| {
+            base_url
+                == format!(
+                    "http://127.0.0.1:{}/wb/{}{suffix}",
+                    self.record.port, self.record.capability
+                )
+        })
     }
 
     pub fn recovery(&self) -> io::Result<Recovery> {
@@ -502,6 +505,15 @@ fn matches_result(current: &Snapshot, text: Option<&str>) -> bool {
     }
 }
 
+fn plan_record(record: &Record) -> io::Result<(RoutePatch, String)> {
+    match record.version {
+        1 => RoutePatch::legacy_plan(&record.original, record.port, &record.capability),
+        2 => RoutePatch::plan(&record.original, record.port, &record.capability),
+        _ => return Err(invalid()),
+    }
+    .map_err(|_| invalid())
+}
+
 fn restored_text(
     record: &Record,
     current: &str,
@@ -509,8 +521,7 @@ fn restored_text(
     published: &[String],
     native: &[String],
 ) -> io::Result<Option<String>> {
-    let (patch, _) = RoutePatch::plan(&record.original, record.port, &record.capability)
-        .map_err(|_| invalid())?;
+    let (patch, _) = plan_record(record)?;
     let restored = patch
         .remove_with_selection(current, published, native)
         .map_err(|_| io::Error::other("E_CONFIG_CONFLICT"))?;
@@ -561,6 +572,41 @@ mod tests {
         assert_eq!(recovered.recovery().unwrap(), Recovery::Original);
         assert!(recovered.apply().is_err());
         assert!(!f.target.exists());
+    }
+    #[test]
+    fn legacy_journal_reopens_and_removes_its_original_route_without_migration() {
+        let f = Fixture::new();
+        let journal = ConfigJournal::prepare(&f.state, &f.target, 12345, CAP).unwrap();
+        assert_eq!(journal.record.version, 2);
+        let mut old = journal.record.clone();
+        old.version = 1;
+        old.candidate = RoutePatch::legacy_plan("", 12345, CAP).unwrap().1;
+        old.candidate_sha256 = hash(old.candidate.as_bytes());
+        old.phase = Phase::ConfigApplied;
+        drop(journal);
+        let path = f.state.join("integration.json");
+        std::fs::write(&path, serde_json::to_vec(&old).unwrap()).unwrap();
+        std::fs::write(&f.target, &old.candidate).unwrap();
+        let mut recovered = ConfigJournal::reopen(&f.state, &f.target).unwrap();
+        assert_eq!(recovered.recovery().unwrap(), Recovery::Candidate);
+        assert_eq!(std::fs::read_to_string(&f.target).unwrap(), old.candidate);
+        assert!(recovered.routes_to(&format!(
+            "http://127.0.0.1:12345/wb/{CAP}/backend-api/codex"
+        )));
+        recovered.disconnect(&[], &[]).unwrap();
+        assert!(!f.target.exists());
+        drop(recovered);
+        assert_eq!(
+            ConfigJournal::reopen(&f.state, &f.target)
+                .unwrap()
+                .recovery()
+                .unwrap(),
+            Recovery::Restored
+        );
+        // A version flip cannot disguise a different candidate plan.
+        old.version = 2;
+        std::fs::write(&path, serde_json::to_vec(&old).unwrap()).unwrap();
+        assert!(ConfigJournal::reopen(&f.state, &f.target).is_err());
     }
     #[test]
     fn catalog_receipt_is_validated_durable_and_immutable_after_preparation() {

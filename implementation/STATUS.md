@@ -645,3 +645,34 @@ model discovery, native WebSocket preservation and actual pickers are proven.
   call/signaling transports, the complete client call-site audit and authenticated
   compatibility checks remain outstanding. No real account request or user
   configuration change was made.
+
+## Subscription request shape and realtime call creation
+
+- Both reviewed clients choose JSON versus multipart realtime call bodies using
+  `provider.base_url.contains("/backend-api")`. The former local `/v1` base URL
+  changed that branch. New route plans and the synthetic harness now end in
+  `/backend-api/codex`, preserving the subscription request-shape decision.
+- New private journals use version 2. Version 1 plans remain reproducible for
+  recovery and exact undo, without rewriting their configuration. The gateway
+  accepts the original `/v1` alias under the same private capability. Tests prove
+  a v1 applied journal can be reopened and removed, and a version/candidate
+  mismatch is rejected. Old binaries do not understand v2 journals; installation
+  updates must replace the runtime before activating a new-format integration.
+- Added fixed-destination POST `realtime/calls` forwarding for the reviewed
+  subscription JSON shape and raw SDP. It preserves body bytes, status, media
+  type and Location (the client extracts its call ID from this header). Nested
+  owned model IDs, duplicate JSON keys and unqualified media types fail before
+  an upstream connection. Multipart is not translated into a different request.
+- Re-ran the isolated app-server harness against actual CLI 0.153.4 and App
+  backend 0.155.0-alpha.2.6 on the new route layout. Both listed the synthetic
+  owned model, selected it and completed the expected mock response. Updated
+  `integration-tests/compatibility/*.synthetic.json` records the route layout;
+  neither report claims an actual picker or authenticated realtime test.
+- All 98 ordinary workspace tests passed, with two opt-in tests ignored. Clippy
+  with warnings denied, formatting and diff checks passed. The diagnostic CLI
+  build and release desktop/daemon builds succeeded. No real configuration,
+  authentication or browser interaction was involved.
+- Request-shape source: [CLI realtime calls](https://github.com/openai/codex/blob/3d2ee51ca2d5db578f328aa75e20aa22c0197c9a/codex-rs/codex-api/src/endpoint/realtime_call.rs)
+  and [App realtime calls](https://github.com/openai/codex/blob/bf6f0a4ec97919bf697cdc532e7b8af4ec482fc6/codex-rs/codex-api/src/endpoint/realtime_call.rs).
+  Realtime WebSocket normalization/sideband routing and live feature qualification
+  remain open; HTTP call creation alone does not qualify complete voice support.

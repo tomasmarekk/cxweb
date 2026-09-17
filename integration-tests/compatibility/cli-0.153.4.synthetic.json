@@ -10,6 +10,7 @@
     "turn/start completed through loopback",
     "expected synthetic assistant text received"
   ],
+  "routeLayout": "subscription backend-api/codex",
   "model": {
     "id": "webbridge/diagnostic",
     "model": "webbridge/diagnostic",

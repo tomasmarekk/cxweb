@@ -16,6 +16,7 @@ pub enum NativeRoute {
     Search,
     ImageGeneration,
     ImageEdit,
+    RealtimeCall,
 }
 impl NativeRoute {
     fn path(self) -> &'static str {
@@ -27,6 +28,7 @@ impl NativeRoute {
             Self::Search => "/alpha/search",
             Self::ImageGeneration => "/images/generations",
             Self::ImageEdit => "/images/edits",
+            Self::RealtimeCall => "/realtime/calls",
         }
     }
     fn method(self) -> Method {

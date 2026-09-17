@@ -86,6 +86,25 @@ impl RoutePatch {
         port: u16,
         capability: &str,
     ) -> Result<(Self, String), ConfigError> {
+        Self::plan_with_suffix(original, port, capability, "/backend-api/codex")
+    }
+
+    /// Reproduce an existing v1 journal for validation and undo only. New
+    /// installations must retain Codex's subscription request-shape selection.
+    pub fn legacy_plan(
+        original: &str,
+        port: u16,
+        capability: &str,
+    ) -> Result<(Self, String), ConfigError> {
+        Self::plan_with_suffix(original, port, capability, "/v1")
+    }
+
+    fn plan_with_suffix(
+        original: &str,
+        port: u16,
+        capability: &str,
+        suffix: &str,
+    ) -> Result<(Self, String), ConfigError> {
         if port == 0
             || capability.len() != 43
             || !capability
@@ -97,7 +116,7 @@ impl RoutePatch {
         if !inspect(original)?.can_plan {
             return Err(ConfigError::Conflict);
         }
-        let installed = format!("http://127.0.0.1:{port}/wb/{capability}/v1");
+        let installed = format!("http://127.0.0.1:{port}/wb/{capability}{suffix}");
         let mut doc: DocumentMut = original.parse().map_err(|_| ConfigError::Parse)?;
         let previous_model = match doc.get("model") {
             None => None,
@@ -165,6 +184,18 @@ impl RoutePatch {
 mod tests {
     use super::*;
     const CAP: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    #[test]
+    fn new_routes_keep_subscription_shape_and_legacy_undo_remains_exact() {
+        let (current, candidate) = RoutePatch::plan("", 43127, CAP).unwrap();
+        let (legacy, old) = RoutePatch::legacy_plan("", 43127, CAP).unwrap();
+        // The reviewed clients choose JSON realtime call bodies using this
+        // literal backend-api marker, including on loopback overrides.
+        assert!(candidate.contains(&format!("/wb/{CAP}/backend-api/codex")));
+        assert!(old.contains(&format!("/wb/{CAP}/v1")));
+        assert!(current.remove(&old).is_err());
+        assert!(legacy.remove(&candidate).is_err());
+        assert_eq!(legacy.remove(&old).unwrap(), "");
+    }
     #[test]
     fn removal_preserves_unrelated_edits_and_comments() {
         let original = "# user's preference\nmodel = 'native'\n";

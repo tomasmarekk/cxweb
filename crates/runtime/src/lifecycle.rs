@@ -147,7 +147,7 @@ mod tests {
                 .split("/wb/")
                 .nth(1)
                 .unwrap()
-                .strip_suffix("/v1")
+                .strip_suffix("/backend-api/codex")
                 .unwrap();
             let port = base
                 .strip_prefix("http://127.0.0.1:")
