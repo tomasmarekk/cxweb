@@ -572,3 +572,27 @@ model discovery, native WebSocket preservation and actual pickers are proven.
 - Windows API references: [repetition patterns](https://learn.microsoft.com/en-us/windows/win32/taskschd/repetitionpattern),
   [IgnoreNew policy](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-multipleinstancespolicy-settingstype-element),
   and [create-only registration](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskfolder-registertask).
+
+## Durable scheduled-task ownership
+
+- The private configuration journal now stores a scheduler plan before external
+  registration. Its name is bound to the current user's SID and installation ID;
+  its executable and arguments come from the independently selected installation.
+  A pending registration prevents configuration application and is never adopted
+  or overwritten based only on its task name after an interrupted operation.
+- Successful registration records both the original plan and the exact definition
+  returned by Windows. Reopening ownership checks the selected installation,
+  original plan and current OS definition without executing XML from the receipt.
+  Configuration application rechecks recorded scheduler ownership before writing.
+- Added tests for write-ahead plan persistence, uncertain-application refusal,
+  redirected task names, and receipt binding to the user/installation/plan. The
+  opt-in scheduler test now persists its registration, releases the journal and
+  reopens ownership from disk before checking restart, duplicate suppression and
+  removal. This live test passed in 60.84 seconds and left no scheduled tasks.
+- All 89 ordinary workspace tests passed; the opt-in scheduler test additionally
+  passed explicitly. Clippy with warnings denied, formatting and diff checks
+  passed. Desktop/account/native config were unchanged.
+- An interrupted registration without its final receipt remains a conservative
+  pending recovery case; automatic adoption is intentionally not implemented.
+  Full activation, client-exit-qualified scheduler cleanup and desktop/browser
+  ownership transfer still require orchestration before production use.

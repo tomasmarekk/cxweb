@@ -240,7 +240,7 @@ async fn executable_recovers_exact_route_and_catalog_ownership_across_processes(
 #[tokio::test]
 #[ignore = "registers a temporary current-user scheduled task and waits for an OS restart"]
 async fn scheduler_restarts_failed_action_without_overwriting_existing_task() {
-    use cxweb_platform::scheduled_runtime::{RegisteredRuntime, TaskPlan};
+    use cxweb_platform::scheduled_runtime::RegisteredRuntime;
     struct Registration(Option<RegisteredRuntime>, PathBuf);
     impl Drop for Registration {
         fn drop(&mut self) {
@@ -276,16 +276,18 @@ async fn scheduler_restarts_failed_action_without_overwriting_existing_task() {
         .output()
         .unwrap();
     assert!(compiler.status.success(), "fixture compiler failed");
-    let installation = format!("{:032x}", rand::random::<u128>());
-    let plan = TaskPlan::new(
-        &installation,
-        &action,
-        &fixture.0,
-        &fixture.0.join("absent.toml"),
-    )
-    .unwrap();
+    let config = fixture.0.join("absent.toml");
+    let mut journal = ConfigJournal::prepare(&fixture.0, &config, 12345, &"a".repeat(43)).unwrap();
+    journal.record_catalog(vec![], vec![]).unwrap();
+    let plan = journal.prepare_scheduler(&action).unwrap();
     let mut registration = Registration(Some(plan.register().unwrap()), fixture.0.join("release"));
-    let task = registration.0.as_ref().unwrap();
+    journal
+        .record_scheduler(registration.0.as_ref().unwrap())
+        .unwrap();
+    drop(journal);
+    let journal = ConfigJournal::reopen(&fixture.0, &config).unwrap();
+    let recovered_task = journal.registered_scheduler().unwrap();
+    let task = &recovered_task;
     assert!(
         plan.register().is_err(),
         "create-only registration must not overwrite an existing task"

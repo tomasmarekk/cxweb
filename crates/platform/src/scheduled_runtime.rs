@@ -103,6 +103,50 @@ pub struct TaskPlan {
 pub struct RegisteredRuntime {
     name: String,
     xml: String,
+    planned_xml: String,
+}
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegistrationReceipt {
+    name: String,
+    xml: String,
+    planned_xml: String,
+}
+
+pub fn task_name(installation: &str) -> io::Result<String> {
+    if installation.len() != 32 || !installation.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(io::Error::other("E_TASK_INSTALLATION"));
+    }
+    Ok(format!(
+        "cxweb-{}-{}",
+        crate::state::current_sid()?,
+        installation.to_ascii_lowercase()
+    ))
+}
+impl RegistrationReceipt {
+    pub fn matches_plan(&self, installation: &str, planned_xml: &str) -> io::Result<bool> {
+        Ok(self.name == task_name(installation)?
+            && self.planned_xml == planned_xml
+            && !self.xml.is_empty()
+            && self.xml.len() <= 128 * 1024
+            && !self.xml.contains('\0'))
+    }
+    /// A receipt never recreates a task from stored XML. Reopening verifies the
+    /// independently selected installation and the exact current OS definition.
+    pub fn reopen(&self, installation: &str) -> io::Result<RegisteredRuntime> {
+        if !self.matches_plan(installation, &self.planned_xml)?
+            || self.planned_xml.len() > 128 * 1024
+        {
+            return Err(io::Error::other("E_TASK_RECEIPT"));
+        }
+        let task = RegisteredRuntime {
+            name: self.name.clone(),
+            xml: self.xml.clone(),
+            planned_xml: self.planned_xml.clone(),
+        };
+        task.with_task(|_, _| Ok(()))?;
+        Ok(task)
+    }
 }
 pub struct TaskStatus {
     pub running: bool,
@@ -138,7 +182,7 @@ impl TaskPlan {
             return Err(io::Error::other("E_TASK_PATH"));
         }
         let sid = crate::state::current_sid()?;
-        let name = format!("cxweb-{sid}-{}", installation.to_ascii_lowercase());
+        let name = task_name(installation)?;
         let _apartment = Apartment::enter()?;
         // SAFETY: all interfaces originate from this thread's local scheduler.
         // BSTR/VARIANT parameters own their storage for each synchronous call.
@@ -238,11 +282,19 @@ impl TaskPlan {
             Ok(RegisteredRuntime {
                 name: self.name.clone(),
                 xml: task.Xml().map_err(com_error)?.to_string(),
+                planned_xml: self.xml.clone(),
             })
         }
     }
 }
 impl RegisteredRuntime {
+    pub fn receipt(&self) -> RegistrationReceipt {
+        RegistrationReceipt {
+            name: self.name.clone(),
+            xml: self.xml.clone(),
+            planned_xml: self.planned_xml.clone(),
+        }
+    }
     fn with_task<T>(
         &self,
         action: impl FnOnce(&ITaskFolder, &IRegisteredTask) -> io::Result<T>,
@@ -323,6 +375,24 @@ mod tests {
             "\"C:\\path with spaces\\\\\""
         );
         assert_eq!(quote("a\"b"), "\"a\\\"b\"");
+    }
+    #[test]
+    fn persisted_receipt_is_bound_to_user_installation_and_original_plan() {
+        let id = "a".repeat(32);
+        let receipt = RegistrationReceipt {
+            name: task_name(&id).unwrap(),
+            xml: "registered-definition".into(),
+            planned_xml: "original-plan".into(),
+        };
+        assert!(receipt.matches_plan(&id, "original-plan").unwrap());
+        assert!(!receipt.matches_plan(&id, "changed-plan").unwrap());
+        assert!(
+            !receipt
+                .matches_plan(&"b".repeat(32), "original-plan")
+                .unwrap()
+        );
+        assert!(receipt.reopen(&"b".repeat(32)).is_err());
+        assert!(task_name("../foreign").is_err());
     }
     #[test]
     fn task_plan_is_interactive_least_privilege_and_bounded() {

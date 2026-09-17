@@ -4,6 +4,7 @@
 use cxweb_codex_adapter::{config::RoutePatch, strict_json};
 use cxweb_platform::{
     atomic_file::Snapshot,
+    scheduled_runtime::{RegisteredRuntime, RegistrationReceipt, TaskPlan, task_name},
     state::{StatePaths, protected_directory},
 };
 use serde::{Deserialize, Serialize};
@@ -64,6 +65,16 @@ struct Record {
     undo: Option<Undo>,
     #[serde(default)]
     catalog: Option<CatalogReceipt>,
+    #[serde(default)]
+    scheduler: Option<SchedulerRecord>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SchedulerRecord {
+    name: String,
+    planned_xml: String,
+    receipt: Option<RegistrationReceipt>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -162,6 +173,7 @@ impl ConfigJournal {
             capability: capability.into(),
             undo: None,
             catalog: None,
+            scheduler: None,
         };
         replace(
             &journal,
@@ -206,6 +218,20 @@ impl ConfigJournal {
         if candidate != record.candidate {
             return Err(invalid());
         }
+        if let Some(scheduler) = &record.scheduler {
+            if scheduler.name != task_name(&record.id)?
+                || scheduler.planned_xml.is_empty()
+                || scheduler.planned_xml.len() > 128 * 1024
+                || scheduler.planned_xml.contains('\0')
+            {
+                return Err(invalid());
+            }
+            if let Some(receipt) = &scheduler.receipt
+                && !receipt.matches_plan(&record.id, &scheduler.planned_xml)?
+            {
+                return Err(invalid());
+            }
+        }
         match (&record.undo, record.phase) {
             (None, Phase::Prepared | Phase::ConfigApplied) => {}
             (Some(undo), Phase::Disconnecting | Phase::ConfigRestored) => {
@@ -239,6 +265,58 @@ impl ConfigJournal {
 
     pub fn installation_id(&self) -> &str {
         &self.record.id
+    }
+
+    /// Persist the plan before creating any external startup entry. An uncertain
+    /// registration leaves this record pending; never overwrite/adopt a task by
+    /// name alone after a crash.
+    pub fn prepare_scheduler(&mut self, executable: &Path) -> io::Result<TaskPlan> {
+        if self.record.phase != Phase::Prepared
+            || self.prepared.is_none()
+            || self.record.scheduler.is_some()
+            || self.record.catalog.is_none()
+        {
+            return Err(io::Error::other("E_SUPERVISION_STATE"));
+        }
+        let plan = TaskPlan::new(
+            &self.record.id,
+            executable,
+            self.journal.path().parent().ok_or_else(invalid)?,
+            &self.record.target,
+        )?;
+        let mut next = self.record.clone();
+        next.scheduler = Some(SchedulerRecord {
+            name: plan.name().into(),
+            planned_xml: plan.xml().into(),
+            receipt: None,
+        });
+        self.store(next)?;
+        Ok(plan)
+    }
+
+    pub fn record_scheduler(&mut self, task: &RegisteredRuntime) -> io::Result<()> {
+        let scheduler = self.record.scheduler.as_ref().ok_or_else(invalid)?;
+        let receipt = task.receipt();
+        if scheduler.receipt.is_some()
+            || !receipt.matches_plan(&self.record.id, &scheduler.planned_xml)?
+        {
+            return Err(io::Error::other("E_SUPERVISION_STATE"));
+        }
+        // Validate live identity again before accepting the durable receipt.
+        receipt.reopen(&self.record.id)?;
+        let mut next = self.record.clone();
+        next.scheduler.as_mut().ok_or_else(invalid)?.receipt = Some(receipt);
+        self.store(next)
+    }
+
+    pub fn registered_scheduler(&self) -> io::Result<RegisteredRuntime> {
+        self.journal.verify_unchanged()?;
+        self.record
+            .scheduler
+            .as_ref()
+            .and_then(|record| record.receipt.as_ref())
+            .ok_or_else(|| io::Error::other("E_SUPERVISION_PENDING"))?
+            .reopen(&self.record.id)
     }
 
     /// Persist exact, previously qualified catalog IDs before exposing the route
@@ -307,6 +385,17 @@ impl ConfigJournal {
 
     pub fn apply(&mut self) -> io::Result<()> {
         self.journal.verify_unchanged()?;
+        if self
+            .record
+            .scheduler
+            .as_ref()
+            .is_some_and(|scheduler| scheduler.receipt.is_none())
+        {
+            return Err(io::Error::other("E_SUPERVISION_PENDING"));
+        }
+        if self.record.scheduler.is_some() {
+            self.registered_scheduler()?;
+        }
         let prepared = self
             .prepared
             .take()
@@ -513,6 +602,44 @@ mod tests {
         value["catalog"]["native"] = serde_json::json!(["webbridge/foreign"]);
         std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
         assert!(ConfigJournal::reopen(&f.state, &f.target).is_err());
+    }
+    #[test]
+    fn scheduler_plan_is_durable_before_registration_and_blocks_uncertain_apply() {
+        let f = Fixture::new();
+        let mut journal = ConfigJournal::prepare(&f.state, &f.target, 12345, CAP).unwrap();
+        assert!(
+            journal
+                .prepare_scheduler(&std::env::current_exe().unwrap())
+                .is_err()
+        );
+        journal.record_catalog(vec![], vec![]).unwrap();
+        let plan = journal
+            .prepare_scheduler(&std::env::current_exe().unwrap())
+            .unwrap();
+        let value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(f.state.join("integration.json")).unwrap())
+                .unwrap();
+        assert_eq!(value["scheduler"]["name"], plan.name());
+        assert_eq!(value["scheduler"]["planned_xml"], plan.xml());
+        assert!(value["scheduler"]["receipt"].is_null());
+        assert_eq!(
+            journal.apply().unwrap_err().to_string(),
+            "E_SUPERVISION_PENDING"
+        );
+        assert!(!f.target.exists());
+        drop(journal);
+        let recovered = ConfigJournal::reopen(&f.state, &f.target).unwrap();
+        assert!(recovered.registered_scheduler().is_err());
+        drop(recovered);
+        let mut redirected = value;
+        redirected["scheduler"]["name"] = serde_json::json!("cxweb-foreign-installation");
+        std::fs::write(
+            f.state.join("integration.json"),
+            serde_json::to_vec(&redirected).unwrap(),
+        )
+        .unwrap();
+        assert!(ConfigJournal::reopen(&f.state, &f.target).is_err());
+        assert!(!f.target.exists());
     }
     #[test]
     fn committed_config_and_later_user_edits_have_distinct_recovery() {
