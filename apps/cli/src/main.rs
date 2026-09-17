@@ -10,6 +10,8 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Compare manual login in the cxweb profile without CDP. Close cxweb first.
+    ManualLoginProbe,
     /// Prove private browser transport in a NEW dedicated test profile.
     BrowserProbe {
         #[arg(long)]
@@ -38,6 +40,45 @@ enum Command {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match Args::parse().command {
+        Command::ManualLoginProbe => {
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                let paths = cxweb_platform::state::StatePaths::open()?;
+                let _lock = paths.lock().map_err(|_| {
+                    std::io::Error::other(
+                        "Close cxweb before the manual login comparison. No browser was launched.",
+                    )
+                })?;
+                let executable = cxweb_platform::state::installed_browser()?;
+                // Diagnostic only: ordinary browser navigation, no CDP or login
+                // automation, no cookie access and no personal-profile copying.
+                // Keep the installation lock until this browser process exits.
+                let mut browser = std::process::Command::new(executable)
+                    .arg(format!("--user-data-dir={}", paths.profile.display()))
+                    .args([
+                        "--no-first-run",
+                        "--no-default-browser-check",
+                        "https://chatgpt.com/",
+                    ])
+                    .creation_flags(0x08000000) // CREATE_NO_WINDOW hides console, not browser UI.
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()?;
+                print_json(&serde_json::json!({
+                    "mode":"manual_login_comparison", "cdp":false,
+                    "profile":"existing_cxweb_profile", "pid":browser.id(),
+                    "instruction":"Complete login manually, then close this browser before restarting cxweb. Keep this diagnostic process running."
+                }));
+                let status = browser.wait()?;
+                print_json(
+                    &serde_json::json!({"browser_exited":true,"success":status.success(),"authentication_verified":false}),
+                );
+            }
+            #[cfg(not(windows))]
+            return Err("manual login comparison is only available on Windows".into());
+        }
         Command::BrowserProbe {
             browser,
             profile,

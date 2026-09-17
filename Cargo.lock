@@ -720,6 +720,7 @@ dependencies = [
  "clap",
  "cxweb-browser-adapter",
  "cxweb-codex-adapter",
+ "cxweb-platform",
  "cxweb-runtime",
  "serde_json",
  "tokio",

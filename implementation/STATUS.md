@@ -239,3 +239,18 @@ model discovery, native WebSocket preservation and actual pickers are proven.
   requests, scope/generation changes, duplicate JSON keys and native denial.
   `cargo test --locked --workspace` passed 49 tests; workspace Clippy passed with
   warnings denied. This is local integration evidence, not genuine picker proof.
+
+## Manual login comparison pending
+
+- Added development-only `cxweb manual-login-probe` to isolate the failed login.
+  It opens the same protected cxweb profile with ordinary installed Chrome,
+  without CDP, automation, cookie export, profile copying or security overrides.
+  The user completes login manually. This is a diagnostic comparison, not a
+  production authentication workaround or a claim that pipe login now works.
+- The command holds the normal installation lock while its browser process runs.
+  It refuses an occupied profile before launching; that refusal was exercised
+  against the currently running desktop app. The diagnostic process must remain
+  running, and its browser must be closed before restarting cxweb.
+- User was asked to close cxweb before this comparison. The browser launch and
+  login result remain pending; no existing browser was forcibly closed.
+- `cargo build -p cxweb`, workspace Clippy and all 49 Rust tests passed.
