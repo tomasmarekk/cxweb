@@ -6,6 +6,8 @@ pub mod config_journal;
 pub mod control;
 pub mod gateway;
 pub mod ledger;
+#[cfg(windows)]
+pub mod lifecycle;
 pub mod native;
 mod native_ws;
 pub mod scheduler;

@@ -426,3 +426,22 @@ model discovery, native WebSocket preservation and actual pickers are proven.
 - Production daemon ownership and orchestration with the configuration journal
   still need wiring. No real account generation or native config mutation was
   performed; actual App/CLI qualification remains outstanding.
+
+## Disconnect lifecycle orchestration
+
+- Added a controller binding a configuration journal to its exact gateway URL
+  and capability. Concurrent disconnects are serialized; accepted operations
+  continue if a UI caller stops waiting. Blocking filesystem work runs outside
+  the async reactor and retains journal ownership through completion.
+- The ordered operation closes/drains web work before restoring configuration.
+  Drain failure leaves configuration unchanged. Restore failure reports a
+  separate state and preserves the listener; success reports pending restart,
+  never a claim that existing clients have already updated their configuration.
+- Four integration tests cover drain timeout/retry, caller cancellation, wrong
+  gateway binding, user-edited configuration, and a real loopback HTTP listener
+  serving native requests before and after actual temporary-file restoration.
+  The same listener rejects owned web requests afterward. Upstream data and
+  configuration are synthetic fixtures, not live Codex/account qualification.
+- All 74 workspace tests passed (the opt-in Chrome test was skipped); Clippy,
+  formatting and diff checks passed. Production process supervision, protected
+  control IPC, startup recovery and desktop wiring still remain to implement.

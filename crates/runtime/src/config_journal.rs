@@ -199,6 +199,16 @@ impl ConfigJournal {
         self.record.phase
     }
 
+    /// Match the exact live listener, including its private capability, without
+    /// exporting that capability through lifecycle status or diagnostics.
+    pub fn routes_to(&self, base_url: &str) -> bool {
+        base_url
+            == format!(
+                "http://127.0.0.1:{}/wb/{}/v1",
+                self.record.port, self.record.capability
+            )
+    }
+
     pub fn recovery(&self) -> io::Result<Recovery> {
         let current = Snapshot::capture(&self.record.target)?;
         if let Some(undo) = &self.record.undo
