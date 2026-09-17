@@ -1,0 +1,20 @@
+{
+  "schema": "cxweb.client-probe.v1",
+  "client": "codex-cli 0.153.4",
+  "synthetic": true,
+  "actualPicker": "NOT RUN",
+  "authentication": "synthetic API key in isolated child environment",
+  "events": [
+    "model/list accepted owned model",
+    "thread/start selected owned model",
+    "turn/start completed through loopback",
+    "expected synthetic assistant text received"
+  ],
+  "model": {
+    "id": "webbridge/diagnostic",
+    "model": "webbridge/diagnostic",
+    "displayName": "ChatGPT Web · Diagnostic",
+    "hidden": false
+  },
+  "result": "PASS backend-only synthetic test"
+}
