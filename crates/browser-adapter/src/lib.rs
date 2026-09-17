@@ -5,5 +5,5 @@ pub mod turn;
 #[cfg(windows)]
 pub use pipe::{
     LoginObservation, ManagedBrowser, ManagedPage, ModelCandidate, ModelSurface,
-    ModelSurfaceDiagnostic,
+    ModelSurfaceDiagnostic, QualificationOutcome,
 };

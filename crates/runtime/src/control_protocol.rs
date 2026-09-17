@@ -31,6 +31,7 @@ pub enum LoginAction {
     Connect,
     Refresh,
     Qualify,
+    QualifyText,
 }
 pub type LoginWork = Pin<Box<dyn Future<Output = Result<ControlStatus, &'static str>> + Send>>;
 pub trait LoginBackend: Send + Sync + 'static {
@@ -44,6 +45,7 @@ impl LoginBackend for Control {
                 LoginAction::Connect => control.connect().await,
                 LoginAction::Refresh => control.status().await,
                 LoginAction::Qualify => control.qualify().await,
+                LoginAction::QualifyText => control.qualify_text().await,
             }
         })
     }
@@ -94,7 +96,7 @@ pub enum Reply {
     BrowserStatus {
         version: u32,
         instance: String,
-        status: ControlStatus,
+        status: Box<ControlStatus>,
     },
     Status {
         version: u32,
@@ -115,7 +117,45 @@ pub enum Outcome {
     Running {},
     Completed { result: DisconnectState },
     Failed {},
-    LoginCompleted { status: ControlStatus },
+    LoginCompleted { status: Box<ControlStatus> },
+    LoginFailed { code: String },
+}
+
+pub(crate) fn login_error(code: &str) -> &'static str {
+    match code {
+        "E_SUBMISSION_UNCERTAIN" => "E_SUBMISSION_UNCERTAIN",
+        "E_QUALIFICATION_TIMEOUT" => "E_QUALIFICATION_TIMEOUT",
+        "E_TEMPORARY_CHAT" => "E_TEMPORARY_CHAT",
+        "E_SEND_SURFACE" => "E_SEND_SURFACE",
+        "E_SEND_DISABLED" => "E_SEND_DISABLED",
+        "E_COMPOSER_MISMATCH" => "E_COMPOSER_MISMATCH",
+        "E_LIVE_QUALIFICATION" => "E_LIVE_QUALIFICATION",
+        "E_QUALIFICATION_SELECT" => "E_QUALIFICATION_SELECT",
+        "E_QUALIFICATION_BASELINE" => "E_QUALIFICATION_BASELINE",
+        "E_QUALIFICATION_INSERT" => "E_QUALIFICATION_INSERT",
+        "E_QUALIFICATION_OBSERVE" => "E_QUALIFICATION_OBSERVE",
+        "E_MODEL_SELECTION" => "E_MODEL_SELECTION",
+        "E_QUALIFICATION_PROTOCOL" => "E_QUALIFICATION_PROTOCOL",
+        "E_MODEL_OPEN" => "E_MODEL_OPEN",
+        "E_MODEL_READ" => "E_MODEL_READ",
+        "E_MODEL_CLOSE" => "E_MODEL_CLOSE",
+        "E_MODEL_PARSE" => "E_MODEL_PARSE",
+        "E_MODEL_RESULT" => "E_MODEL_RESULT",
+        _ => "E_LOGIN_OPERATION",
+    }
+}
+
+#[test]
+fn login_failures_never_export_arbitrary_backend_text() {
+    assert_eq!(
+        login_error("E_QUALIFICATION_PROTOCOL"),
+        "E_QUALIFICATION_PROTOCOL"
+    );
+    assert_eq!(
+        login_error("E_QUALIFICATION_INSERT"),
+        "E_QUALIFICATION_INSERT"
+    );
+    assert_eq!(login_error("private account data"), "E_LOGIN_OPERATION");
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -190,7 +230,8 @@ impl Service {
                         .login_status
                         .lock()
                         .expect("login status lock poisoned")
-                        .clone(),
+                        .clone()
+                        .into(),
                 };
             }
             Command::Browser {
@@ -271,9 +312,19 @@ impl Service {
                     {
                         Ok(result) => {
                             *status.lock().expect("login status lock poisoned") = result.clone();
-                            Outcome::LoginCompleted { status: result }
+                            Outcome::LoginCompleted {
+                                status: Box::new(result),
+                            }
                         }
-                        Err(_) => Outcome::Failed {},
+                        Err(code) => {
+                            let mut cached = status.lock().expect("login status lock poisoned");
+                            cached.text_qualified_model = None;
+                            cached.qualification_evidence = None;
+                            cached.phase = "awaiting_qualification".into();
+                            Outcome::LoginFailed {
+                                code: login_error(code).to_owned(),
+                            }
+                        }
                     },
                 }
             });
@@ -413,6 +464,68 @@ mod tests {
     }
     fn dispatch(service: &Service, command: Command) -> Reply {
         service.handle(&serde_json::to_vec(&request(command)).unwrap())
+    }
+    #[tokio::test]
+    async fn failed_text_test_receipt_is_replayed_without_resubmission() {
+        struct Failing(AtomicUsize);
+        impl LoginBackend for Failing {
+            fn request(&self, action: LoginAction) -> LoginWork {
+                assert_eq!(action, LoginAction::QualifyText);
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async { Err("E_SUBMISSION_UNCERTAIN") })
+            }
+        }
+        let backend = Arc::new(Failing(AtomicUsize::new(0)));
+        let service = Service::login(backend.clone());
+        service.login_status.lock().unwrap().text_qualified_model = Some("stale".into());
+        let command = || Command::Browser {
+            instance: service.instance.clone(),
+            operation: "a".repeat(32),
+            action: LoginAction::QualifyText,
+        };
+        assert!(matches!(
+            dispatch(&service, command()),
+            Reply::Operation {
+                outcome: Outcome::Running {},
+                ..
+            }
+        ));
+        let terminal = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let result = dispatch(&service, command());
+                if !matches!(
+                    result,
+                    Reply::Operation {
+                        outcome: Outcome::Running {},
+                        ..
+                    }
+                ) {
+                    break result;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            terminal,
+            Reply::Operation {
+                operation: "a".repeat(32),
+                outcome: Outcome::LoginFailed {
+                    code: "E_SUBMISSION_UNCERTAIN".into()
+                },
+            }
+        );
+        assert_eq!(dispatch(&service, command()), terminal);
+        assert_eq!(backend.0.load(Ordering::SeqCst), 1);
+        assert!(
+            service
+                .login_status
+                .lock()
+                .unwrap()
+                .text_qualified_model
+                .is_none()
+        );
     }
     #[tokio::test]
     async fn rejects_ambiguous_remote_and_stale_commands_without_mutation() {

@@ -118,6 +118,48 @@ cleanup. This is synthetic DOM evidence; no live prompt was sent.
 
 ## Additional implementation and evidence
 
+The user confirmed the release UI after commit e29fc9a: five effort candidates,
+effort four selected, and Temporary Chat verified. This is authenticated manual
+evidence for discovery and selected-state verification, not generation or Codex
+picker evidence. No screenshot or account data is stored in the repository.
+
+An explicit text-qualification action now sends one fixed diagnostic request in
+an owned Temporary Chat target. It rechecks the selected candidate before opening
+the target and verifies the target's label before inserting any prompt. The
+existing durable ledger records submission intent before Send; uncertainty never
+causes an automatic retry. A successful response must pass turn attribution,
+strict nonce-bound envelope validation and exact expected text. The result is
+text-only evidence and does not enable model publication, tools or routing.
+The private control protocol retains an operation receipt while the UI is gone;
+only allowlisted failure codes are returned. The CLI can invoke these same fixed
+operations and reports only a bounded status summary.
+
+Synthetic Chrome 152 tests passed wrong-route rejection, failed-durability refusal
+without submission and a single successful qualification submission. Seven UI
+tests passed, including no automatic generation, duplicate-click suppression,
+unverified Temporary Chat refusal and visible failure without retry. The full
+Rust suite passed 108 tests with two opt-in tests ignored. Clippy with warnings
+denied passed. A Node regression test also verifies that a missing slider cannot
+be interpreted as a zero-valued candidate; it runs in CI.
+
+Live discovery passed again through the same runtime via CLI. Two text-test
+preparations failed before durable submission intent (ledger state `failed`),
+with the second isolating candidate selection. Bounded waits for the menu and
+each arrow-key update were added, along with delayed synthetic fixtures. The
+next live attempt reached Send but returned `E_SUBMISSION_UNCERTAIN`; it was
+not automatically retried and does not qualify text transport. The updated
+adapter now distinguishes explicit no-click preconditions (missing/disabled
+Send, route mismatch, composer mismatch) from an uncertain CDP send result.
+Fresh synthetic Chrome qualification, including the delayed fixture and no-send
+guards, passed after these changes. Authenticated text qualification remains
+unverified and requires a new explicitly initiated test.
+
+The final targeted private-control run passed six tests, including replay of an
+uncertain text-test receipt without a second backend call and invalidation of
+stale success status. The release desktop, daemon and CLI built successfully.
+The desktop was reopened after non-generative discovery confirmed all five
+candidates and Temporary Chat again; no further live text test was initiated.
+
 The G0 actual-picker gate remains open. Per quality document section 2, independent
 implementation continues without claiming a live gate passed. No production UI
 or real configuration mutation is enabled yet.

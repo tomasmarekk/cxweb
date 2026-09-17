@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-qualify-text"
+description = "Enables the qualify_text command without any pre-configured scope."
+commands.allow = ["qualify_text"]
+
+[[permission]]
+identifier = "deny-qualify-text"
+description = "Denies the qualify_text command without any pre-configured scope."
+commands.deny = ["qualify_text"]

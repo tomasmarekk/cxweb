@@ -23,7 +23,8 @@ function () {
   const min = Number(slider?.getAttribute('aria-valuemin'));
   const max = Number(slider?.getAttribute('aria-valuemax'));
   const value = Number(slider?.getAttribute('aria-valuenow'));
-  const rangeValid = Number.isSafeInteger(min) && Number.isSafeInteger(max) && Number.isSafeInteger(value)
+  const rangeValid = !!slider && ['aria-valuemin', 'aria-valuemax', 'aria-valuenow'].every(name => slider.hasAttribute(name))
+    && Number.isSafeInteger(min) && Number.isSafeInteger(max) && Number.isSafeInteger(value)
     && min <= value && value <= max && max - min >= 0 && max - min < 5;
   if (rangeValid) {
     const control = document.querySelector('[data-testid="model-switcher-dropdown-button"], button[aria-haspopup="menu"][data-tone="neutral"]');

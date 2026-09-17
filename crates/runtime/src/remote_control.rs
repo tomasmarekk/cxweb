@@ -1,4 +1,4 @@
-//! Desktop attachment to the separate, non-generative login runtime.
+//! Desktop and diagnostic attachment to the separate login/qualification runtime.
 use crate::{
     control::{Control, ControlStatus},
     control_protocol::{self, Command, ErrorCode, LoginAction, Outcome, Reply, Request, Service},
@@ -101,7 +101,7 @@ impl RemoteControl {
         match reply {
             Reply::BrowserStatus {
                 instance, status, ..
-            } => Ok((instance, status)),
+            } => Ok((instance, *status)),
             _ => Err("E_RUNTIME_PROTOCOL"),
         }
     }
@@ -110,6 +110,9 @@ impl RemoteControl {
     }
     pub async fn qualify(&self) -> Result<ControlStatus, &'static str> {
         self.perform(LoginAction::Qualify).await
+    }
+    pub async fn qualify_text(&self) -> Result<ControlStatus, &'static str> {
+        self.perform(LoginAction::QualifyText).await
     }
     pub async fn status(&self, refresh: bool) -> Result<ControlStatus, &'static str> {
         if refresh {
@@ -131,13 +134,22 @@ impl RemoteControl {
             },
         };
         let mut response = control_protocol::exchange(&self.channel, &request).await;
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(35);
+        let deadline = tokio::time::Instant::now()
+            + if action == LoginAction::QualifyText {
+                Duration::from_secs(335)
+            } else {
+                Duration::from_secs(35)
+            };
         loop {
             match response {
                 Ok(Reply::Operation {
                     outcome: Outcome::LoginCompleted { status },
                     ..
-                }) => return Ok(status),
+                }) => return Ok(*status),
+                Ok(Reply::Operation {
+                    outcome: Outcome::LoginFailed { code },
+                    ..
+                }) => return Err(control_protocol::login_error(&code)),
                 Ok(Reply::Operation {
                     outcome: Outcome::Failed {},
                     ..
@@ -206,6 +218,9 @@ mod tests {
                 LoginAction::Qualify => {
                     self.refreshes.fetch_add(1, Ordering::SeqCst);
                 }
+                LoginAction::QualifyText => {
+                    self.refreshes.fetch_add(1, Ordering::SeqCst);
+                }
             }
             self.started.notify_one();
             let finish = self.finish.clone();
@@ -216,6 +231,7 @@ mod tests {
                         LoginAction::Connect => "authenticating",
                         LoginAction::Refresh => "awaiting_qualification",
                         LoginAction::Qualify => "candidates_observed",
+                        LoginAction::QualifyText => "text_qualified",
                     }
                     .into(),
                     ..ControlStatus::default()

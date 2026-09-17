@@ -10,6 +10,11 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Invoke a fixed operation through the same private runtime as the desktop.
+    BrowserControl {
+        #[arg(value_enum)]
+        action: BrowserAction,
+    },
     /// Compare manual login in the cxweb profile without CDP. Close cxweb first.
     ManualLoginProbe,
     /// Prove private browser transport in a NEW dedicated test profile.
@@ -44,9 +49,44 @@ enum Command {
     ProbeCatalog,
 }
 
+#[derive(Clone, clap::ValueEnum)]
+enum BrowserAction {
+    Status,
+    Connect,
+    Refresh,
+    Discover,
+    TestText,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match Args::parse().command {
+        Command::BrowserControl { action } => {
+            #[cfg(windows)]
+            {
+                let control = cxweb_runtime::remote_control::RemoteControl::new()?;
+                let status = match action {
+                    BrowserAction::Status => control.status(false).await?,
+                    BrowserAction::Connect => control.connect().await?,
+                    BrowserAction::Refresh => control.status(true).await?,
+                    BrowserAction::Discover => control.qualify().await?,
+                    BrowserAction::TestText => control.qualify_text().await?,
+                };
+                // Fixed summary only: no account metadata, prompt or response body.
+                print_json(&serde_json::json!({
+                    "phase": status.phase,
+                    "candidate_count": status.candidate_models.len(),
+                    "temporary_chat_verified": status.temporary_chat_available,
+                    "text_verified": status.text_qualified_model.is_some(),
+                    "routing_installed": status.routing_installed,
+                }));
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = action;
+                return Err("browser control requires Windows".into());
+            }
+        }
         Command::ManualLoginProbe => {
             #[cfg(windows)]
             {

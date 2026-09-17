@@ -19,7 +19,19 @@ function showError(code) {
     E_MODEL_CLOSE: 'Model verification stopped while closing the ChatGPT model menu.',
     E_MODEL_PARSE: 'The visible ChatGPT model menu returned an unsupported structure.',
     E_MODEL_RESULT: 'The visible ChatGPT model menu exceeded the safe discovery limits.',
-    E_MODEL_SELECTION: 'The selected ChatGPT route could not be verified without changing it.'
+    E_MODEL_SELECTION: 'The selected ChatGPT route changed or could not be verified. Refresh model candidates.',
+    E_SUBMISSION_UNCERTAIN: 'The test may have been submitted. It was not retried automatically.',
+    E_QUALIFICATION_TIMEOUT: 'The test did not complete within five minutes. Its browser tab was closed.',
+    E_QUALIFICATION_PROTOCOL: 'ChatGPT responded, but the test response did not match the required protocol.',
+    E_LIVE_QUALIFICATION: 'The live text test could not be verified. No automatic retry was made.',
+    E_TEMPORARY_CHAT: 'Temporary Chat could not be verified. No test message was sent.',
+    E_QUALIFICATION_SELECT: 'The test stopped while selecting its route in Temporary Chat.',
+    E_QUALIFICATION_BASELINE: 'The test could not establish the initial conversation state.',
+    E_QUALIFICATION_INSERT: 'The test could not insert its message. Send was not clicked.',
+    E_QUALIFICATION_OBSERVE: 'The test response could not be attributed. No automatic retry was made.',
+    E_SEND_SURFACE: 'The send controls were unavailable. Send was not clicked.',
+    E_SEND_DISABLED: 'The send button was not ready. Send was not clicked.',
+    E_COMPOSER_MISMATCH: 'The composer did not contain the exact test message. Send was not clicked.'
   };
   $('error').textContent = messages[code] || 'Verification failed. Check the browser window and try again.';
   $('error').hidden = false; $('diagnostic').textContent = String(code).slice(0, 80);
@@ -30,6 +42,7 @@ function render(status) {
   $('light').classList.toggle('pending', phase !== 'disconnected');
   $('runtime').textContent = status.browser_version ? `Browser: ${status.browser_version}. Private connection over a Windows pipe.` : 'The browser has not started yet.';
   $('models').hidden = true; $('models').replaceChildren();
+  $('qualification').hidden = true;
   $('codex').textContent = 'Awaiting verification';
   if (phase === 'disconnected') {
     $('heading').textContent = 'Sign in to ChatGPT';
@@ -40,6 +53,7 @@ function render(status) {
     $('description').textContent = 'The ChatGPT interface is available. The account and available models still need verification.';
     $('chatgpt').textContent = 'Session detected'; $('connect').textContent = 'Verify available models';
   } else if (phase === 'candidates_observed') {
+    $('qualification').hidden = status.temporary_chat_available !== true;
     $('heading').textContent = 'Model candidates found';
     $('description').textContent = 'The visible ChatGPT routes were observed. Coding and Codex picker qualification is still required.';
     $('chatgpt').textContent = 'Session detected'; $('connect').textContent = 'Refresh model candidates';
@@ -53,6 +67,12 @@ function render(status) {
     const privacy = document.createElement('p');
     privacy.textContent = status.temporary_chat_available ? 'Temporary Chat verified.' : 'Temporary Chat was not verified; private generation remains disabled.';
     $('models').append(heading, list, privacy); $('models').hidden = false;
+  } else if (phase === 'text_qualified') {
+    $('heading').textContent = 'Text test passed';
+    $('description').textContent = 'ChatGPT returned the expected test response. Tool support and Codex integration still need verification.';
+    $('chatgpt').textContent = 'Text verified';
+    $('codex').textContent = 'Awaiting integration';
+    $('connect').textContent = 'Refresh model candidates';
   } else if (phase === 'discovery_failed') {
     $('heading').textContent = 'Model menu changed';
     $('description').textContent = 'The signed-in page is available, but its current model menu structure is not recognized yet.';
@@ -81,7 +101,7 @@ async function check(connect = false, refresh = true) {
   }
 }
 async function act() {
-  if (phase === 'awaiting_qualification' || phase === 'candidates_observed' || phase === 'discovery_failed') {
+  if (phase === 'awaiting_qualification' || phase === 'candidates_observed' || phase === 'discovery_failed' || phase === 'text_qualified') {
     if (pending) return;
     pending = true; $('connect').disabled = true;
     try { render(await invoke('qualify')); } catch (error) { showError(error); }
@@ -91,4 +111,14 @@ async function act() {
   await check(phase === 'disconnected' || phase === 'browser_unavailable');
 }
 $('connect').addEventListener('click', act);
+$('test-text').addEventListener('click', async () => {
+  if (pending || phase !== 'candidates_observed' || $('qualification').hidden) return;
+  pending = true; $('connect').disabled = true; $('test-text').disabled = true;
+  $('test-text').textContent = 'Waiting for the test response…';
+  try { render(await invoke('qualify_text')); } catch (error) { showError(error); }
+  finally {
+    pending = false; $('connect').disabled = false; $('test-text').disabled = false;
+    $('test-text').textContent = 'Send text test';
+  }
+});
 if (invoke) check(false, false); else showError('E_DESKTOP_IPC');

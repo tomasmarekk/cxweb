@@ -1,7 +1,13 @@
-//! Non-generative login worker. All browser IPC runs off the UI/async reactor.
+//! Login and explicit qualification worker. Browser IPC stays off the reactor.
+use crate::ledger::{Admission, Ledger};
 use cxweb_browser_adapter::{
     LoginObservation, ManagedBrowser, ManagedPage, ModelSurfaceDiagnostic,
 };
+use cxweb_codex_adapter::{
+    envelope::{self, ValidatedOutput},
+    request::CanonicalRequest,
+};
+use cxweb_domain::{SessionKey, TurnState};
 use cxweb_platform::state::{StatePaths, installed_browser};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -22,6 +28,10 @@ pub struct ControlStatus {
     pub temporary_chat_available: Option<bool>,
     #[serde(default)]
     pub model_discovery_diagnostic: Option<ModelSurfaceDiagnostic>,
+    #[serde(default)]
+    pub text_qualified_model: Option<String>,
+    #[serde(default)]
+    pub qualification_evidence: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,6 +52,8 @@ impl Default for ControlStatus {
             candidate_models: Vec::new(),
             temporary_chat_available: None,
             model_discovery_diagnostic: None,
+            text_qualified_model: None,
+            qualification_evidence: None,
         }
     }
 }
@@ -50,6 +62,7 @@ enum WorkerCommand {
     Connect(Reply),
     Status(Reply),
     Qualify(Reply),
+    QualifyText(Reply),
 }
 #[derive(Clone)]
 pub struct Control {
@@ -62,6 +75,7 @@ impl Control {
         let lock = paths.lock().map_err(|_| "E_ALREADY_RUNNING")?;
         let executable = installed_browser().map_err(|_| "E_BROWSER_RUNTIME_MISSING")?;
         let (commands, mut incoming) = mpsc::channel(8);
+        let runtime = tokio::runtime::Handle::current();
         std::thread::Builder::new()
             .name("cxweb-browser-control".into())
             .spawn(move || {
@@ -69,22 +83,23 @@ impl Control {
                 let mut browser: Option<ManagedBrowser> = None;
                 let mut page: Option<ManagedPage> = None;
                 let mut status = ControlStatus::default();
+                let mut observed_routes: Vec<(QualifiedModel, String)> = Vec::new();
                 while let Some(command) = incoming.blocking_recv() {
-                    let (connect, qualify, reply) = match command {
-                        WorkerCommand::Connect(reply) => (true, false, reply),
-                        WorkerCommand::Status(reply) => (false, false, reply),
-                        WorkerCommand::Qualify(reply) => (false, true, reply),
+                    let (connect, qualify, qualify_text, reply) = match command {
+                        WorkerCommand::Connect(reply) => (true, false, false, reply),
+                        WorkerCommand::Status(reply) => (false, false, false, reply),
+                        WorkerCommand::Qualify(reply) => (false, true, false, reply),
+                        WorkerCommand::QualifyText(reply) => (false, false, true, reply),
                     };
                     if reply.is_closed() {
                         continue;
                     }
-                    // Reconnect is an explicit UI action. This controller never
-                    // submits a generation, so replacing its failed login page
-                    // cannot repeat an uncertain request.
+                    // Reconnect never replays a qualification request.
                     if connect && status.phase == "browser_unavailable" {
                         page = None;
                         browser = None;
                         status = ControlStatus::default();
+                        observed_routes.clear();
                     }
                     if connect && page.is_none() {
                         let opened = (|| {
@@ -127,6 +142,13 @@ impl Control {
                                     "authenticating".into()
                                 };
                                 status.observation = Some(observation);
+                                if status.phase != "awaiting_qualification" {
+                                    observed_routes.clear();
+                                    status.candidate_models.clear();
+                                    status.text_qualified_model = None;
+                                    status.qualification_evidence = None;
+                                    status.temporary_chat_available = None;
+                                }
                                 if qualify && status.phase == "awaiting_qualification" {
                                     match browser.discover_models(page) {
                                         Ok(surface) => {
@@ -145,6 +167,7 @@ impl Control {
                                                     Ok(label) if label == selected[0].label
                                                 )
                                             {
+                                                observed_routes.clear();
                                                 status.candidate_models.clear();
                                                 status.temporary_chat_available = None;
                                                 status.model_discovery_diagnostic =
@@ -154,7 +177,7 @@ impl Control {
                                             }
                                             let temporary_chat =
                                                 browser.verify_temporary_chat().unwrap_or(false);
-                                            status.candidate_models = surface
+                                            observed_routes = surface
                                                 .candidates
                                                 .into_iter()
                                                 .map(|candidate| {
@@ -167,17 +190,26 @@ impl Control {
                                                         );
                                                         hash.update(value.as_bytes());
                                                     }
-                                                    QualifiedModel {
-                                                        id: format!(
-                                                            "webbridge/{:x}",
-                                                            hash.finalize()
-                                                        )[..34]
-                                                            .to_owned(),
-                                                        label: candidate.label,
-                                                        selected: candidate.selected,
-                                                    }
+                                                    (
+                                                        QualifiedModel {
+                                                            id: format!(
+                                                                "webbridge/{:x}",
+                                                                hash.finalize()
+                                                            )[..34]
+                                                                .to_owned(),
+                                                            label: candidate.label,
+                                                            selected: candidate.selected,
+                                                        },
+                                                        candidate.identity,
+                                                    )
                                                 })
                                                 .collect();
+                                            status.candidate_models = observed_routes
+                                                .iter()
+                                                .map(|(model, _)| model.clone())
+                                                .collect();
+                                            status.text_qualified_model = None;
+                                            status.qualification_evidence = None;
                                             status.temporary_chat_available = Some(temporary_chat);
                                             status.model_discovery_diagnostic =
                                                 Some(surface.diagnostic);
@@ -190,6 +222,7 @@ impl Control {
                                         }
                                         Err(error) => {
                                             status.candidate_models.clear();
+                                            observed_routes.clear();
                                             status.temporary_chat_available = None;
                                             status.model_discovery_diagnostic = None;
                                             let code = match error.to_string().as_str() {
@@ -206,16 +239,160 @@ impl Control {
                                         }
                                     }
                                 }
+                                if qualify_text && status.phase == "awaiting_qualification" {
+                                    status.text_qualified_model = None;
+                                    status.qualification_evidence = None;
+                                    let selected = observed_routes
+                                        .iter()
+                                        .filter(|(model, _)| model.selected)
+                                        .collect::<Vec<_>>();
+                                    if selected.len() != 1 {
+                                        let _ = reply.send(Err("E_MODEL_SELECTION"));
+                                        continue;
+                                    }
+                                    let (model, identity) = selected[0];
+                                    let fresh = browser.discover_models(page);
+                                    if !fresh.is_ok_and(|surface| {
+                                        surface.candidates.iter().filter(|c| c.selected).count() == 1
+                                            && surface.candidates.iter().any(|c| c.selected
+                                                && c.identity == *identity && c.label == model.label)
+                                    }) {
+                                        let _ = reply.send(Err("E_MODEL_SELECTION"));
+                                        continue;
+                                    }
+                                    let nonce = format!("{:032x}", rand::random::<u128>());
+                                    let request_bytes = serde_json::json!({
+                                        "model": model.id,
+                                        "input": "Complete the cxweb transport qualification. Return the requested final protocol envelope with the exact final text: cxweb live qualification passed",
+                                        "tool_choice": "none",
+                                        "parallel_tool_calls": false
+                                    })
+                                    .to_string();
+                                    let request = match CanonicalRequest::decode(request_bytes.as_bytes()) {
+                                        Ok(request) => request,
+                                        Err(_) => {
+                                            let _ = reply.send(Err("E_QUALIFICATION_REQUEST"));
+                                            continue;
+                                        }
+                                    };
+                                    let prompt = match request.browser_prompt(&nonce, 512 * 1024) {
+                                        Ok(prompt) => prompt,
+                                        Err(_) => {
+                                            let _ = reply.send(Err("E_QUALIFICATION_REQUEST"));
+                                            continue;
+                                        }
+                                    };
+                                    let intent = runtime.block_on(async {
+                                        let ledger = Ledger::open(&paths.state.join("qualification.sqlite")).await?;
+                                        // This scope is a diagnostic operation, not a certified account.
+                                        let scope = SessionKey {
+                                            installation: "cxweb-qualification".into(),
+                                            native_session: nonce.clone(),
+                                            account_scope: "unqualified-diagnostic".into(),
+                                            workspace_scope: "unqualified-diagnostic".into(),
+                                            route: model.id.clone(), epoch: 0,
+                                        };
+                                        if ledger.admit(&nonce, &scope, prompt.as_bytes()).await? != Admission::New {
+                                            return Err("E_REQUEST_ALREADY_ADMITTED");
+                                        }
+                                        Ok(ledger)
+                                    });
+                                    let ledger = match intent {
+                                        Ok(ledger) => ledger,
+                                        Err(code) => { let _ = reply.send(Err(code)); continue; }
+                                    };
+                                    let mut submission_intent = false;
+                                    let outcome = match browser.qualify_candidate(identity, &model.label, &prompt, || {
+                                        runtime.block_on(async {
+                                            ledger.transition(&nonce, TurnState::ObservedBaseline).await?;
+                                            ledger.transition(&nonce, TurnState::Submitting).await
+                                        }).map_err(std::io::Error::other)?;
+                                        submission_intent = true;
+                                        Ok(())
+                                    }) {
+                                        Ok(outcome) if outcome.candidate_label == model.label => {
+                                            outcome
+                                        }
+                                        Ok(_) => {
+                                            let _ = runtime.block_on(ledger.transition(&nonce, TurnState::SubmissionUncertain));
+                                            let _ = reply.send(Err("E_MODEL_SELECTION"));
+                                            continue;
+                                        }
+                                        Err(error) => {
+                                            let terminal = if submission_intent { TurnState::SubmissionUncertain } else { TurnState::Failed };
+                                            let _ = runtime.block_on(ledger.transition(&nonce, terminal));
+                                            let code = match error.to_string().as_str() {
+                                                "E_SUBMISSION_UNCERTAIN" => {
+                                                    "E_SUBMISSION_UNCERTAIN"
+                                                }
+                                                "E_QUALIFICATION_TIMEOUT" => {
+                                                    "E_QUALIFICATION_TIMEOUT"
+                                                }
+                                                "E_TEMPORARY_CHAT" => "E_TEMPORARY_CHAT",
+                                                "E_SEND_SURFACE" => "E_SEND_SURFACE",
+                                                "E_SEND_DISABLED" => "E_SEND_DISABLED",
+                                                "E_COMPOSER_MISMATCH" => "E_COMPOSER_MISMATCH",
+                                                "E_MODEL_SELECTION" => "E_MODEL_SELECTION",
+                                                "E_QUALIFICATION_SELECT" => "E_QUALIFICATION_SELECT",
+                                                "E_QUALIFICATION_BASELINE" => "E_QUALIFICATION_BASELINE",
+                                                "E_QUALIFICATION_INSERT" => "E_QUALIFICATION_INSERT",
+                                                "E_QUALIFICATION_OBSERVE" => "E_QUALIFICATION_OBSERVE",
+                                                _ => "E_LIVE_QUALIFICATION",
+                                            };
+                                            let _ = reply.send(Err(code));
+                                            continue;
+                                        }
+                                    };
+                                    let recorded = runtime.block_on(async {
+                                        ledger.transition(&nonce, TurnState::Submitted).await?;
+                                        ledger.transition(&nonce, TurnState::Generating).await
+                                    });
+                                    if let Err(code) = recorded { let _ = reply.send(Err(code)); continue; }
+                                    let valid = envelope::validate(
+                                        outcome.response.as_bytes(),
+                                        &request.context(&nonce),
+                                    );
+                                    if !matches!(
+                                        valid,
+                                        Ok(ValidatedOutput::Final(ref text))
+                                            if text == "cxweb live qualification passed"
+                                    ) {
+                                        let _ = runtime.block_on(ledger.transition(&nonce, TurnState::Failed));
+                                        let _ = reply.send(Err("E_QUALIFICATION_PROTOCOL"));
+                                        continue;
+                                    }
+                                    if let Err(code) = runtime.block_on(ledger.transition(&nonce, TurnState::Completed)) {
+                                        let _ = reply.send(Err(code)); continue;
+                                    }
+                                    let mut evidence = Sha256::new();
+                                    let evidence_parts: [&[u8]; 4] = [
+                                        model.id.as_bytes(),
+                                        model.label.as_bytes(),
+                                        outcome.response.as_bytes(),
+                                        b"cxweb-browser-adapter-v1",
+                                    ];
+                                    for value in evidence_parts {
+                                        evidence.update((value.len() as u64).to_le_bytes());
+                                        evidence.update(value);
+                                    }
+                                    status.text_qualified_model = Some(model.id.clone());
+                                    status.qualification_evidence =
+                                        Some(format!("{:x}", evidence.finalize()));
+                                    status.phase = "text_qualified".into();
+                                }
                             }
                             Err(_) => {
                                 status.phase = "browser_unavailable".into();
                                 status.observation = None;
+                                status.text_qualified_model = None;
+                                status.qualification_evidence = None;
+                                status.candidate_models.clear();
+                                observed_routes.clear();
                             }
                         }
                     }
                     let _ = reply.send(Ok(status.clone()));
                 }
-                // There are no generation requests in this login-only controller.
                 // The daemon owns this worker; closing a remote UI does not drop it.
                 if let Some(mut browser) = browser {
                     let _ = browser.close();
@@ -236,6 +413,16 @@ impl Control {
             .try_send(WorkerCommand::Qualify(reply))
             .map_err(|_| "E_CONTROL_BUSY")?;
         tokio::time::timeout(Duration::from_secs(30), receive)
+            .await
+            .map_err(|_| "E_CONTROL_TIMEOUT")?
+            .map_err(|_| "E_CONTROL_CLOSED")?
+    }
+    pub async fn qualify_text(&self) -> Result<ControlStatus, &'static str> {
+        let (reply, receive) = oneshot::channel();
+        self.commands
+            .try_send(WorkerCommand::QualifyText(reply))
+            .map_err(|_| "E_CONTROL_BUSY")?;
+        tokio::time::timeout(Duration::from_secs(330), receive)
             .await
             .map_err(|_| "E_CONTROL_TIMEOUT")?
             .map_err(|_| "E_CONTROL_CLOSED")?

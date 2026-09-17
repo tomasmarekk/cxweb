@@ -52,6 +52,12 @@ pub struct ModelSurfaceDiagnostic {
     pub visible_roles: Vec<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QualificationOutcome {
+    pub candidate_label: String,
+    pub response: String,
+}
+
 pub struct ManagedBrowser {
     process: BrowserProcess,
     replies: Receiver<io::Result<Value>>,
@@ -280,14 +286,25 @@ impl ManagedBrowser {
         self.click_model_switcher(page)
             .map_err(|_| io::Error::other("E_MODEL_OPEN"))?;
         let selected = (|| {
-            for _ in 0..5 {
-                let state = self
-                    .dom(
+            let mut previous = None;
+            for step in 0..5 {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                let state = loop {
+                    if let Ok(value) = self.dom(
                         page,
                         include_str!("dom/effort_state.js"),
                         vec![json!(identity)],
-                    )
-                    .map_err(|_| io::Error::other("E_MODEL_SELECT"))?;
+                    ) && value["current"]
+                        .as_i64()
+                        .is_some_and(|current| Some(current) != previous)
+                    {
+                        break value;
+                    }
+                    if Instant::now() >= deadline {
+                        return Err(io::Error::other("E_MODEL_SELECT"));
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                };
                 let current = state["current"]
                     .as_i64()
                     .ok_or_else(|| io::Error::other("E_MODEL_SELECT"))?;
@@ -301,11 +318,15 @@ impl ManagedBrowser {
                         .map(str::to_owned)
                         .ok_or_else(|| io::Error::other("E_MODEL_SELECT"));
                 }
+                if step == 4 {
+                    return Err(io::Error::other("E_MODEL_SELECT"));
+                }
                 let key = if target > current {
                     "ArrowRight"
                 } else {
                     "ArrowLeft"
                 };
+                previous = Some(current);
                 for event_type in ["keyDown", "keyUp"] {
                     self.call(
                         "Input.dispatchKeyEvent",
@@ -327,6 +348,92 @@ impl ManagedBrowser {
     /// Opens an owned, isolated tab at ChatGPT's explicit Temporary Chat URL,
     /// verifies its URL and authenticated composer, then closes only that tab.
     pub fn verify_temporary_chat(&mut self) -> io::Result<bool> {
+        match self.open_temporary_chat() {
+            Ok(page) => {
+                self.close_page(page)?;
+                Ok(true)
+            }
+            Err(error) if error.to_string() == "E_TEMPORARY_CHAT" => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Runs one explicitly requested, non-retried qualification turn in a new
+    /// Temporary Chat target and closes only that owned target afterward.
+    pub fn qualify_candidate(
+        &mut self,
+        identity: &str,
+        expected_label: &str,
+        prompt: &str,
+        before_send: impl FnOnce() -> io::Result<()>,
+    ) -> io::Result<QualificationOutcome> {
+        let page = self.open_temporary_chat()?;
+        let result = self.qualify_page(&page, identity, expected_label, prompt, before_send);
+        if result.is_err() {
+            let _ = self.stop(&page);
+        }
+        let closed = self.close_page(page);
+        let outcome = result?;
+        closed?;
+        Ok(outcome)
+    }
+
+    fn qualify_page(
+        &mut self,
+        page: &ManagedPage,
+        identity: &str,
+        expected_label: &str,
+        prompt: &str,
+        before_send: impl FnOnce() -> io::Result<()>,
+    ) -> io::Result<QualificationOutcome> {
+        let candidate_label = self
+            .select_candidate(page, identity)
+            .map_err(|_| io::Error::other("E_QUALIFICATION_SELECT"))?;
+        if candidate_label != expected_label {
+            return Err(io::Error::other("E_MODEL_SELECTION"));
+        }
+        let baseline = self
+            .baseline(page)
+            .map_err(|_| io::Error::other("E_QUALIFICATION_BASELINE"))?;
+        let mut tracker = TurnTracker::new(baseline.clone(), &baseline.selected_model)
+            .map_err(io::Error::other)?;
+        self.insert_prompt(page, prompt)
+            .map_err(|_| io::Error::other("E_QUALIFICATION_INSERT"))?;
+        before_send()?;
+        tracker.begin_submission().map_err(io::Error::other)?;
+        if let Err(error) = self.press_send(page, prompt, &baseline.selected_model) {
+            let code = match error.to_string().as_str() {
+                "E_SEND_SURFACE" => "E_SEND_SURFACE",
+                "E_SEND_DISABLED" => "E_SEND_DISABLED",
+                "E_MODEL_SELECTION" => "E_MODEL_SELECTION",
+                "E_COMPOSER_MISMATCH" => "E_COMPOSER_MISMATCH",
+                _ => "E_SUBMISSION_UNCERTAIN",
+            };
+            return Err(io::Error::other(code));
+        }
+        let deadline = Instant::now() + Duration::from_secs(300);
+        loop {
+            let observation = self
+                .observe(page, &baseline, prompt)
+                .map_err(|_| io::Error::other("E_QUALIFICATION_OBSERVE"))?;
+            match tracker.observe(observation).map_err(io::Error::other)? {
+                Progress::Completed(response) => {
+                    return Ok(QualificationOutcome {
+                        candidate_label,
+                        response,
+                    });
+                }
+                Progress::AwaitingAcknowledgement | Progress::Generating => {}
+            }
+            if Instant::now() >= deadline {
+                let _ = self.stop(page);
+                return Err(io::Error::other("E_QUALIFICATION_TIMEOUT"));
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    }
+
+    fn open_temporary_chat(&mut self) -> io::Result<ManagedPage> {
         let value = self.call(
             "Target.createTarget",
             json!({"url":"https://chatgpt.com/?temporary-chat=true","newWindow":false}),
@@ -344,24 +451,32 @@ impl ManagedBrowser {
             }
         };
         let deadline = Instant::now() + Duration::from_secs(15);
-        let verified = loop {
+        loop {
             if self
                 .dom(&page, include_str!("dom/temporary_chat.js"), vec![])
                 .is_ok_and(|value| value == true)
             {
-                break true;
+                return Ok(page);
             }
             if Instant::now() >= deadline {
-                break false;
+                self.close_page(page)?;
+                return Err(io::Error::other("E_TEMPORARY_CHAT"));
             }
             std::thread::sleep(Duration::from_millis(200));
-        };
-        self.close_page(page)?;
-        Ok(verified)
+        }
     }
 
     fn click_model_switcher(&mut self, page: &ManagedPage) -> io::Result<()> {
-        let point = self.dom(page, include_str!("dom/open_models.js"), vec![])?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let point = loop {
+            if let Ok(point) = self.dom(page, include_str!("dom/open_models.js"), vec![]) {
+                break point;
+            }
+            if Instant::now() >= deadline {
+                return Err(io::Error::other("E_MODEL_MENU"));
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        };
         let (Some(x), Some(y)) = (point["x"].as_f64(), point["y"].as_f64()) else {
             return Err(io::Error::other("E_MODEL_MENU"));
         };
@@ -426,12 +541,26 @@ impl ManagedBrowser {
         prompt: &str,
         selected_model: &str,
     ) -> io::Result<()> {
-        self.dom(
+        let outcome = self.dom(
             page,
             include_str!("dom/send.js"),
             vec![json!(prompt), json!(selected_model)],
         )?;
-        Ok(())
+        match outcome {
+            Value::Bool(true) => Ok(()),
+            Value::String(code)
+                if matches!(
+                    code.as_str(),
+                    "E_SEND_SURFACE"
+                        | "E_SEND_DISABLED"
+                        | "E_MODEL_SELECTION"
+                        | "E_COMPOSER_MISMATCH"
+                ) =>
+            {
+                Err(io::Error::other(code))
+            }
+            _ => Err(io::Error::other("E_SUBMISSION_UNCERTAIN")),
+        }
     }
 
     pub fn observe(
@@ -475,10 +604,57 @@ impl ManagedBrowser {
 
     fn run_dom_fixture(&mut self, page: &ManagedPage) -> io::Result<Value> {
         let frame = self.call("Page.getFrameTree", json!({}), Some(&page.session))?;
+        for wrong_label in [true, false] {
+            self.call("Page.setDocumentContent", json!({"frameId":frame["frameTree"]["frame"]["id"],"html":include_str!("dom/fixture.html")}), Some(&page.session))?;
+            let label = if wrong_label {
+                "Unobserved route"
+            } else {
+                "Fixture text mode · effort 1"
+            };
+            let mut intent_called = false;
+            let attempt = self.qualify_page(
+                page,
+                "reasoning-slider:0:1:0",
+                label,
+                "Never submit this fixture",
+                || {
+                    intent_called = true;
+                    Err(io::Error::other("E_FIXTURE_DURABILITY_FAILURE"))
+                },
+            );
+            if attempt.is_ok()
+                || intent_called == wrong_label
+                || self.baseline(page)?.ids != ["old-assistant"]
+            {
+                return Err(io::Error::other("E_QUALIFICATION_GUARD_FIXTURE"));
+            }
+        }
+        self.call("Page.setDocumentContent", json!({"frameId":frame["frameTree"]["frame"]["id"],"html":include_str!("dom/fixture.html")}), Some(&page.session))?;
+        let mut intents = 0;
+        let qualified = self.qualify_page(
+            page,
+            "reasoning-slider:0:1:1",
+            "Fixture text mode · effort 2",
+            "Fixture qualification",
+            || {
+                intents += 1;
+                Ok(())
+            },
+        )?;
+        if intents != 1 || qualified.response != "fixture response" {
+            return Err(io::Error::other("E_QUALIFICATION_FIXTURE"));
+        }
         self.call("Page.setDocumentContent", json!({"frameId":frame["frameTree"]["frame"]["id"],"html":include_str!("dom/fixture.html")}), Some(&page.session))?;
         let baseline = self
             .baseline(page)
             .map_err(|_| io::Error::other("E_FIXTURE_BASELINE"))?;
+        if self
+            .press_send(page, "different prompt", &baseline.selected_model)
+            .is_ok()
+            || self.baseline(page)?.ids != baseline.ids
+        {
+            return Err(io::Error::other("E_SEND_GUARD_FIXTURE"));
+        }
         let surface = self
             .discover_models(page)
             .map_err(|_| io::Error::other("E_FIXTURE_DISCOVERY"))?;

@@ -14,3 +14,4 @@ jobs:
         with:
           node-version: '22'
       - run: node --test apps/desktop/tests/app.test.mjs
+      - run: node --test crates/browser-adapter/tests/model_surface.test.mjs
