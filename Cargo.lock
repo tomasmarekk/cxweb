@@ -783,6 +783,7 @@ name = "cxweb-platform"
 version = "0.1.0"
 dependencies = [
  "tokio",
+ "windows",
  "windows-sys 0.61.2",
 ]
 

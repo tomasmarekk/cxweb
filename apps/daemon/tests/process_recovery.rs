@@ -236,3 +236,103 @@ async fn executable_recovers_exact_route_and_catalog_ownership_across_processes(
         }
     ));
 }
+
+#[tokio::test]
+#[ignore = "registers a temporary current-user scheduled task and waits for an OS restart"]
+async fn scheduler_restarts_failed_action_without_overwriting_existing_task() {
+    use cxweb_platform::scheduled_runtime::{RegisteredRuntime, TaskPlan};
+    struct Registration(Option<RegisteredRuntime>, PathBuf);
+    impl Drop for Registration {
+        fn drop(&mut self) {
+            let _ = std::fs::write(&self.1, b"release");
+            if let Some(task) = &self.0 {
+                // The fixture action only fails startup; never stop an arbitrary
+                // PID or a real runtime. Wait for its brief action to exit.
+                for _ in 0..100 {
+                    match task.remove_stopped() {
+                        Ok(()) => return,
+                        Err(error) if error.to_string() == "E_TASK_RUNNING" => {
+                            std::thread::sleep(Duration::from_millis(100))
+                        }
+                        Err(_) => break,
+                    }
+                }
+                eprintln!("Temporary cxweb scheduler fixture requires cleanup");
+            }
+        }
+    }
+    let fixture = Fixture(
+        std::env::temp_dir().join(format!("cxweb-scheduler-{:032x}", rand::random::<u128>())),
+    );
+    protected_directory(&fixture.0).unwrap();
+    let action = fixture.0.join("scheduled-action.exe");
+    let compiler = ProcessCommand::new("rustc")
+        .args(["--edition=2024", "--crate-name", "scheduled_action"])
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scheduled_action.rs"))
+        .arg("-o")
+        .arg(&action)
+        .creation_flags(0x08000000)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(compiler.status.success(), "fixture compiler failed");
+    let installation = format!("{:032x}", rand::random::<u128>());
+    let plan = TaskPlan::new(
+        &installation,
+        &action,
+        &fixture.0,
+        &fixture.0.join("absent.toml"),
+    )
+    .unwrap();
+    let mut registration = Registration(Some(plan.register().unwrap()), fixture.0.join("release"));
+    let task = registration.0.as_ref().unwrap();
+    assert!(
+        plan.register().is_err(),
+        "create-only registration must not overwrite an existing task"
+    );
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let state = task.status().unwrap();
+            if !state.running && state.last_result == 3 && fixture.0.join("attempt-1").exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .unwrap();
+    // Observe actual execution after the periodic trigger. The initial exit 3
+    // matches daemon startup refusal. The second action stays alive so IgnoreNew
+    // and refusal to remove a running task can also be tested.
+    tokio::time::timeout(Duration::from_secs(100), async {
+        loop {
+            let state = task.status().unwrap();
+            if state.running && fixture.0.join("attempt-2").exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        task.remove_stopped().unwrap_err().to_string(),
+        "E_TASK_RUNNING"
+    );
+    for _ in 0..3 {
+        task.start().unwrap();
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!fixture.0.join("attempt-3").exists());
+    std::fs::write(&registration.1, b"release").unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while task.status().unwrap().running {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap();
+    task.remove_stopped().unwrap();
+    registration.0 = None;
+    assert!(!fixture.0.join("absent.toml").exists());
+}

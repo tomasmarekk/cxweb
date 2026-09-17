@@ -540,3 +540,35 @@ model discovery, native WebSocket preservation and actual pickers are proven.
 - This establishes the recovery executable, not a supervised active integration.
   Browser ownership transfer, first activation, desktop launch/attachment,
   restart policy and live Codex qualification remain required.
+
+## Windows user-level supervision qualification
+
+- Added a native Task Scheduler COM adapter. A plan binds the installation ID,
+  current user SID, installed executable and explicit journal/config arguments.
+  It uses the interactive user token, least privilege and an owner/SYSTEM DACL;
+  no password, shell command or remote scheduler connection is involved.
+- Create-only registration refuses an existing task. Subsequent start/status/
+  removal checks the exact registered definition. Removal refuses running or
+  queued instances; dropping the desktop's registration handle does not stop or
+  delete the task. Durable task ownership and activation/cleanup wiring remain
+  necessary before this adapter can be enabled by the product.
+- Live tests showed that RestartOnFailure did not re-execute the failing action
+  here, including HRESULT failure and automatic registration-trigger variants.
+  The final policy uses registration/logon startup and a repeating one-minute
+  trigger with IgnoreNew. Periodic attempts continue while registered, rather
+  than stopping after three failures. A running process is left untouched;
+  supervision does not restart a process merely because IPC is slow.
+- The explicit OS test compiles an isolated action fixture, observes its first
+  failure and next execution, holds the second process alive, verifies repeated
+  start requests create no third process, and checks running-task deletion is
+  refused. It then releases the fixture and removes its registration. The test
+  passed in 60.87 seconds. This is scheduler behavior qualification; the separate
+  daemon process recovery test continues to cover real cxweb-daemon execution.
+- All 87 ordinary workspace tests passed; the Chrome and scheduler tests are
+  opt-in. The scheduler test additionally passed when explicitly invoked. Clippy
+  with warnings denied, formatting and diff checks passed. No cxweb scheduled
+  task or scheduler fixture directory remained after cleanup. Real desktop,
+  browser/account and Codex configuration were not changed.
+- Windows API references: [repetition patterns](https://learn.microsoft.com/en-us/windows/win32/taskschd/repetitionpattern),
+  [IgnoreNew policy](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-multipleinstancespolicy-settingstype-element),
+  and [create-only registration](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskfolder-registertask).
