@@ -218,3 +218,24 @@ model discovery, native WebSocket preservation and actual pickers are proven.
   retains attached user comments, including when the route was already removed.
   This remains pure planning. Durable journals, atomic replacement and live
   editor race qualification are still required before real configuration writes.
+
+## Dynamic catalog transport
+
+- Gateway now accepts a request-specific catalog snapshot from the web provider.
+  The provider receives the client query but no native authorization headers.
+  Unknown codecs and the unqualified provider keep the original native path.
+  No production provider advertises entries before live qualification.
+- Added bounded native catalog retrieval and semantic append without changing
+  existing entries or unknown metadata. Native authorization failures remain
+  native failures; the gateway never substitutes a synthetic native catalog.
+- Native validators are removed from augmentation requests. Local ETags include
+  credential/account partition, exact client query, codec, web scope, generation
+  and merged bytes. No cross-request native cache exists. Changed snapshots or
+  account partitions cannot reuse the previous local 304 response.
+- Fixed native transport incorrectly treating 304 as a redirect. Real redirects
+  remain rejected. Unexpected upstream 304 on unconditional augmentation fails.
+- Tests use local HTTP servers and synthetic credentials only. They cover full
+  gateway dispatch, unknown codecs, native metadata preservation, conditional
+  requests, scope/generation changes, duplicate JSON keys and native denial.
+  `cargo test --locked --workspace` passed 49 tests; workspace Clippy passed with
+  warnings denied. This is local integration evidence, not genuine picker proof.

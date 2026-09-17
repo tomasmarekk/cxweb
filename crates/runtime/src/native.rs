@@ -42,7 +42,7 @@ impl NativeTransport {
     pub fn subscription() -> Result<Self, &'static str> {
         Self::new("https://chatgpt.com/backend-api/codex".to_owned())
     }
-    fn new(base: String) -> Result<Self, &'static str> {
+    pub(crate) fn new(base: String) -> Result<Self, &'static str> {
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .no_proxy()
@@ -85,7 +85,7 @@ impl NativeTransport {
             .send()
             .await
             .map_err(|_| "E_NATIVE_UNAVAILABLE")?;
-        if response.status().is_redirection() {
+        if response.status().is_redirection() && response.status() != StatusCode::NOT_MODIFIED {
             // Never expose an upstream redirect to a local client that might
             // forward the native authorization to the Location destination.
             return Err("E_NATIVE_REDIRECT");
@@ -230,6 +230,29 @@ mod tests {
             .forward(NativeRoute::Models, None, HeaderMap::new(), Bytes::new())
             .await;
         assert!(matches!(response, Err("E_NATIVE_REDIRECT")));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn native_not_modified_is_a_validator_response_not_a_redirect() {
+        let (url, server) = mock(Router::new().route(
+            "/models",
+            any(|| async {
+                Response::builder()
+                    .status(304)
+                    .header("etag", "\"native\"")
+                    .body(Body::empty())
+                    .unwrap()
+            }),
+        ))
+        .await;
+        let response = NativeTransport::new(url)
+            .unwrap()
+            .forward(NativeRoute::Models, None, HeaderMap::new(), Bytes::new())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(response.headers()["etag"], "\"native\"");
         server.abort();
     }
 
