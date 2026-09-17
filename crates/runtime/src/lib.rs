@@ -5,6 +5,7 @@ pub mod control;
 pub mod gateway;
 pub mod ledger;
 pub mod native;
+mod native_ws;
 pub mod scheduler;
 pub mod turn;
 use axum::{

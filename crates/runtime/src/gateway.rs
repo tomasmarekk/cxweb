@@ -3,7 +3,7 @@ use crate::native::{NativeRoute, NativeTransport, unavailable};
 use axum::{
     Router,
     body::Bytes,
-    extract::{DefaultBodyLimit, State},
+    extract::{DefaultBodyLimit, State, WebSocketUpgrade},
     http::{HeaderMap, Method, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::any,
@@ -66,6 +66,7 @@ impl Gateway {
 
 async fn handle(
     State(gateway): State<Gateway>,
+    upgrade: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
     method: Method,
     uri: Uri,
     headers: HeaderMap,
@@ -81,11 +82,17 @@ async fn handle(
     let Some(path) = uri.path().strip_prefix(&prefix) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    if method == Method::GET
+        && path == "responses"
+        && let Ok(upgrade) = upgrade
+    {
+        return gateway.native.upgrade(upgrade, uri.query(), headers).await;
+    }
     let route = match (&method, path) {
         (&Method::GET, "models") => NativeRoute::Models,
         (&Method::POST, "responses") => NativeRoute::Responses,
         (&Method::POST, "responses/compact") => NativeRoute::Compact,
-        // WebSocket/native auxiliary routes are not yet qualified. Never claim
+        // Native auxiliary routes are not yet qualified. Never claim
         // integration ready while this explicit gap remains.
         _ => return StatusCode::NOT_FOUND.into_response(),
     };

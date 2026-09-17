@@ -254,3 +254,23 @@ model discovery, native WebSocket preservation and actual pickers are proven.
 - User was asked to close cxweb before this comparison. The browser launch and
   login result remain pending; no existing browser was forcibly closed.
 - `cargo build -p cxweb`, workspace Clippy and all 49 Rust tests passed.
+
+## Native Responses WebSocket transport
+
+- Added an authenticated gateway upgrade path for native Responses WebSockets,
+  using the same fixed upstream and shared connection limit as native HTTP.
+  Native credentials never enter browser code. Each hop negotiates its own
+  handshake; native response metadata is retained without copying handshake keys.
+- The transport forwards native create messages unchanged, including reuse with
+  previous_response_id, and checks each create for owned model IDs. Owned routes
+  receive an explicit unqualified-WebSocket error rather than native execution.
+  Unknown/binary client message formats close the connection; no repair or retry.
+- Added 32 MiB message/frame bounds, a connection timeout and an idle deadline.
+  The connector uses TLS certificate validation and does not follow redirects.
+  Production web routes still require their separately qualified HTTP transport.
+- Local socket tests cover native text fidelity, connection reuse, query/auth
+  forwarding to the fixed test upstream, turn-state response metadata, owned
+  model isolation, HTTP 401 preservation and redirect rejection. Workspace tests
+  passed 51 cases, and Clippy passed with warnings denied. Authenticated native
+  WebSocket behavior, auxiliary endpoints and full client qualification remain
+  outstanding; no claim of G0/G4 completion follows from local socket tests.

@@ -37,6 +37,14 @@ pub struct NativeTransport {
 }
 
 impl NativeTransport {
+    pub async fn upgrade(
+        &self,
+        upgrade: axum::extract::WebSocketUpgrade,
+        query: Option<&str>,
+        headers: HeaderMap,
+    ) -> Response<Body> {
+        crate::native_ws::upgrade(&self.base, self.slots.clone(), upgrade, query, headers).await
+    }
     /// Only the subscription route is reviewed. API keys, residency overrides
     /// and existing third-party proxies require separately qualified adapters.
     pub fn subscription() -> Result<Self, &'static str> {
@@ -103,7 +111,7 @@ impl NativeTransport {
     }
 }
 
-fn end_to_end_headers(input: &HeaderMap) -> HeaderMap {
+pub(crate) fn end_to_end_headers(input: &HeaderMap) -> HeaderMap {
     let connection_tokens: Vec<String> = input
         .get_all("connection")
         .iter()
