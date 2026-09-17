@@ -133,3 +133,41 @@ Next: connect these modules into a browser/session provider with deterministic
 DOM fixtures, qualify native WebSocket/catalog behavior, protect persistent
 state and implement the login/control surface. Real App/CLI picker tests and
 account login remain NOT RUN; user action is not requested prematurely.
+
+## Browser operations and durable turn coordination
+
+- Added bundled fixed DOM operations for baseline, literal composer insertion,
+  one Send click, attributed observation and Stop. Prompt strings travel as CDP
+  values, never as executable script. Origin is checked both via the frame tree
+  and inside the fixed page function to close the navigation race.
+- Added logical turn tracking: exclude historical IDs, require a matching new
+  user message, reject replaced assistant identity, require explicit completion
+  evidence, reject fenced output and committed-prefix revisions, and preserve
+  uncertainty when cancellation happens during submission.
+- Real Chrome/152.0.7977.84 over the private Windows pipe passed the bundled DOM
+  fixture: literal quotes/Unicode/script-like text, old-message exclusion,
+  response attribution, Stop action, and selector-drift rejection. Zero TCP
+  listeners and full owned-process crash cleanup still pass. Evidence is
+  `integration-tests/compatibility/windows-chrome-dom.local.json`.
+  These selectors are candidates tested on synthetic markup, NOT qualified
+  against the live ChatGPT UI. Login, model discovery and Temporary Chat evidence
+  remain absent and cannot be inferred from this result.
+- Added the runtime Coordinator joining canonical decode, scheduler, SQLite
+  admission/state transitions, browser-driver operations, envelope validation,
+  native wire delivery and a bounded 8 MiB replay cache. Completed responses can
+  be delivered again without submitting again. Missing replay data fails explicitly.
+- Coordinator work retains its own lifetime: dropping the client future triggers
+  cancellation but allows browser stop/release and durable state writes to finish.
+  Tests cover final response/replay, native tool output without local execution,
+  uncertain submission, malformed output, mismatched assistant identity and
+  dropped-client cancellation. BrowserDriver has a mock implementation in these
+  tests; the real session-owning worker is the next integration step.
+- Latest checks passed: `cargo fmt --all -- --check`,
+  `cargo clippy --locked --workspace --all-targets -- -D warnings`,
+  `cargo test --locked --workspace` (39 tests), `cargo build -p cxweb`,
+  `scripts/probe-browser.ps1 -Browser <installed Chrome path>`, `git diff --check`.
+
+Next dependency-ready implementation: real browser worker with protected profile
+and account/route/session leases, then wire Coordinator into Gateway through a
+qualified provider. Keep production routing disabled until authentication,
+model discovery, native WebSocket preservation and actual pickers are proven.

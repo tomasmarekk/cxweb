@@ -1,0 +1,22 @@
+{
+  "schema": "cxweb.browser-probe.v1",
+  "timestamp": "2026-09-17T16:33:29.1867829Z",
+  "browser": "Chrome/152.0.7977.84",
+  "protocol": "1.3",
+  "transport": "inherited_pipe",
+  "dom": {
+    "completion_attributed": true,
+    "evidence": "synthetic DOM only",
+    "historical_message_excluded": true,
+    "literal_prompt": true,
+    "result": "PASS",
+    "selector_drift_rejected": true,
+    "stop_control": true
+  },
+  "tcpListeners": 0,
+  "ownedProcessCount": 10,
+  "crashCleanup": "PASS",
+  "login": "NOT RUN",
+  "profileIsolation": "new dedicated directory; no personal profile accessed",
+  "result": "PASS local transport and containment only"
+}

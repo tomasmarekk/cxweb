@@ -49,8 +49,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut browser =
                     cxweb_browser_adapter::ManagedBrowser::launch(&browser, &profile, false)?;
                 let version = browser.version()?;
+                let dom = browser.probe_dom()?;
                 print_json(
-                    &serde_json::json!({"transport":"inherited_pipe", "pid":browser.pid(),"version":version["product"],"protocol":version["protocolVersion"],"login":"NOT RUN"}),
+                    &serde_json::json!({"transport":"inherited_pipe", "pid":browser.pid(),"version":version["product"],"protocol":version["protocolVersion"],"login":"NOT RUN","dom":dom}),
                 );
                 std::thread::sleep(std::time::Duration::from_secs(u64::from(hold_seconds)));
                 browser.close()?;

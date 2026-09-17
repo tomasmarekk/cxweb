@@ -8,6 +8,8 @@ license.workspace = true
 cxweb-platform.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+serde.workspace = true
+cxweb-domain.workspace = true
 
 [lints]
 workspace = true

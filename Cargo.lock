@@ -398,7 +398,9 @@ dependencies = [
 name = "cxweb-browser-adapter"
 version = "0.1.0"
 dependencies = [
+ "cxweb-domain",
  "cxweb-platform",
+ "serde",
  "serde_json",
  "thiserror",
 ]
@@ -437,6 +439,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
+ "cxweb-browser-adapter",
  "cxweb-codex-adapter",
  "cxweb-domain",
  "futures-util",

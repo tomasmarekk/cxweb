@@ -18,6 +18,10 @@ pub enum Admission {
 }
 
 impl Ledger {
+    #[cfg(test)]
+    pub(crate) fn in_memory() -> Self {
+        Self::from_connection(Connection::open_in_memory().unwrap()).unwrap()
+    }
     /// Caller supplies an application-owned, permission-protected state path.
     pub async fn open(path: &Path) -> Result<Self, &'static str> {
         let path = path.to_owned();

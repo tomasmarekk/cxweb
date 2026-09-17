@@ -50,6 +50,7 @@ try {
         browser = $observation.version
         protocol = $observation.protocol
         transport = $observation.transport
+        dom = $observation.dom
         tcpListeners = $listeners.Count
         ownedProcessCount = $ownedPids.Count
         crashCleanup = 'PASS'
