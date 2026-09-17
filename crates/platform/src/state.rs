@@ -34,7 +34,7 @@ use windows_sys::Win32::{
     },
 };
 
-struct LocalAllocation(*mut std::ffi::c_void);
+pub(crate) struct LocalAllocation(pub(crate) *mut std::ffi::c_void);
 impl Drop for LocalAllocation {
     fn drop(&mut self) {
         // SAFETY: every instance wraps a successful LocalAlloc-family API result.
@@ -62,12 +62,12 @@ unsafe fn read_wide(pointer: *const u16) -> String {
     }
 }
 
-fn current_sid() -> io::Result<String> {
+fn sid_for_process(process: windows_sys::Win32::Foundation::HANDLE) -> io::Result<String> {
     // SAFETY: API outputs are valid owned handles or allocated strings. Buffer is
     // aligned and sized using the API, and remains live while its SID is read.
     unsafe {
         let mut token = null_mut();
-        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+        if OpenProcessToken(process, TOKEN_QUERY, &mut token) == 0 {
             return Err(io::Error::last_os_error());
         }
         let token = OwnedHandle::from_raw_handle(token);
@@ -94,7 +94,29 @@ fn current_sid() -> io::Result<String> {
     }
 }
 
-fn descriptor() -> io::Result<LocalAllocation> {
+pub(crate) fn current_sid() -> io::Result<String> {
+    // SAFETY: returns the always-valid pseudo handle for the calling process.
+    sid_for_process(unsafe { GetCurrentProcess() })
+}
+
+pub(crate) fn verify_process_user(pid: u32) -> io::Result<()> {
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    // SAFETY: limited query access to an OS-reported peer PID. Successful handle
+    // is owned immediately; no process memory is read and no token is duplicated.
+    let process = unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        OwnedHandle::from_raw_handle(handle)
+    };
+    if sid_for_process(process.as_raw_handle())? != current_sid()? {
+        return Err(io::Error::other("E_CONTROL_PEER"));
+    }
+    Ok(())
+}
+
+pub(crate) fn descriptor() -> io::Result<LocalAllocation> {
     let sid = current_sid()?;
     let sddl = wide(OsStr::new(&format!(
         "O:{sid}D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;{sid})"
@@ -148,7 +170,7 @@ pub(crate) fn create_private_file(path: &Path) -> io::Result<File> {
     }
 }
 
-fn descriptor_text(descriptor: PSECURITY_DESCRIPTOR) -> io::Result<String> {
+pub(crate) fn descriptor_text(descriptor: PSECURITY_DESCRIPTOR) -> io::Result<String> {
     let mut output = null_mut();
     // SAFETY: descriptor originates from successful Windows security API calls.
     unsafe {

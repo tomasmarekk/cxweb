@@ -445,3 +445,21 @@ model discovery, native WebSocket preservation and actual pickers are proven.
 - All 74 workspace tests passed (the opt-in Chrome test was skipped); Clippy,
   formatting and diff checks passed. Production process supervision, protected
   control IPC, startup recovery and desktop wiring still remain to implement.
+
+## Private Windows control transport
+
+- Added a local named-pipe transport with the current user's SID and a validated
+  installation identifier in its address. The owner/SYSTEM DACL is applied at
+  creation, remote clients are rejected, and both endpoints verify the peer's
+  OS-reported process user. Client opens use identification-only security QoS.
+- The listener retains a pending instance while handing off each connection,
+  preserving name ownership between clients. Fresh I/O objects avoid stale read
+  errors; bounded retry allows cancelled overlapped I/O to release its previous
+  kernel instance. Frames are limited to 64 KiB before allocation.
+- Three Windows tests cover 32 successive connections without a name ownership
+  gap, exact owner/DACL verification, and malformed or oversized frames. These
+  are local transport tests, not cross-user adversarial qualification.
+- All 77 workspace tests passed; the opt-in Chrome test was skipped. Clippy with
+  warnings denied, formatting and diff checks passed. Typed commands, exchange
+  deadlines, process supervision and desktop/runtime integration remain pending.
+  This work did not change the running browser or real Codex configuration.
