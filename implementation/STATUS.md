@@ -196,3 +196,25 @@ model discovery, native WebSocket preservation and actual pickers are proven.
   `node --test apps/desktop/tests/app.test.mjs` passed 3 UI behavior tests.
   CI now includes the UI tests. Full live authentication/model discovery,
   actual Codex pickers and coding qualification are still outstanding.
+
+## Live login attempt and disconnect planning
+
+- Inspected the actual Tauri window through Windows Computer Use. English text
+  rendered correctly, and Connect ChatGPT opened the dedicated Chrome window.
+  The panel rendered Waiting for sign-in. This verifies the UI-to-worker path,
+  not an authenticated session.
+- The user attempted login and reported an OpenAI Route Error 400 with an HTML
+  content-type mismatch after entering credentials and submitting Login. Their
+  later clarification supersedes the initial report that the error occurred
+  before the form. A recent fresh login by the same method worked in their normal
+  browser. Root cause remains unknown; no credential/cookie export, stealth
+  patch, automated login retry or routing installation was performed. G1 fails
+  pending a successful supported login and actual account/model verification.
+- Disconnect planning now accepts exact published route receipts. A persisted
+  owned model selection restores the pre-connect native selection only when
+  that selection is currently verified; otherwise the owned selection is removed.
+  Native, third-party and unpublished webbridge selections are preserved.
+- Regression tests exposed comment loss when deleting TOML keys. Removal now
+  retains attached user comments, including when the route was already removed.
+  This remains pure planning. Durable journals, atomic replacement and live
+  editor race qualification are still required before real configuration writes.
