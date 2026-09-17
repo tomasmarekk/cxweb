@@ -378,3 +378,27 @@ model discovery, native WebSocket preservation and actual pickers are proven.
   lifecycle. Disconnect journaling, stale staging cleanup, daemon supervision,
   activation receipts and client/editor qualification remain to integrate. It is
   not wired to the desktop controller and no real Codex configuration was changed.
+
+## Durable disconnect and owned-file removal
+
+- Extended the private journal with disconnecting/config-restored phases and a
+  validated before/after undo receipt. Disconnect uses the existing key-level
+  three-way planner and exact published model IDs; unrelated edits and comments
+  survive, while a user-replaced route reports a conflict without rewriting it.
+- A crash before mutation triggers a fresh plan against current content. A crash
+  after mutation can finalize the receipt from the observed restored result.
+  Restored configuration does not imply already-running clients have restarted;
+  the native-only listener lifecycle remains a separate integration requirement.
+- Originally absent configuration is deleted only when removing owned material
+  leaves it empty. Pre-existing empty files, user-created empty files, comments
+  and additional values are retained. Windows removal uses a checked file handle
+  denying concurrent writes/renames, rather than a later path-based delete.
+- Four new journal tests cover owned model restoration, preservation, repeated
+  disconnect, absent/empty files, both crash boundaries and conflicting edits.
+  A platform test covers edited content, same-content identity replacement and
+  an active writer before deletion. All 67 workspace tests passed; Clippy with
+  warnings denied, formatting and diff checks passed. The opt-in Chrome test was
+  not rerun. All filesystem mutations were confined to generated test fixtures.
+- Desktop wiring, live editor qualification, staging cleanup, activation and
+  daemon/client restart coordination are still outstanding. No real Codex
+  configuration or authenticated browser session was changed in this work.

@@ -19,6 +19,8 @@ use std::{
 pub enum Phase {
     Prepared,
     ConfigApplied,
+    Disconnecting,
+    ConfigRestored,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -29,9 +31,22 @@ pub enum Recovery {
     Candidate,
     /// Preserve user changes. A later disconnect must use key-level three-way undo.
     Changed,
+    /// The recorded disconnect result is on disk; existing clients may still
+    /// need the native-only compatibility listener until they restart.
+    Restored,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Undo {
+    before: String,
+    before_existed: bool,
+    after: Option<String>,
+    published_routes: Vec<String>,
+    native_models: Vec<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Record {
     version: u32,
@@ -45,6 +60,8 @@ struct Record {
     candidate_sha256: String,
     port: u16,
     capability: String,
+    #[serde(default)]
+    undo: Option<Undo>,
 }
 
 pub struct ConfigJournal {
@@ -110,6 +127,7 @@ impl ConfigJournal {
             candidate,
             port,
             capability: capability.into(),
+            undo: None,
         };
         replace(
             &journal,
@@ -150,6 +168,25 @@ impl ConfigJournal {
         if candidate != record.candidate {
             return Err(invalid());
         }
+        match (&record.undo, record.phase) {
+            (None, Phase::Prepared | Phase::ConfigApplied) => {}
+            (Some(undo), Phase::Disconnecting | Phase::ConfigRestored) => {
+                if undo.before.len() > 512 * 1024
+                    || (!undo.before_existed && !undo.before.is_empty())
+                    || undo.after
+                        != restored_text(
+                            &record,
+                            &undo.before,
+                            undo.before_existed,
+                            &undo.published_routes,
+                            &undo.native_models,
+                        )?
+                {
+                    return Err(invalid());
+                }
+            }
+            _ => return Err(invalid()),
+        }
         Ok(Self {
             _lock: lock,
             record,
@@ -164,6 +201,11 @@ impl ConfigJournal {
 
     pub fn recovery(&self) -> io::Result<Recovery> {
         let current = Snapshot::capture(&self.record.target)?;
+        if let Some(undo) = &self.record.undo
+            && matches_result(&current, undo.after.as_deref())
+        {
+            return Ok(Recovery::Restored);
+        }
         if current.existed() && current.original() == self.record.candidate.as_bytes() {
             Ok(Recovery::Candidate)
         } else if current.existed() == self.record.original_existed
@@ -196,6 +238,109 @@ impl ConfigJournal {
         result?;
         self.journal = Snapshot::capture(self.journal.path())?;
         Ok(())
+    }
+
+    fn store(&mut self, next: Record) -> io::Result<()> {
+        self.journal.verify_unchanged()?;
+        replace(
+            &self.journal,
+            &serde_json::to_vec(&next).map_err(|_| invalid())?,
+        )?;
+        self.journal = Snapshot::capture(self.journal.path())?;
+        self.record = next;
+        Ok(())
+    }
+
+    fn prepare_disconnect(
+        &mut self,
+        published: &[String],
+        native: &[String],
+    ) -> io::Result<Snapshot> {
+        self.journal.verify_unchanged()?;
+        let current = Snapshot::capture(&self.record.target)?;
+        if current.original().len() > 512 * 1024 {
+            return Err(invalid());
+        }
+        let before = std::str::from_utf8(current.original()).map_err(|_| invalid())?;
+        let after = restored_text(&self.record, before, current.existed(), published, native)?;
+        let mut next = self.record.clone();
+        next.phase = Phase::Disconnecting;
+        next.undo = Some(Undo {
+            before: before.into(),
+            before_existed: current.existed(),
+            after,
+            published_routes: published.into(),
+            native_models: native.into(),
+        });
+        self.prepared = None;
+        self.store(next)?;
+        Ok(current)
+    }
+
+    fn apply_disconnect(&self, current: &Snapshot) -> io::Result<()> {
+        self.journal.verify_unchanged()?;
+        let undo = self.record.undo.as_ref().ok_or_else(invalid)?;
+        match &undo.after {
+            Some(text) if current.original() != text.as_bytes() || !current.existed() => {
+                replace(current, text.as_bytes())?
+            }
+            None if current.existed() => current.remove()?,
+            _ => current.verify_unchanged()?,
+        }
+        if !matches_result(
+            &Snapshot::capture(&self.record.target)?,
+            undo.after.as_deref(),
+        ) {
+            return Err(io::Error::other("E_CONFIG_POST_COMMIT_CHANGED"));
+        }
+        Ok(())
+    }
+
+    /// Call after rejecting/draining web work. Persist exact catalog receipts
+    /// supplied by the qualified runtime, then undo only still-owned keys.
+    /// This does not stop the listener or declare already-running clients updated.
+    pub fn disconnect(&mut self, published: &[String], native: &[String]) -> io::Result<()> {
+        if self.record.undo.is_some() && self.recovery()? == Recovery::Restored {
+            let mut next = self.record.clone();
+            next.phase = Phase::ConfigRestored;
+            return self.store(next);
+        }
+        if self.record.phase == Phase::ConfigRestored {
+            return Err(io::Error::other("E_CONFIG_CHANGED"));
+        }
+        // After a crash this is a fresh three-way plan against current bytes,
+        // never a replay of the old whole-file candidate over later user edits.
+        let current = self.prepare_disconnect(published, native)?;
+        self.apply_disconnect(&current)?;
+        let mut next = self.record.clone();
+        next.phase = Phase::ConfigRestored;
+        self.store(next)
+    }
+}
+
+fn matches_result(current: &Snapshot, text: Option<&str>) -> bool {
+    match text {
+        Some(text) => current.existed() && current.original() == text.as_bytes(),
+        None => !current.existed(),
+    }
+}
+
+fn restored_text(
+    record: &Record,
+    current: &str,
+    existed: bool,
+    published: &[String],
+    native: &[String],
+) -> io::Result<Option<String>> {
+    let (patch, _) = RoutePatch::plan(&record.original, record.port, &record.capability)
+        .map_err(|_| invalid())?;
+    let restored = patch
+        .remove_with_selection(current, published, native)
+        .map_err(|_| io::Error::other("E_CONFIG_CONFLICT"))?;
+    if !existed || (!record.original_existed && restored.is_empty() && current != restored) {
+        Ok(None)
+    } else {
+        Ok(Some(restored))
     }
 }
 
@@ -327,5 +472,119 @@ mod tests {
         std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
         assert!(ConfigJournal::reopen(&f.state, &f.target).is_err());
         assert_eq!(std::fs::read(&f.target).unwrap(), b"");
+    }
+
+    #[test]
+    fn disconnect_restores_owned_selection_and_preserves_user_changes() {
+        let f = Fixture::new();
+        std::fs::write(&f.target, "# keep\nmodel='native'\n").unwrap();
+        let mut journal = ConfigJournal::prepare(&f.state, &f.target, 12345, CAP).unwrap();
+        journal.apply().unwrap();
+        let changed = journal
+            .record
+            .candidate
+            .replace("'native'", "'webbridge/test'")
+            + "# later\nother=true\n";
+        std::fs::write(&f.target, changed).unwrap();
+        journal
+            .disconnect(&["webbridge/test".into()], &["native".into()])
+            .unwrap();
+        assert_eq!(journal.phase(), Phase::ConfigRestored);
+        let result = std::fs::read_to_string(&f.target).unwrap();
+        assert!(
+            result.contains("# keep")
+                && result.contains("# later")
+                && result.contains("other=true")
+        );
+        assert!(result.contains("model = \"native\"") || result.contains("model=\"native\""));
+        assert!(!result.contains("openai_base_url"));
+        drop(journal);
+        let mut reopened = ConfigJournal::reopen(&f.state, &f.target).unwrap();
+        assert_eq!(reopened.recovery().unwrap(), Recovery::Restored);
+        reopened.disconnect(&[], &[]).unwrap();
+        assert_eq!(std::fs::read_to_string(&f.target).unwrap(), result);
+    }
+
+    #[test]
+    fn disconnect_removes_only_new_owned_only_files() {
+        for case in 0..4 {
+            let f = Fixture::new();
+            if case == 1 {
+                std::fs::write(&f.target, "").unwrap();
+            }
+            let mut journal = ConfigJournal::prepare(&f.state, &f.target, 12345, CAP).unwrap();
+            if case == 3 {
+                // An editor created an empty file before cxweb ever applied.
+                std::fs::write(&f.target, "").unwrap();
+            } else {
+                journal.apply().unwrap();
+                if case == 2 {
+                    std::fs::write(
+                        &f.target,
+                        format!("{}# user comment\n", journal.record.candidate),
+                    )
+                    .unwrap();
+                }
+            }
+            journal.disconnect(&[], &[]).unwrap();
+            assert_eq!(f.target.exists(), case != 0);
+            assert_eq!(journal.recovery().unwrap(), Recovery::Restored);
+            if case == 2 {
+                assert!(
+                    std::fs::read_to_string(&f.target)
+                        .unwrap()
+                        .contains("user comment")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn disconnect_crashes_before_and_after_mutation_recover_without_erasing_edits() {
+        for after_mutation in [false, true] {
+            let f = Fixture::new();
+            let mut journal = ConfigJournal::prepare(&f.state, &f.target, 12345, CAP).unwrap();
+            journal.apply().unwrap();
+            let current = journal.prepare_disconnect(&[], &[]).unwrap();
+            if after_mutation {
+                journal.apply_disconnect(&current).unwrap();
+            }
+            drop(journal);
+            let mut recovered = ConfigJournal::reopen(&f.state, &f.target).unwrap();
+            assert_eq!(recovered.phase(), Phase::Disconnecting);
+            if after_mutation {
+                assert_eq!(recovered.recovery().unwrap(), Recovery::Restored);
+            } else {
+                std::fs::write(
+                    &f.target,
+                    format!("{}# post-crash edit\n", recovered.record.candidate),
+                )
+                .unwrap();
+            }
+            recovered.disconnect(&[], &[]).unwrap();
+            assert_eq!(recovered.phase(), Phase::ConfigRestored);
+            if !after_mutation {
+                assert!(
+                    std::fs::read_to_string(&f.target)
+                        .unwrap()
+                        .contains("post-crash edit")
+                );
+            } else {
+                assert!(!f.target.exists());
+            }
+        }
+    }
+
+    #[test]
+    fn foreign_route_and_edit_after_disconnect_preparation_survive() {
+        let f = Fixture::new();
+        let mut journal = ConfigJournal::prepare(&f.state, &f.target, 12345, CAP).unwrap();
+        journal.apply().unwrap();
+        let current = journal.prepare_disconnect(&[], &[]).unwrap();
+        let foreign = "openai_base_url='https://example.com'\n";
+        std::fs::write(&f.target, foreign).unwrap();
+        assert!(journal.apply_disconnect(&current).is_err());
+        assert!(journal.disconnect(&[], &[]).is_err());
+        assert_eq!(std::fs::read_to_string(&f.target).unwrap(), foreign);
     }
 }

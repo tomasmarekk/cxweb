@@ -9,9 +9,10 @@ use std::{
     ptr::{null, null_mut},
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_OPEN_REPARSE_POINT,
-    FILE_SHARE_DELETE, FILE_SHARE_READ, GetFileInformationByHandle, MOVEFILE_WRITE_THROUGH,
-    MoveFileExW, ReplaceFileW,
+    BY_HANDLE_FILE_INFORMATION, DELETE, FILE_ATTRIBUTE_REPARSE_POINT, FILE_DISPOSITION_INFO,
+    FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_SHARE_DELETE, FILE_SHARE_READ,
+    FileDispositionInfo, GetFileInformationByHandle, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+    ReplaceFileW, SetFileInformationByHandle,
 };
 
 const LIMIT: u64 = 2 * 1024 * 1024;
@@ -116,6 +117,39 @@ impl Snapshot {
         let current = Self::capture(&self.path)?;
         if current.identity != self.identity || current.bytes != self.bytes {
             return Err(io::Error::other("E_CONFIG_CHANGED"));
+        }
+        Ok(())
+    }
+
+    /// Deletes only the verified file through its handle. While the handle is
+    /// open, writers and renames are denied; a replacement at this path is never
+    /// selected by a later path-based delete. Caller proves semantic ownership.
+    pub fn remove(&self) -> io::Result<()> {
+        let expected = self
+            .identity
+            .as_ref()
+            .ok_or_else(|| io::Error::other("E_CONFIG_CHANGED"))?;
+        let mut file = OpenOptions::new()
+            .access_mode(FILE_GENERIC_READ | DELETE)
+            .share_mode(FILE_SHARE_READ)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&self.path)?;
+        if &identity(&file)? != expected || read(&mut file)? != self.bytes {
+            return Err(io::Error::other("E_CONFIG_CHANGED"));
+        }
+        let disposition = FILE_DISPOSITION_INFO { DeleteFile: true };
+        // SAFETY: valid exclusively mutable file handle and correctly sized POD
+        // input. Deletion applies to this checked file object upon handle close.
+        if unsafe {
+            SetFileInformationByHandle(
+                file.as_raw_handle(),
+                FileDispositionInfo,
+                (&disposition as *const FILE_DISPOSITION_INFO).cast(),
+                std::mem::size_of::<FILE_DISPOSITION_INFO>() as u32,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
         }
         Ok(())
     }
@@ -294,5 +328,28 @@ mod tests {
         drop(writer);
         std::fs::hard_link(fixture.config(), fixture.0.join("linked")).unwrap();
         assert!(Snapshot::capture(&fixture.config()).is_err());
+    }
+
+    #[test]
+    fn removal_checks_bytes_identity_and_active_writer_before_handle_deletion() {
+        let fixture = Fixture::new();
+        std::fs::write(fixture.config(), b"owned").unwrap();
+        let snapshot = Snapshot::capture(&fixture.config()).unwrap();
+        std::fs::write(fixture.config(), b"user edited").unwrap();
+        assert!(snapshot.remove().is_err());
+        let snapshot = Snapshot::capture(&fixture.config()).unwrap();
+        std::fs::rename(fixture.config(), fixture.0.join("old-file")).unwrap();
+        std::fs::write(fixture.config(), b"user edited").unwrap();
+        assert!(snapshot.remove().is_err());
+        let snapshot = Snapshot::capture(&fixture.config()).unwrap();
+        let writer = OpenOptions::new()
+            .write(true)
+            .open(fixture.config())
+            .unwrap();
+        assert!(snapshot.remove().is_err());
+        drop(writer);
+        snapshot.remove().unwrap();
+        assert!(!fixture.config().exists());
+        assert!(fixture.0.join("old-file").exists());
     }
 }
