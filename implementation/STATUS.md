@@ -312,3 +312,17 @@ model discovery, native WebSocket preservation and actual pickers are proven.
   checks status afterward. This removes unnecessary activity but is NOT evidence
   that the reported email/Continue loading loop is fixed. Authentication is
   still pending user verification. No cookies or profile data were deleted.
+
+## Manual authentication comparison
+
+- The user reports successful email/password authentication in the same installed
+  Chrome and dedicated cxweb profile when launched by manual-login-probe without
+  CDP. This narrows the investigation to differences in the managed launch and
+  session lifecycle; it does not establish the exact cause of the earlier route
+  error or qualify authentication through the desktop app.
+- The comparison browser remains open and holds the profile through the probe.
+  Computer Use stopped because it could not reliably determine the browser URL.
+  No alternate method was used to close or control that window. Await normal
+  manual closure before reopening cxweb and checking the persisted session.
+- Managed session reuse, account/workspace identification, and end-to-end Codex
+  App/CLI behavior remain unverified. No cookies or profile data were deleted.
