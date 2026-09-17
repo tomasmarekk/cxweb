@@ -4,6 +4,8 @@ pub mod catalog_proxy;
 pub mod config_journal;
 #[cfg(windows)]
 pub mod control;
+#[cfg(windows)]
+pub mod control_protocol;
 pub mod gateway;
 pub mod ledger;
 #[cfg(windows)]

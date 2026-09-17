@@ -1,0 +1,514 @@
+//! Versioned private control commands. Operation receipts belong to one runtime
+//! instance; stale desktop clients cannot replay mutations into a replacement.
+use crate::lifecycle::{DisconnectController, DisconnectState};
+use cxweb_platform::control_pipe::{self, ControlListener};
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::HashMap,
+    future::Future,
+    io,
+    pin::Pin,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
+use tokio_util::sync::CancellationToken;
+
+const VERSION: u32 = 1;
+const RECEIPTS: usize = 256;
+const EXCHANGE: Duration = Duration::from_secs(2);
+pub type Work = Pin<Box<dyn Future<Output = Result<DisconnectState, &'static str>> + Send>>;
+
+pub trait Lifecycle: Send + Sync + 'static {
+    fn state(&self) -> DisconnectState;
+    fn disconnect(&self) -> Work;
+}
+impl Lifecycle for DisconnectController {
+    fn state(&self) -> DisconnectState {
+        *self.subscribe().borrow()
+    }
+    fn disconnect(&self) -> Work {
+        let controller = self.clone();
+        Box::pin(async move { controller.disconnect(Duration::from_secs(30)).await })
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Request {
+    pub version: u32,
+    pub command: Command,
+}
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Command {
+    Status {},
+    Disconnect { instance: String, operation: String },
+    Operation { instance: String, operation: String },
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Reply {
+    Status {
+        version: u32,
+        instance: String,
+        state: DisconnectState,
+    },
+    Operation {
+        operation: String,
+        outcome: Outcome,
+    },
+    Error {
+        code: ErrorCode,
+    },
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Outcome {
+    Running {},
+    Completed { result: DisconnectState },
+    Failed {},
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ErrorCode {
+    Protocol,
+    Version,
+    Instance,
+    OperationId,
+    UnknownOperation,
+    Busy,
+    Capacity,
+}
+
+#[derive(Clone)]
+pub struct Service {
+    instance: String,
+    backend: Arc<dyn Lifecycle>,
+    receipts: Arc<Mutex<HashMap<String, Outcome>>>,
+}
+impl Service {
+    pub fn new(backend: Arc<dyn Lifecycle>) -> Self {
+        Self {
+            instance: format!("{:032x}", rand::random::<u128>()),
+            backend,
+            receipts: Arc::default(),
+        }
+    }
+    fn handle(&self, bytes: &[u8]) -> Reply {
+        let request = cxweb_codex_adapter::strict_json::parse(bytes, 64 * 1024)
+            .ok()
+            .and_then(|value| serde_json::from_value::<Request>(value).ok());
+        let Some(request) = request else {
+            return error(ErrorCode::Protocol);
+        };
+        if request.version != VERSION {
+            return error(ErrorCode::Version);
+        }
+        let (instance, operation, start) = match request.command {
+            Command::Status {} => {
+                return Reply::Status {
+                    version: VERSION,
+                    instance: self.instance.clone(),
+                    state: self.backend.state(),
+                };
+            }
+            Command::Disconnect {
+                instance,
+                operation,
+            } => (instance, operation, true),
+            Command::Operation {
+                instance,
+                operation,
+            } => (instance, operation, false),
+        };
+        if instance != self.instance {
+            return error(ErrorCode::Instance);
+        }
+        if operation.len() != 32
+            || !operation
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return error(ErrorCode::OperationId);
+        }
+        let mut receipts = self.receipts.lock().expect("control receipt lock poisoned");
+        if let Some(outcome) = receipts.get(&operation) {
+            return Reply::Operation {
+                operation,
+                outcome: outcome.clone(),
+            };
+        }
+        if !start {
+            return error(ErrorCode::UnknownOperation);
+        }
+        if receipts
+            .values()
+            .any(|outcome| *outcome == Outcome::Running {})
+        {
+            return error(ErrorCode::Busy);
+        }
+        // Never evict a receipt and accidentally re-execute its operation ID.
+        if receipts.len() >= RECEIPTS {
+            return error(ErrorCode::Capacity);
+        }
+        receipts.insert(operation.clone(), Outcome::Running {});
+        let backend = self.backend.clone();
+        let completed = self.receipts.clone();
+        let id = operation.clone();
+        // Ownership transfers before replying. A disconnected/slow UI cannot
+        // cancel a mutation, and a worker panic produces only a fixed error.
+        tokio::spawn(async move {
+            let worker = tokio::spawn(async move { backend.disconnect().await });
+            let outcome = match worker.await {
+                Ok(Ok(result)) => Outcome::Completed { result },
+                _ => Outcome::Failed {},
+            };
+            completed
+                .lock()
+                .expect("control receipt lock poisoned")
+                .insert(id, outcome);
+        });
+        Reply::Operation {
+            operation,
+            outcome: Outcome::Running {},
+        }
+    }
+
+    /// Stopping control admission does not shut down the gateway or cancel an
+    /// accepted lifecycle operation. The daemon owner retains those resources.
+    pub async fn serve(
+        &self,
+        mut listener: ControlListener,
+        stop: CancellationToken,
+    ) -> io::Result<()> {
+        loop {
+            let mut pipe = tokio::select! {
+                biased;
+                _ = stop.cancelled() => return Ok(()),
+                accepted = listener.accept() => accepted?,
+            };
+            // One exchange per connection, bounded in time and memory. A stalled
+            // peer cannot occupy control admission indefinitely.
+            let exchange = async {
+                let bytes = control_pipe::read_frame(&mut pipe).await?;
+                let reply = self.handle(&bytes);
+                let bytes = serde_json::to_vec(&reply).map_err(io::Error::other)?;
+                control_pipe::write_frame(&mut pipe, &bytes).await?;
+                // Closing a Windows server handle can discard unread output.
+                // Retain it until the client confirms receipt (or the bounded
+                // exchange expires). This never controls operation lifetime.
+                if control_pipe::read_frame(&mut pipe).await? != b"ack" {
+                    return Err(io::Error::other("E_CONTROL_PROTOCOL"));
+                }
+                Ok::<(), io::Error>(())
+            };
+            tokio::select! {
+                biased;
+                _ = stop.cancelled() => return Ok(()),
+                _ = tokio::time::timeout(EXCHANGE, exchange) => {},
+            }
+        }
+    }
+}
+fn error(code: ErrorCode) -> Reply {
+    Reply::Error { code }
+}
+
+/// A client timeout is an unknown outcome. Reuse the same operation ID (and
+/// runtime instance) when querying/retrying; never synthesize a replacement ID.
+pub async fn exchange(installation: &str, request: &Request) -> io::Result<Reply> {
+    tokio::time::timeout(EXCHANGE, async {
+        let mut pipe = loop {
+            match control_pipe::connect(installation) {
+                // Windows ERROR_PIPE_BUSY: the preceding client is finishing.
+                Err(error) if error.raw_os_error() == Some(231) => {
+                    tokio::time::sleep(Duration::from_millis(10)).await
+                }
+                result => break result?,
+            }
+        };
+        let bytes = serde_json::to_vec(request).map_err(io::Error::other)?;
+        control_pipe::write_frame(&mut pipe, &bytes).await?;
+        let bytes = control_pipe::read_frame(&mut pipe).await?;
+        control_pipe::write_frame(&mut pipe, b"ack").await?;
+        let value = cxweb_codex_adapter::strict_json::parse(&bytes, 64 * 1024)
+            .map_err(|_| io::Error::other("E_CONTROL_PROTOCOL"))?;
+        let reply: Reply =
+            serde_json::from_value(value).map_err(|_| io::Error::other("E_CONTROL_PROTOCOL"))?;
+        let matches = match (&request.command, &reply) {
+            (_, Reply::Error { .. }) => true,
+            (Command::Status {}, Reply::Status { version, .. }) => *version == VERSION,
+            (
+                Command::Disconnect { operation, .. } | Command::Operation { operation, .. },
+                Reply::Operation {
+                    operation: received,
+                    ..
+                },
+            ) => operation == received,
+            _ => false,
+        };
+        if !matches {
+            return Err(io::Error::other("E_CONTROL_PROTOCOL"));
+        }
+        Ok(reply)
+    })
+    .await
+    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "E_CONTROL_TIMEOUT"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::Semaphore;
+    struct Backend {
+        calls: AtomicUsize,
+        release: Arc<Semaphore>,
+    }
+    impl Lifecycle for Backend {
+        fn state(&self) -> DisconnectState {
+            DisconnectState::Idle
+        }
+        fn disconnect(&self) -> Work {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let release = self.release.clone();
+            Box::pin(async move {
+                release.acquire().await.unwrap().forget();
+                Ok(DisconnectState::PendingRestart)
+            })
+        }
+    }
+    fn fixture() -> (Service, Arc<Backend>) {
+        let backend = Arc::new(Backend {
+            calls: AtomicUsize::new(0),
+            release: Arc::new(Semaphore::new(0)),
+        });
+        (Service::new(backend.clone()), backend)
+    }
+    fn request(command: Command) -> Request {
+        Request {
+            version: VERSION,
+            command,
+        }
+    }
+    fn dispatch(service: &Service, command: Command) -> Reply {
+        service.handle(&serde_json::to_vec(&request(command)).unwrap())
+    }
+    #[tokio::test]
+    async fn rejects_ambiguous_remote_and_stale_commands_without_mutation() {
+        let (service, backend) = fixture();
+        for bytes in [
+            br#"{"version":1,"version":1,"command":{"type":"status"}}"#.as_slice(),
+            br#"{"version":1,"command":{"type":"status","path":"secret"}}"#,
+            br#"{"version":1,"command":{"type":"evaluate","script":"secret"}}"#,
+            br#"{"version":1,"command":{"type":"shutdown"}}"#,
+        ] {
+            assert_eq!(service.handle(bytes), error(ErrorCode::Protocol));
+        }
+        assert_eq!(
+            service.handle(br#"{"version":2,"command":{"type":"status"}}"#),
+            error(ErrorCode::Version)
+        );
+        assert_eq!(
+            dispatch(
+                &service,
+                Command::Disconnect {
+                    instance: "stale".into(),
+                    operation: "a".repeat(32)
+                }
+            ),
+            error(ErrorCode::Instance)
+        );
+        assert_eq!(
+            dispatch(
+                &service,
+                Command::Disconnect {
+                    instance: service.instance.clone(),
+                    operation: "bad".into()
+                }
+            ),
+            error(ErrorCode::OperationId)
+        );
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn lost_reply_retries_execute_once_and_receipts_are_not_evicted() {
+        let (service, backend) = fixture();
+        let command = || Command::Disconnect {
+            instance: service.instance.clone(),
+            operation: "a".repeat(32),
+        };
+        let first = dispatch(&service, command());
+        assert_eq!(dispatch(&service, command()), first);
+        assert_eq!(
+            dispatch(
+                &service,
+                Command::Disconnect {
+                    instance: service.instance.clone(),
+                    operation: "b".repeat(32)
+                }
+            ),
+            error(ErrorCode::Busy)
+        );
+        backend.release.add_permits(1);
+        tokio::time::timeout(EXCHANGE, async {
+            loop {
+                if dispatch(&service, command())
+                    == (Reply::Operation {
+                        operation: "a".repeat(32),
+                        outcome: Outcome::Completed {
+                            result: DisconnectState::PendingRestart,
+                        },
+                    })
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+        for n in 0..RECEIPTS {
+            service
+                .receipts
+                .lock()
+                .unwrap()
+                .insert(format!("{n:032x}"), Outcome::Failed {});
+        }
+        assert_eq!(
+            dispatch(
+                &service,
+                Command::Disconnect {
+                    instance: service.instance.clone(),
+                    operation: "b".repeat(32)
+                }
+            ),
+            error(ErrorCode::Capacity)
+        );
+        assert!(matches!(
+            dispatch(&service, command()),
+            Reply::Operation {
+                outcome: Outcome::Completed { .. },
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn actual_pipe_recovers_after_stalled_client_and_keeps_accepted_work() {
+        let (service, backend) = fixture();
+        let installation = format!("{:032x}", rand::random::<u128>());
+        let listener = control_pipe::listen(&installation).unwrap();
+        let stop = CancellationToken::new();
+        let server = tokio::spawn({
+            let service = service.clone();
+            let stop = stop.clone();
+            async move { service.serve(listener, stop).await }
+        });
+        let mut stalled = control_pipe::connect(&installation).unwrap();
+        use tokio::io::AsyncWriteExt;
+        stalled.write_all(&[1, 0]).await.unwrap();
+        tokio::time::sleep(EXCHANGE + Duration::from_millis(100)).await;
+        drop(stalled);
+        let status = exchange(&installation, &request(Command::Status {}))
+            .await
+            .unwrap();
+        assert_eq!(
+            status,
+            Reply::Status {
+                version: VERSION,
+                instance: service.instance.clone(),
+                state: DisconnectState::Idle
+            }
+        );
+        let mut slow_reader = control_pipe::connect(&installation).unwrap();
+        control_pipe::write_frame(
+            &mut slow_reader,
+            &serde_json::to_vec(&request(Command::Status {})).unwrap(),
+        )
+        .await
+        .unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let buffered = control_pipe::read_frame(&mut slow_reader).await.unwrap();
+        assert_eq!(serde_json::from_slice::<Reply>(&buffered).unwrap(), status);
+        control_pipe::write_frame(&mut slow_reader, b"ack")
+            .await
+            .unwrap();
+        drop(slow_reader);
+        let op = "c".repeat(32);
+        let accepted = exchange(
+            &installation,
+            &request(Command::Disconnect {
+                instance: service.instance.clone(),
+                operation: op.clone(),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            accepted,
+            Reply::Operation {
+                operation: op.clone(),
+                outcome: Outcome::Running {}
+            }
+        );
+        stop.cancel();
+        server.await.unwrap().unwrap();
+        backend.release.add_permits(1);
+        tokio::time::timeout(EXCHANGE, async {
+            loop {
+                if matches!(
+                    dispatch(
+                        &service,
+                        Command::Operation {
+                            instance: service.instance.clone(),
+                            operation: op.clone()
+                        }
+                    ),
+                    Reply::Operation {
+                        outcome: Outcome::Completed { .. },
+                        ..
+                    }
+                ) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn client_rejects_wrong_operation_reply() {
+        let installation = format!("{:032x}", rand::random::<u128>());
+        let mut listener = control_pipe::listen(&installation).unwrap();
+        let server = tokio::spawn(async move {
+            let mut pipe = listener.accept().await.unwrap();
+            control_pipe::read_frame(&mut pipe).await.unwrap();
+            let reply = Reply::Operation {
+                operation: "b".repeat(32),
+                outcome: Outcome::Running {},
+            };
+            control_pipe::write_frame(&mut pipe, &serde_json::to_vec(&reply).unwrap())
+                .await
+                .unwrap();
+            // Keep the server handle alive until the client has consumed its
+            // response: dropping a Windows pipe may discard unread data.
+            let _ = control_pipe::read_frame(&mut pipe).await;
+        });
+        let result = exchange(
+            &installation,
+            &request(Command::Disconnect {
+                instance: "a".repeat(32),
+                operation: "a".repeat(32),
+            }),
+        )
+        .await;
+        assert_eq!(result.unwrap_err().to_string(), "E_CONTROL_PROTOCOL");
+        server.await.unwrap();
+    }
+}

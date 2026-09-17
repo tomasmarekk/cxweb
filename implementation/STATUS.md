@@ -463,3 +463,28 @@ model discovery, native WebSocket preservation and actual pickers are proven.
   warnings denied, formatting and diff checks passed. Typed commands, exchange
   deadlines, process supervision and desktop/runtime integration remain pending.
   This work did not change the running browser or real Codex configuration.
+
+## Typed lifecycle control service
+
+- Added versioned status, disconnect and operation-result commands over the
+  private Windows pipe, backed by the real disconnect controller. Unknown fields,
+  duplicate JSON keys, unsupported commands and protocol versions are rejected.
+  Requests cannot supply paths, URLs, scripts, shutdown commands or drain limits.
+- Disconnect operation IDs are bound to a random runtime instance. Receipts are
+  bounded and never evicted to re-execute an old ID; concurrent different mutations
+  are rejected while one runs. Accepted work survives loss of its UI connection
+  or closure of control admission. Receipts are in memory: restart invalidates
+  their instance, while configuration crash recovery remains journal-owned.
+- Each connection has a two-second exchange deadline and one bounded request.
+  The server retains its response until a bounded receipt acknowledgement to
+  prevent Windows pipe closure from discarding unread output. Client replies are
+  checked against the requested command and operation ID.
+- Four new tests cover malformed/stale commands, duplicate operation admission,
+  receipt capacity, stalled and slow-reading pipe clients, operation survival, and
+  wrong-operation replies. The existing lifecycle integration test now performs
+  disconnect through the actual Windows pipe, restores its temporary configuration,
+  and verifies native HTTP forwarding on the same listener afterward.
+- All 81 workspace tests passed (one opt-in Chrome test skipped), as did Clippy
+  with warnings denied, formatting and diff checks. Production daemon startup,
+  desktop command wiring, connect/relogin commands and live App/CLI qualification
+  remain incomplete. No real account or Codex configuration was changed.

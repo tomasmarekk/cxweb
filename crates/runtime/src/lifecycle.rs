@@ -5,14 +5,14 @@ use crate::{
     config_journal::{ConfigJournal, Phase},
     gateway::Gateway,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
 use tokio::sync::{Mutex as AsyncMutex, watch};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DisconnectState {
     Idle,
@@ -304,6 +304,9 @@ mod tests {
 
     #[tokio::test]
     async fn restored_config_keeps_same_live_listener_serving_native_clients() {
+        use crate::control_protocol::{Command, Outcome, Reply, Request, Service, exchange};
+        use cxweb_platform::control_pipe;
+        use tokio_util::sync::CancellationToken;
         let fixture = Fixture::new();
         let upstream = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = upstream.local_addr().unwrap();
@@ -328,6 +331,25 @@ mod tests {
         let journal = fixture.journal(&gateway);
         let controller =
             DisconnectController::new(gateway.clone(), journal, vec![], vec![]).unwrap();
+        let installation = format!("{:032x}", rand::random::<u128>());
+        let control_listener = control_pipe::listen(&installation).unwrap();
+        let service = Service::new(Arc::new(controller.clone()));
+        let stop = CancellationToken::new();
+        let control_server = tokio::spawn({
+            let stop = stop.clone();
+            async move { service.serve(control_listener, stop).await }
+        });
+        let Reply::Status { instance, .. } = exchange(
+            &installation,
+            &Request {
+                version: 1,
+                command: Command::Status {},
+            },
+        )
+        .await
+        .unwrap() else {
+            panic!("expected runtime status")
+        };
         let server = tokio::spawn(async move {
             axum::serve(listener, gateway.router()).await.unwrap();
         });
@@ -339,7 +361,58 @@ mod tests {
         let native = r#"{"model":"native","input":"unchanged"}"#;
         for after_disconnect in [false, true] {
             if after_disconnect {
-                controller.disconnect(Duration::from_secs(1)).await.unwrap();
+                let operation = "d".repeat(32);
+                let accepted = exchange(
+                    &installation,
+                    &Request {
+                        version: 1,
+                        command: Command::Disconnect {
+                            instance: instance.clone(),
+                            operation: operation.clone(),
+                        },
+                    },
+                )
+                .await
+                .unwrap();
+                assert_eq!(
+                    accepted,
+                    Reply::Operation {
+                        operation: operation.clone(),
+                        outcome: Outcome::Running {}
+                    }
+                );
+                tokio::time::timeout(Duration::from_secs(3), async {
+                    loop {
+                        let reply = exchange(
+                            &installation,
+                            &Request {
+                                version: 1,
+                                command: Command::Operation {
+                                    instance: instance.clone(),
+                                    operation: operation.clone(),
+                                },
+                            },
+                        )
+                        .await
+                        .unwrap();
+                        match reply {
+                            Reply::Operation {
+                                outcome:
+                                    Outcome::Completed {
+                                        result: DisconnectState::PendingRestart,
+                                    },
+                                ..
+                            } => break,
+                            Reply::Operation {
+                                outcome: Outcome::Running {},
+                                ..
+                            } => tokio::time::sleep(Duration::from_millis(10)).await,
+                            other => panic!("unexpected disconnect result: {other:?}"),
+                        }
+                    }
+                })
+                .await
+                .unwrap();
                 assert!(!fixture.config().exists());
             }
             let response = client.post(&url).body(native).send().await.unwrap();
@@ -365,5 +438,7 @@ mod tests {
         );
         server.abort();
         upstream_task.abort();
+        stop.cancel();
+        control_server.await.unwrap().unwrap();
     }
 }
