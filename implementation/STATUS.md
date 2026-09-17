@@ -326,3 +326,32 @@ model discovery, native WebSocket preservation and actual pickers are proven.
   manual closure before reopening cxweb and checking the persisted session.
 - Managed session reuse, account/workspace identification, and end-to-end Codex
   App/CLI behavior remain unverified. No cookies or profile data were deleted.
+
+## Managed browser navigation and persisted-session verification
+
+- After the manual comparison, the user reported an indefinitely blank loading
+  page when reopening ChatGPT through cxweb. A status check in that running build
+  still reported waiting for sign-in.
+- The launcher now supplies ordinary absolute Windows paths to Chromium instead
+  of Rust's verbatim-path spelling. Both forms are canonicalized and compared
+  before launch to preserve path identity. Dedicated-profile isolation, private
+  CDP pipes, sandbox settings and process-tree containment remain in place.
+- The browser diagnostic now creates a profile with the same protected directory
+  permissions as the app and actually waits for a usable ChatGPT interface.
+  Previously, opening a target alone was counted as successful navigation. The
+  diagnostic can leave the page idle first and fails if readiness times out.
+- Fresh-profile comparisons observed failures and successes with the original
+  path spelling; ordinary-path probes loaded successfully. These results alone
+  do not establish path spelling as the sole cause of the intermittent failure.
+  A temporary event counter found four CDP events, not a saturated reply queue.
+- After normally closing the old cxweb instance and launching the rebuilt app,
+  its original saved profile loaded ChatGPT. An explicit Check status displayed
+  Session detected / Session awaiting verification, observed through Computer
+  Use. No password was entered and no cookies/profile contents were copied or
+  deleted. Account identity, model discovery and Codex App/CLI remain unqualified.
+- Added a path-identity regression test including spaces and Unicode, and an
+  opt-in real-Chrome test that loads a loopback HTTP page and completes a fetch
+  using a fresh protected profile. Workspace tests, the opt-in browser test,
+  Clippy with warnings denied, formatting and the three desktop UI tests passed.
+- The rebuilt CLI also passed scripts/probe-browser.ps1: no browser TCP listeners
+  and all eight owned processes cleaned up when the diagnostic launcher exited.

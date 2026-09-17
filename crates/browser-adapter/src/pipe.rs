@@ -350,6 +350,90 @@ fn read_frame(input: &mut impl BufRead) -> io::Result<Vec<u8>> {
 mod tests {
     use super::*;
     #[test]
+    #[ignore = "requires an installed Chrome; creates a fresh diagnostic profile"]
+    fn managed_browser_loads_http_and_completes_fetch() {
+        use std::{io::Read, net::TcpListener};
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(35);
+            let mut completed = false;
+            while Instant::now() < deadline {
+                let (mut socket, _) = match listener.accept() {
+                    Ok(value) => value,
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(20));
+                        continue;
+                    }
+                    Err(error) => panic!("{error}"),
+                };
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut request = Vec::new();
+                while request.len() < 4096 && !request.ends_with(b"\r\n\r\n") {
+                    let mut byte = [0];
+                    if socket.read_exact(&mut byte).is_err() {
+                        break;
+                    }
+                    request.push(byte[0]);
+                }
+                let fetch = request.starts_with(b"GET /fetch ");
+                let body = if fetch {
+                    "network-fixture-ok"
+                } else {
+                    "<!doctype html><title>pending</title><script>fetch('/fetch').then(r=>r.text()).then(t=>document.title=t)</script>"
+                };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(response.as_bytes());
+                if fetch {
+                    completed = true;
+                    break;
+                }
+            }
+            completed
+        });
+        let profile = std::env::temp_dir().join(format!(
+            "cxweb-network-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        cxweb_platform::state::protected_directory(&profile).unwrap();
+        let executable = cxweb_platform::state::installed_browser().unwrap();
+        let mut browser = ManagedBrowser::launch(&executable, &profile, false).unwrap();
+        let target = browser
+            .call("Target.createTarget", json!({"url":origin}), None)
+            .unwrap();
+        let page = browser
+            .attach(target["targetId"].as_str().unwrap().to_owned(), false)
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(25);
+        let mut loaded = false;
+        while Instant::now() < deadline {
+            let value = browser.call("Runtime.evaluate", json!({"expression":"document.title === 'network-fixture-ok'", "returnByValue":true}), Some(&page.session)).unwrap();
+            if value["result"]["value"] == true {
+                loaded = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let _ = browser.close();
+        drop(browser);
+        let served = server.join().unwrap();
+        assert!(
+            served,
+            "managed Chrome did not complete the local HTTP fetch"
+        );
+        assert!(loaded, "managed Chrome did not render the fetch result");
+    }
+    #[test]
     fn framing_handles_split_reads_and_multiple_messages() {
         let mut reader = BufReader::with_capacity(2, &b"{\"a\":1}\0{\"b\":2}\0"[..]);
         assert_eq!(read_frame(&mut reader).unwrap(), b"{\"a\":1}");

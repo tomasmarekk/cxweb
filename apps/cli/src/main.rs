@@ -22,6 +22,9 @@ enum Command {
         hold_seconds: u8,
         #[arg(long)]
         open_login: bool,
+        /// Leave the page idle before inspecting it, to reproduce manual login startup.
+        #[arg(long, default_value_t = 0, requires = "open_login")]
+        login_idle_seconds: u8,
     },
     /// Inspect one explicitly selected configuration without changing it.
     Inspect {
@@ -86,23 +89,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             profile,
             hold_seconds,
             open_login,
+            login_idle_seconds,
         } => {
-            std::fs::create_dir(&profile)?;
+            if profile.exists() {
+                return Err("browser probe requires a new profile directory".into());
+            }
             #[cfg(windows)]
             {
+                cxweb_platform::state::protected_directory(&profile)?;
                 let mut browser =
                     cxweb_browser_adapter::ManagedBrowser::launch(&browser, &profile, false)?;
                 let version = browser.version()?;
                 let startup = browser.probe_startup_page()?;
                 let dom = browser.probe_dom()?;
-                if open_login {
-                    browser.open_login()?;
-                }
+                let login_page = if open_login {
+                    let page = browser.open_login()?;
+                    std::thread::sleep(std::time::Duration::from_secs(u64::from(
+                        login_idle_seconds,
+                    )));
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                    let mut observation;
+                    loop {
+                        observation = browser.login_observation(&page)?;
+                        if observation.composer
+                            || observation.login_action
+                            || std::time::Instant::now() >= deadline
+                        {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                    }
+                    Some(observation)
+                } else {
+                    None
+                };
                 print_json(
-                    &serde_json::json!({"transport":"inherited_pipe", "pid":browser.pid(),"version":version["product"],"protocol":version["protocolVersion"],"login":"NOT RUN","startup":startup,"dom":dom}),
+                    &serde_json::json!({"transport":"inherited_pipe", "pid":browser.pid(),"version":version["product"],"protocol":version["protocolVersion"],"login":"NOT RUN","login_page":login_page,"startup":startup,"dom":dom}),
                 );
                 std::thread::sleep(std::time::Duration::from_secs(u64::from(hold_seconds)));
                 browser.close()?;
+                if login_page.is_some_and(|page| !page.composer && !page.login_action) {
+                    return Err("E_LOGIN_PAGE_NOT_READY: no usable ChatGPT interface within the probe deadline".into());
+                }
             }
             #[cfg(not(windows))]
             {

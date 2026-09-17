@@ -7,7 +7,7 @@ use std::{
         ffi::OsStrExt,
         io::{AsRawHandle, FromRawHandle, OwnedHandle},
     },
-    path::Path,
+    path::{Path, PathBuf},
     ptr::{null, null_mut},
 };
 use windows_sys::Win32::{
@@ -124,8 +124,8 @@ impl Drop for Attributes {
 /// `profile` must be an application-owned, dedicated directory. This function
 /// never attaches to an existing browser or accepts arbitrary debugging flags.
 pub fn launch(executable: &Path, profile: &Path, visible: bool) -> io::Result<BrowserProcess> {
-    let executable = executable.canonicalize()?;
-    let profile = profile.canonicalize()?;
+    let executable = browser_path(executable)?;
+    let profile = browser_path(profile)?;
     let exe_string = executable
         .to_str()
         .ok_or_else(|| io::Error::other("invalid executable path"))?;
@@ -209,5 +209,43 @@ pub fn launch(executable: &Path, profile: &Path, visible: bool) -> io::Result<Br
             input: File::from(parent_in),
             output: File::from(parent_out),
         })
+    }
+}
+
+// Rust canonicalization returns a verbatim Windows path. Keep canonical path
+// validation, but supply Chromium the ordinary spelling used by a manual launch.
+fn browser_path(path: &Path) -> io::Result<PathBuf> {
+    let canonical = path.canonicalize()?;
+    let text = canonical
+        .to_str()
+        .ok_or_else(|| io::Error::other("invalid browser path"))?;
+    let ordinary = if let Some(unc) = text.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{unc}"))
+    } else if let Some(disk) = text.strip_prefix(r"\\?\") {
+        PathBuf::from(disk)
+    } else {
+        canonical.clone()
+    };
+    if !ordinary.is_absolute() || ordinary.canonicalize()? != canonical {
+        return Err(io::Error::other("browser path identity changed"));
+    }
+    Ok(ordinary)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chromium_paths_keep_identity_without_verbatim_prefixes() {
+        let path = std::env::temp_dir().join(format!("cxweb path 🦀 {}", std::process::id()));
+        std::fs::create_dir(&path).unwrap();
+        let canonical = path.canonicalize().unwrap();
+        assert!(canonical.to_str().unwrap().starts_with(r"\\?\"));
+        let ordinary = browser_path(&path).unwrap();
+        assert!(!ordinary.to_str().unwrap().starts_with(r"\\?\"));
+        assert_eq!(ordinary.canonicalize().unwrap(), canonical);
+        assert_eq!(browser_path(&canonical).unwrap(), ordinary);
+        std::fs::remove_dir(path).unwrap();
     }
 }
