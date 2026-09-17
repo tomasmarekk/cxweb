@@ -708,3 +708,42 @@ model discovery, native WebSocket preservation and actual pickers are proven.
 - Live voice/media negotiation, account authentication, client pickers and complete
   native feature qualification remain open. Outgoing client binary frames remain
   unqualified; the reviewed clients serialize their outgoing messages as JSON text.
+
+## Web gateway binding to the turn coordinator
+
+- Added a WebProvider implementation that binds admitted HTTP requests to the
+  durable coordinator, published route allowlist and runtime-owned account/
+  workspace scope. Request-supplied account metadata cannot select that scope.
+  The activation/browser qualification owner must provide the scope and routes;
+  this adapter does not advertise models or activate production routing itself.
+- Extract only validated session-id, thread-id and turn metadata correlation
+  fields before dropping transport headers. Conflicting or duplicate identities
+  fail before browser preparation. Context-window changes separate browser scope.
+  Only framed hashes leave extraction; bearer/account/routing headers and raw
+  diagnostic metadata are absent from the browser operation.
+- Request identity combines runtime scope, native turn identity and normalized
+  generation payload. Delivery format and client tracing metadata do not cause
+  a second submission. A new native turn can intentionally repeat the same text;
+  retries of a completed request reuse its response/tool IDs. This depends on
+  stable native turn metadata and does not certify all client reconnect behavior.
+- The provider returns native JSON or buffered SSE with explicit buffered
+  diagnostics. Gateway cancellation reaches the actual coordinator and its stop
+  cleanup. Compaction remains explicitly unavailable until its browser protocol
+  is qualified; no history truncation or fake checkpoint is introduced.
+- Three integration tests cover gateway-to-coordinator response/replay, new turns
+  and contexts, missing/conflicting identities, unpublished routes, and disconnect
+  waiting for browser stop. They use a fake browser driver and no account access.
+  All 104 workspace tests passed, with two opt-in tests ignored. Clippy with
+  warnings denied, formatting and diff checks passed.
+- Extended the isolated client harness with a boolean identity-contract report.
+  Actual CLI 0.153.4 and App backend 0.155.0-alpha.2.6 both supplied the required
+  headers and completed the synthetic response. Reports contain no raw IDs.
+  Diagnostic CLI build and both updated harness runs passed; the harness still
+  marks actual picker and authenticated browser checks as not run.
+- Sources: [App HTTP correlation headers](https://github.com/openai/codex/blob/bf6f0a4ec97919bf697cdc532e7b8af4ec482fc6/codex-rs/codex-api/src/endpoint/responses.rs),
+  [App turn metadata](https://github.com/openai/codex/blob/bf6f0a4ec97919bf697cdc532e7b8af4ec482fc6/codex-rs/core/src/responses_metadata.rs),
+  and [CLI turn metadata](https://github.com/openai/codex/blob/3d2ee51ca2d5db578f328aa75e20aa22c0197c9a/codex-rs/core/src/responses_metadata.rs).
+  x-client-request-id equals the thread ID in these clients and is not used as
+  a per-generation idempotency key.
+- Binding the real managed browser driver, live route discovery/qualification,
+  tool round trips, compressed request classification and activation remain open.

@@ -17,5 +17,9 @@
     "displayName": "ChatGPT Web · Diagnostic",
     "hidden": false
   },
+  "identity": {
+    "raw_identifiers_recorded": false,
+    "verified_native_identity": true
+  },
   "result": "PASS backend-only synthetic test"
 }

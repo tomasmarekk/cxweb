@@ -37,6 +37,8 @@ enum Command {
         output: PathBuf,
         #[arg(long)]
         tools_output: Option<PathBuf>,
+        #[arg(long)]
+        identity_output: Option<PathBuf>,
     },
     /// Emit diagnostic model metadata for an isolated model_catalog_json.
     ProbeCatalog,
@@ -149,11 +151,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Probe {
             output,
             tools_output,
+            identity_output,
         } => {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
             let mut state = cxweb_runtime::ProbeState::new(listener.local_addr()?.port());
             if let Some(path) = tools_output {
                 state = state.with_registry_capture(path);
+            }
+            if let Some(path) = identity_output {
+                state = state.with_identity_capture(path);
             }
             // The diagnostic descriptor is exclusively created in a caller-owned
             // test directory; it contains no account data or native credentials.

@@ -16,7 +16,7 @@ const cwd = join(work, 'workspace');
 await mkdir(home); await mkdir(cwd);
 const bridge = resolve('target/debug/cxweb.exe');
 const descriptor = join(work, 'probe.json');
-const server = spawn(bridge, ['probe', '--output', descriptor, '--tools-output', join(work, 'tools.json')], { windowsHide: true, stdio: 'ignore' });
+const server = spawn(bridge, ['probe', '--output', descriptor, '--tools-output', join(work, 'tools.json'), '--identity-output', join(work, 'identity.json')], { windowsHide: true, stdio: 'ignore' });
 let client;
 const evidence = { schema: 'cxweb.client-probe.v1', client: execFileSync(executable, ['--version'], { encoding: 'utf8', windowsHide: true }).trim(), synthetic: true, actualPicker: 'NOT RUN', authentication: 'synthetic API key in isolated child environment', events: [] };
 try {
@@ -76,6 +76,10 @@ try {
   assert.equal(completed?.params?.turn?.status, 'completed', JSON.stringify(completed?.params ?? notifications.slice(-5)));
   assert.ok(messages.some(m => m.text.includes('cxweb diagnostic round-trip succeeded')), 'client receives actual gateway text');
   evidence.events.push('thread/start selected owned model', 'turn/start completed through loopback', 'expected synthetic assistant text received');
+  const identity = JSON.parse(await readFile(join(work, 'identity.json'), 'utf8'));
+  assert.equal(identity.verified_native_identity, true, 'client supplies unambiguous thread/session/turn identity');
+  assert.equal(identity.raw_identifiers_recorded, false);
+  evidence.identity = identity;
   evidence.result = 'PASS backend-only synthetic test';
 } catch (error) {
   evidence.result = 'FAIL';

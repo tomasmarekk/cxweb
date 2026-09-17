@@ -24,6 +24,7 @@ use tokio_util::sync::CancellationToken;
 /// installation capability. Its history is untrusted model input, never code.
 pub struct WebRequest {
     pub payload: Value,
+    pub identity: Option<crate::web_provider::WebIdentity>,
     pub compact: bool,
     pub cancellation: CancellationToken,
 }
@@ -303,6 +304,7 @@ async fn handle(
                 return StatusCode::PAYLOAD_TOO_LARGE.into_response();
             }
             // Drop bearer-bearing transport state before entering browser code.
+            let identity = crate::web_provider::WebIdentity::from_headers(&headers);
             drop(headers);
             let Some(lease) = gateway.admission.acquire() else {
                 return unavailable("E_WEB_DISCONNECTED");
@@ -320,6 +322,7 @@ async fn handle(
                     .web
                     .respond(WebRequest {
                         payload,
+                        identity,
                         compact: matches!(route, NativeRoute::Compact),
                         cancellation,
                     })

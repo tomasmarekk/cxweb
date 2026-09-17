@@ -18,6 +18,7 @@ mod native_ws;
 pub mod remote_control;
 pub mod scheduler;
 pub mod turn;
+pub mod web_provider;
 use axum::{
     Router,
     body::Bytes,
@@ -37,6 +38,7 @@ pub struct ProbeState {
     authority: String,
     pub observations: Arc<Mutex<Vec<&'static str>>>,
     registry_capture: Option<std::path::PathBuf>,
+    identity_capture: Option<std::path::PathBuf>,
 }
 
 impl ProbeState {
@@ -46,6 +48,7 @@ impl ProbeState {
             authority: format!("127.0.0.1:{port}"),
             observations: Arc::default(),
             registry_capture: None,
+            identity_capture: None,
         }
     }
     pub fn base_url(&self) -> String {
@@ -59,6 +62,11 @@ impl ProbeState {
     /// request history, headers, account state or authentication.
     pub fn with_registry_capture(mut self, path: std::path::PathBuf) -> Self {
         self.registry_capture = Some(path);
+        self
+    }
+    /// Store a boolean contract result, never raw native correlation metadata.
+    pub fn with_identity_capture(mut self, path: std::path::PathBuf) -> Self {
+        self.identity_capture = Some(path);
         self
     }
 }
@@ -117,6 +125,17 @@ async fn probe(
                 Some("webbridge/diagnostic") => {
                     // Native authorization deliberately never enters the response adapter.
                     record(&state, "owned_response");
+                    if let Some(path) = &state.identity_capture
+                        && let Ok(mut file) = std::fs::OpenOptions::new()
+                            .write(true)
+                            .create_new(true)
+                            .open(path)
+                    {
+                        use std::io::Write;
+                        let verified = web_provider::WebIdentity::from_headers(&headers).is_some();
+                        let report = json!({"verified_native_identity":verified,"raw_identifiers_recorded":false});
+                        let _ = file.write_all(report.to_string().as_bytes());
+                    }
                     if let Some(path) = &state.registry_capture
                         && let Ok(mut file) = std::fs::OpenOptions::new()
                             .write(true)
