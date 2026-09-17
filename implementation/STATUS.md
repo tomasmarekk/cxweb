@@ -294,3 +294,21 @@ model discovery, native WebSocket preservation and actual pickers are proven.
   traversal rejection, hard links and active writers. All 55 workspace Rust
   tests and Clippy with warnings denied passed. Only temporary synthetic files
   were changed; the user's actual Codex configuration remains untouched.
+
+## User-reported startup and login issues
+
+- Fixed debug builds opening a console: the Windows GUI subsystem now applies
+  to all desktop build profiles. Verified PE subsystem 2 and a single desktop
+  app window in the native window inventory after launching the rebuilt app.
+- Removed the browser launcher's initial blank window with Chromium's
+  no-startup-window option; the login action creates its own single window.
+  Reusing an arbitrary blank target was rejected after an integration check
+  exposed ambiguous restored/closing blank targets. No restored chat is borrowed.
+- The actual Chrome probe now checks zero unsolicited startup pages; optional
+  --open-login verifies that the official page can subsequently be opened. This
+  passed on Chrome 152.0.7977.84 alongside the existing DOM fixture checks.
+- Removed automatic polling and focus-triggered inspection during manual login.
+  Connect opens the page without immediate DOM inspection; the user explicitly
+  checks status afterward. This removes unnecessary activity but is NOT evidence
+  that the reported email/Continue loading loop is fixed. Authentication is
+  still pending user verification. No cookies or profile data were deleted.

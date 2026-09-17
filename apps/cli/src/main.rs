@@ -20,6 +20,8 @@ enum Command {
         profile: PathBuf,
         #[arg(long, default_value_t = 0)]
         hold_seconds: u8,
+        #[arg(long)]
+        open_login: bool,
     },
     /// Inspect one explicitly selected configuration without changing it.
     Inspect {
@@ -83,6 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             browser,
             profile,
             hold_seconds,
+            open_login,
         } => {
             std::fs::create_dir(&profile)?;
             #[cfg(windows)]
@@ -90,9 +93,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut browser =
                     cxweb_browser_adapter::ManagedBrowser::launch(&browser, &profile, false)?;
                 let version = browser.version()?;
+                let startup = browser.probe_startup_page()?;
                 let dom = browser.probe_dom()?;
+                if open_login {
+                    browser.open_login()?;
+                }
                 print_json(
-                    &serde_json::json!({"transport":"inherited_pipe", "pid":browser.pid(),"version":version["product"],"protocol":version["protocolVersion"],"login":"NOT RUN","dom":dom}),
+                    &serde_json::json!({"transport":"inherited_pipe", "pid":browser.pid(),"version":version["product"],"protocol":version["protocolVersion"],"login":"NOT RUN","startup":startup,"dom":dom}),
                 );
                 std::thread::sleep(std::time::Duration::from_secs(u64::from(hold_seconds)));
                 browser.close()?;

@@ -85,6 +85,11 @@ impl Control {
                             let _ = reply.send(Err(error));
                             continue;
                         }
+                        // Login is user-driven. Do not inspect its DOM while
+                        // navigation/authentication is in progress. The user
+                        // explicitly requests a status check after signing in.
+                        let _ = reply.send(Ok(status.clone()));
+                        continue;
                     }
                     if let (Some(browser), Some(page)) = (browser.as_mut(), page.as_ref()) {
                         match browser.login_observation(page) {

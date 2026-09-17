@@ -41,7 +41,7 @@ test('login starts only after explicit action and failed browser can reconnect',
   ui.nodes.get('connect').click();
   await flush();
   assert.deepEqual(ui.calls, ['status', 'connect']);
-  assert.equal(ui.timers.size, 1);
+  assert.equal(ui.timers.size, 0);
   phase = 'browser_unavailable';
   ui.nodes.get('connect').click();
   await flush();

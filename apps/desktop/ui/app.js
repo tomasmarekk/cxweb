@@ -1,7 +1,6 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const invoke = window.__TAURI__?.core.invoke;
-let timer;
 let phase = 'disconnected';
 let pending = false;
 function showError(code) {
@@ -38,10 +37,8 @@ async function check(connect = false) {
   pending = true; $('connect').disabled = true;
   try { render(await invoke(connect ? 'connect' : 'status')); } catch (error) { showError(error); }
   finally {
-    pending = false; $('connect').disabled = false; clearTimeout(timer);
-    if (!document.hidden && phase === 'authenticating') timer = setTimeout(() => check(), 2500);
+    pending = false; $('connect').disabled = false;
   }
 }
 $('connect').addEventListener('click', () => check(phase === 'disconnected' || phase === 'browser_unavailable'));
-document.addEventListener('visibilitychange', () => { clearTimeout(timer); if (!document.hidden) check(); });
 if (invoke) check(); else showError('E_DESKTOP_IPC');

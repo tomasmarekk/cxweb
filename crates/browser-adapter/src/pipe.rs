@@ -73,11 +73,24 @@ impl ManagedBrowser {
         )?;
         let target = value["targetId"]
             .as_str()
-            .map(str::to_owned)
             .ok_or_else(|| io::Error::other("missing target identity"))?;
-        self.attach(target, false)
+        self.attach(target.to_owned(), false)
     }
 
+    pub fn probe_startup_page(&mut self) -> io::Result<Value> {
+        let targets = self.call("Target.getTargets", json!({}), None)?;
+        let pages = targets["targetInfos"]
+            .as_array()
+            .ok_or_else(|| io::Error::other("missing target list"))?;
+        let page_count = pages
+            .iter()
+            .filter(|target| target["type"] == "page")
+            .count();
+        if page_count != 0 {
+            return Err(io::Error::other("E_BROWSER_EXTRA_STARTUP_PAGE"));
+        }
+        Ok(json!({"page_count":page_count,"startup_window_suppressed":true}))
+    }
     fn attach(&mut self, target: String, fixture: bool) -> io::Result<ManagedPage> {
         let result = self.call(
             "Target.attachToTarget",
