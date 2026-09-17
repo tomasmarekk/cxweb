@@ -130,6 +130,10 @@ impl Control {
                         continue;
                     }
                     if let (Some(browser), Some(page)) = (browser.as_mut(), page.as_ref()) {
+                        // A fresh observation supersedes the previous text test,
+                        // including when discovery exits early with an error.
+                        status.text_qualified_model = None;
+                        status.qualification_evidence = None;
                         match browser.login_observation(page) {
                             Ok(observation) => {
                                 status.phase = if observation.official_page
