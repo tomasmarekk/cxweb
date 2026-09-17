@@ -105,6 +105,17 @@ were copied. cxweb implements these observations independently in its Rust-owned
 fixed-operation adapter. Real Codex App and CLI picker qualification and all live
 generation/tool evidence remain pending.
 
+The behavioral review also exposed two incorrect assumptions in the initial
+adapter: the ARIA effort input can have zero rendered width inside a visible
+slider container, and the stable conversation identity lives on
+`data-turn-id-container` rather than the display-indexed conversation test ID.
+The fixed-operation adapter now targets the visible container, verifies the
+selected effort with bounded arrow-key input, and attributes new user/assistant
+turns by unique stable container identity. The fresh-profile Chrome 152 pipe
+probe passed model selection, stable turn identity, literal prompt transport,
+completion attribution, cancellation, selector-drift rejection and owned-process
+cleanup. This is synthetic DOM evidence; no live prompt was sent.
+
 ## Additional implementation and evidence
 
 The G0 actual-picker gate remains open. Per quality document section 2, independent

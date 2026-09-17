@@ -271,6 +271,59 @@ impl ManagedBrowser {
         Ok(surface)
     }
 
+    /// Selects only a previously observed reasoning-slider identity and verifies
+    /// the resulting accessible value. It cannot click an arbitrary DOM node.
+    pub fn select_candidate(&mut self, page: &ManagedPage, identity: &str) -> io::Result<String> {
+        if identity.len() > 240 || identity.chars().any(char::is_control) {
+            return Err(io::Error::other("E_MODEL_IDENTITY"));
+        }
+        self.click_model_switcher(page)
+            .map_err(|_| io::Error::other("E_MODEL_OPEN"))?;
+        let selected = (|| {
+            for _ in 0..5 {
+                let state = self
+                    .dom(
+                        page,
+                        include_str!("dom/effort_state.js"),
+                        vec![json!(identity)],
+                    )
+                    .map_err(|_| io::Error::other("E_MODEL_SELECT"))?;
+                let current = state["current"]
+                    .as_i64()
+                    .ok_or_else(|| io::Error::other("E_MODEL_SELECT"))?;
+                let target = state["target"]
+                    .as_i64()
+                    .ok_or_else(|| io::Error::other("E_MODEL_SELECT"))?;
+                if current == target {
+                    return state["candidate_label"]
+                        .as_str()
+                        .filter(|label| !label.is_empty() && label.len() <= 120)
+                        .map(str::to_owned)
+                        .ok_or_else(|| io::Error::other("E_MODEL_SELECT"));
+                }
+                let key = if target > current {
+                    "ArrowRight"
+                } else {
+                    "ArrowLeft"
+                };
+                for event_type in ["keyDown", "keyUp"] {
+                    self.call(
+                        "Input.dispatchKeyEvent",
+                        json!({"type":event_type,"key":key,"code":key}),
+                        Some(&page.session),
+                    )?;
+                }
+            }
+            Err(io::Error::other("E_MODEL_SELECT"))
+        })();
+        let closed = self
+            .close_model_menu(page)
+            .map_err(|_| io::Error::other("E_MODEL_CLOSE"));
+        let selected = selected?;
+        closed?;
+        Ok(selected)
+    }
+
     /// Opens an owned, isolated tab at ChatGPT's explicit Temporary Chat URL,
     /// verifies its URL and authenticated composer, then closes only that tab.
     pub fn verify_temporary_chat(&mut self) -> io::Result<bool> {
@@ -423,8 +476,12 @@ impl ManagedBrowser {
     fn run_dom_fixture(&mut self, page: &ManagedPage) -> io::Result<Value> {
         let frame = self.call("Page.getFrameTree", json!({}), Some(&page.session))?;
         self.call("Page.setDocumentContent", json!({"frameId":frame["frameTree"]["frame"]["id"],"html":include_str!("dom/fixture.html")}), Some(&page.session))?;
-        let baseline = self.baseline(page)?;
-        let surface = self.discover_models(page)?;
+        let baseline = self
+            .baseline(page)
+            .map_err(|_| io::Error::other("E_FIXTURE_BASELINE"))?;
+        let surface = self
+            .discover_models(page)
+            .map_err(|_| io::Error::other("E_FIXTURE_DISCOVERY"))?;
         if surface.candidates.len() != 2
             || !surface.temporary_chat
             || surface
@@ -436,13 +493,35 @@ impl ManagedBrowser {
         {
             return Err(io::Error::other("E_MODEL_FIXTURE"));
         }
+        let selected = self
+            .select_candidate(page, &surface.candidates[1].identity)
+            .map_err(|_| io::Error::other("E_FIXTURE_SELECTION"))?;
+        if selected != "Fixture text mode · effort 2" {
+            return Err(io::Error::other("E_MODEL_SELECTION_FIXTURE"));
+        }
+        let selected_surface = self
+            .discover_models(page)
+            .map_err(|_| io::Error::other("E_FIXTURE_SELECTED_DISCOVERY"))?;
+        if selected_surface
+            .candidates
+            .iter()
+            .find(|candidate| candidate.selected)
+            .map(|candidate| candidate.label.as_str())
+            != Some(selected.as_str())
+        {
+            return Err(io::Error::other("E_MODEL_SELECTION_FIXTURE"));
+        }
         let mut tracker =
             TurnTracker::new(baseline.clone(), "Fixture text mode").map_err(io::Error::other)?;
         let prompt = "Literal input: quotes \" ' ` ${never_execute()} <script>throw 1</script>\nUnicode: 🦀 🦀";
-        self.insert_prompt(page, prompt)?;
+        self.insert_prompt(page, prompt)
+            .map_err(|_| io::Error::other("E_FIXTURE_INSERT"))?;
         tracker.begin_submission().map_err(io::Error::other)?;
-        self.press_send(page, prompt, &baseline.selected_model)?;
-        let observation = self.observe(page, &baseline, prompt)?;
+        self.press_send(page, prompt, &baseline.selected_model)
+            .map_err(|_| io::Error::other("E_FIXTURE_SEND"))?;
+        let observation = self
+            .observe(page, &baseline, prompt)
+            .map_err(|_| io::Error::other("E_FIXTURE_OBSERVE"))?;
         match tracker.observe(observation).map_err(io::Error::other)? {
             Progress::Completed(text) if text == "fixture response" => {
                 self.call("Page.setDocumentContent", json!({"frameId":frame["frameTree"]["frame"]["id"],"html":include_str!("dom/fixture_stop.html")}), Some(&page.session))?;
@@ -454,7 +533,7 @@ impl ManagedBrowser {
                     return Err(io::Error::other("E_SELECTOR_DRIFT_FIXTURE"));
                 }
                 Ok(
-                    json!({"result":"PASS","evidence":"synthetic DOM only","literal_prompt":true,"historical_message_excluded":true,"completion_attributed":true,"stop_control":true,"selector_drift_rejected":true}),
+                    json!({"result":"PASS","evidence":"synthetic DOM only","model_selection_verified":true,"stable_turn_identity_verified":true,"literal_prompt":true,"historical_message_excluded":true,"completion_attributed":true,"stop_control":true,"selector_drift_rejected":true}),
                 )
             }
             _ => Err(io::Error::other("E_DOM_FIXTURE")),

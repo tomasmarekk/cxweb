@@ -1,13 +1,20 @@
 function () {
-  const composer = document.querySelector('#prompt-textarea');
-  const model = document.querySelector('[data-testid="model-switcher-dropdown-button"]');
-  if (!composer || !model) throw new Error('E_BROWSER_ADAPTER');
-  const messages = [...document.querySelectorAll('[data-message-id][data-message-author-role]')];
-  if (messages.length > 2000) throw new Error('E_CONTEXT_BUDGET');
+  const visible = element => element instanceof HTMLElement && element.getClientRects().length > 0;
+  const composers = [...document.querySelectorAll('[data-testid="prompt-textarea"], #prompt-textarea, [contenteditable="true"][data-lexical-editor="true"]')].filter(visible);
+  if (composers.length !== 1) throw new Error('E_BROWSER_ADAPTER');
+  const form = composers[0].closest('form');
+  const controls = form ? [...form.querySelectorAll('button[aria-haspopup="menu"][data-tone="neutral"], button[data-testid="model-switcher-dropdown-button"][aria-haspopup="menu"]')].filter(visible) : [];
+  const model = controls.at(-1);
+  if (!model) throw new Error('E_BROWSER_ADAPTER');
+  const containers = [...document.querySelectorAll('[data-turn-id-container]')].filter(node =>
+    node.parentElement?.closest('[data-turn-id-container]')?.getAttribute('data-turn-id-container') !== node.getAttribute('data-turn-id-container'));
+  if (containers.length > 2000) throw new Error('E_CONTEXT_BUDGET');
+  const ids = containers.map(node => node.getAttribute('data-turn-id-container'));
+  if (ids.some(id => !id || id.length > 240) || new Set(ids).size !== ids.length) throw new Error('E_TURN_IDENTITY');
   return {
-    ids: messages.map(node => node.getAttribute('data-message-id')),
-    selected_model: model.textContent.trim(),
-    composer_empty: (composer.value ?? composer.textContent).trim() === '',
+    ids,
+    selected_model: model.textContent.trim().slice(0, 120),
+    composer_empty: (composers[0].value ?? composers[0].textContent).trim() === '',
     generating: !!document.querySelector('[data-testid="stop-button"]')
   };
 }

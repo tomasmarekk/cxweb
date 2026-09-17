@@ -18,7 +18,8 @@ function showError(code) {
     E_MODEL_READ: 'Model verification stopped while reading the visible ChatGPT model menu.',
     E_MODEL_CLOSE: 'Model verification stopped while closing the ChatGPT model menu.',
     E_MODEL_PARSE: 'The visible ChatGPT model menu returned an unsupported structure.',
-    E_MODEL_RESULT: 'The visible ChatGPT model menu exceeded the safe discovery limits.'
+    E_MODEL_RESULT: 'The visible ChatGPT model menu exceeded the safe discovery limits.',
+    E_MODEL_SELECTION: 'The selected ChatGPT route could not be verified without changing it.'
   };
   $('error').textContent = messages[code] || 'Verification failed. Check the browser window and try again.';
   $('error').hidden = false; $('diagnostic').textContent = String(code).slice(0, 80);

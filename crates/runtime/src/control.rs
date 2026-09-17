@@ -130,6 +130,28 @@ impl Control {
                                 if qualify && status.phase == "awaiting_qualification" {
                                     match browser.discover_models(page) {
                                         Ok(surface) => {
+                                            let selected = surface
+                                                .candidates
+                                                .iter()
+                                                .filter(|candidate| candidate.selected)
+                                                .cloned()
+                                                .collect::<Vec<_>>();
+                                            if selected.len() != 1
+                                                || !matches!(
+                                                    browser.select_candidate(
+                                                        page,
+                                                        &selected[0].identity
+                                                    ),
+                                                    Ok(label) if label == selected[0].label
+                                                )
+                                            {
+                                                status.candidate_models.clear();
+                                                status.temporary_chat_available = None;
+                                                status.model_discovery_diagnostic =
+                                                    Some(surface.diagnostic);
+                                                let _ = reply.send(Err("E_MODEL_SELECTION"));
+                                                continue;
+                                            }
                                             let temporary_chat =
                                                 browser.verify_temporary_chat().unwrap_or(false);
                                             status.candidate_models = surface
