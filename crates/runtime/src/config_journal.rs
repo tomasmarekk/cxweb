@@ -62,6 +62,39 @@ struct Record {
     capability: String,
     #[serde(default)]
     undo: Option<Undo>,
+    #[serde(default)]
+    catalog: Option<CatalogReceipt>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CatalogReceipt {
+    published: Vec<String>,
+    native: Vec<String>,
+}
+impl CatalogReceipt {
+    fn valid(&self) -> bool {
+        use cxweb_domain::OWNED_MODEL_PREFIX;
+        let ids = self
+            .published
+            .iter()
+            .chain(&self.native)
+            .collect::<Vec<_>>();
+        self.published.len() <= 256
+            && self.native.len() <= 1024
+            && ids
+                .iter()
+                .all(|id| !id.is_empty() && id.len() <= 512 && !id.chars().any(char::is_control))
+            && ids.iter().collect::<std::collections::HashSet<_>>().len() == ids.len()
+            && self
+                .published
+                .iter()
+                .all(|id| id.starts_with(OWNED_MODEL_PREFIX) && id.len() > OWNED_MODEL_PREFIX.len())
+            && self
+                .native
+                .iter()
+                .all(|id| !id.starts_with(OWNED_MODEL_PREFIX))
+    }
 }
 
 pub struct ConfigJournal {
@@ -128,6 +161,7 @@ impl ConfigJournal {
             port,
             capability: capability.into(),
             undo: None,
+            catalog: None,
         };
         replace(
             &journal,
@@ -160,6 +194,10 @@ impl ConfigJournal {
             || record.original.len() > 512 * 1024
             || hash(record.original.as_bytes()) != record.original_sha256
             || hash(record.candidate.as_bytes()) != record.candidate_sha256
+            || record
+                .catalog
+                .as_ref()
+                .is_some_and(|catalog| !catalog.valid())
         {
             return Err(invalid());
         }
@@ -197,6 +235,42 @@ impl ConfigJournal {
 
     pub fn phase(&self) -> Phase {
         self.record.phase
+    }
+
+    pub fn installation_id(&self) -> &str {
+        &self.record.id
+    }
+
+    /// Persist exact, previously qualified catalog IDs before exposing the route
+    /// to clients. This records evidence supplied by qualification; it cannot
+    /// qualify a model or authorize browser generation by itself.
+    pub fn record_catalog(
+        &mut self,
+        published: Vec<String>,
+        native: Vec<String>,
+    ) -> io::Result<()> {
+        if self.record.phase != Phase::Prepared
+            || self.prepared.is_none()
+            || self.record.catalog.is_some()
+        {
+            return Err(io::Error::other("E_CATALOG_RECEIPT_STATE"));
+        }
+        let catalog = CatalogReceipt { published, native };
+        if !catalog.valid() {
+            return Err(io::Error::other("E_CATALOG_RECEIPT"));
+        }
+        let mut next = self.record.clone();
+        next.catalog = Some(catalog);
+        self.store(next)
+    }
+
+    pub(crate) fn catalog_receipt(&self) -> io::Result<(Vec<String>, Vec<String>)> {
+        let receipt = self
+            .record
+            .catalog
+            .as_ref()
+            .ok_or_else(|| io::Error::other("E_CATALOG_RECEIPT_MISSING"))?;
+        Ok((receipt.published.clone(), receipt.native.clone()))
     }
 
     pub(crate) fn runtime_route(&self) -> (u16, &str, &str) {
@@ -398,6 +472,47 @@ mod tests {
         assert_eq!(recovered.recovery().unwrap(), Recovery::Original);
         assert!(recovered.apply().is_err());
         assert!(!f.target.exists());
+    }
+    #[test]
+    fn catalog_receipt_is_validated_durable_and_immutable_after_preparation() {
+        let f = Fixture::new();
+        let mut journal = ConfigJournal::prepare(&f.state, &f.target, 12345, CAP).unwrap();
+        assert!(journal.catalog_receipt().is_err());
+        assert!(
+            journal
+                .record_catalog(vec!["native".into()], vec![])
+                .is_err()
+        );
+        assert!(
+            journal
+                .record_catalog(vec!["webbridge/a".into(); 2], vec![])
+                .is_err()
+        );
+        assert!(
+            journal
+                .record_catalog(vec![], vec!["webbridge/a".into()])
+                .is_err()
+        );
+        journal
+            .record_catalog(vec!["webbridge/a".into()], vec!["native".into()])
+            .unwrap();
+        assert!(journal.record_catalog(vec![], vec![]).is_err());
+        assert!(!f.target.exists());
+        journal.apply().unwrap();
+        drop(journal);
+        let mut journal = ConfigJournal::reopen(&f.state, &f.target).unwrap();
+        assert_eq!(
+            journal.catalog_receipt().unwrap(),
+            (vec!["webbridge/a".to_owned()], vec!["native".to_owned()])
+        );
+        assert!(journal.record_catalog(vec![], vec![]).is_err());
+        drop(journal);
+        let path = f.state.join("integration.json");
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        value["catalog"]["native"] = serde_json::json!(["webbridge/foreign"]);
+        std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(ConfigJournal::reopen(&f.state, &f.target).is_err());
     }
     #[test]
     fn committed_config_and_later_user_edits_have_distinct_recovery() {

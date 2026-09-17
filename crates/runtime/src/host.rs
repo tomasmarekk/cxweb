@@ -20,33 +20,22 @@ pub struct Host {
     installation: String,
 }
 impl Host {
-    /// The selected configuration and model receipts must be independently
-    /// qualified by the installation owner. A recovered route stays native-only
+    /// The selected configuration must be independently selected by the owner.
+    /// Exact model IDs come from its validated journal. A recovered route stays native-only
     /// until a separate, complete activation flow qualifies browser integration.
-    pub fn recover(
-        directory: &Path,
-        config: &Path,
-        published: Vec<String>,
-        native_models: Vec<String>,
-    ) -> io::Result<Self> {
+    pub fn recover(directory: &Path, config: &Path) -> io::Result<Self> {
         let journal = ConfigJournal::reopen(directory, config)?;
         Self::bind(
             journal,
             NativeTransport::subscription().map_err(io::Error::other)?,
-            published,
-            native_models,
         )
     }
 
-    fn bind(
-        journal: ConfigJournal,
-        native: NativeTransport,
-        published: Vec<String>,
-        native_models: Vec<String>,
-    ) -> io::Result<Self> {
+    fn bind(journal: ConfigJournal, native: NativeTransport) -> io::Result<Self> {
         // Re-read current state without applying a stale plan. User edits and
         // interrupted restores remain for explicit three-way disconnect.
         journal.recovery()?;
+        let (published, native_models) = journal.catalog_receipt()?;
         let (port, capability, installation) = journal.runtime_route();
         let installation = installation.to_owned();
         let listener = loopback::bind(port)?;
@@ -121,12 +110,13 @@ mod tests {
         let port = reservation.local_addr().unwrap().port();
         let capability = "a".repeat(43);
         let mut journal = ConfigJournal::prepare(&directory, &config, port, &capability).unwrap();
+        journal.record_catalog(vec![], vec![]).unwrap();
         journal.apply().unwrap();
         let installation = journal.runtime_route().2.to_owned();
         let applied = std::fs::read(&config).unwrap();
         drop(journal);
         // Occupied route fails closed: no fallback port and no config mutation.
-        assert!(Host::recover(&directory, &config, vec![], vec![]).is_err());
+        assert!(Host::recover(&directory, &config).is_err());
         assert_eq!(std::fs::read(&config).unwrap(), applied);
         drop(reservation);
         let upstream = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -158,13 +148,7 @@ mod tests {
                 std::fs::write(&config, "model = 'user-selected'\n").unwrap();
             }
             let journal = ConfigJournal::reopen(&directory, &config).unwrap();
-            let host = Host::bind(
-                journal,
-                NativeTransport::new(origin.clone()).unwrap(),
-                vec![],
-                vec![],
-            )
-            .unwrap();
+            let host = Host::bind(journal, NativeTransport::new(origin.clone()).unwrap()).unwrap();
             let task = tokio::spawn(host.serve());
             let Reply::Status {
                 instance, state, ..

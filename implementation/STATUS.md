@@ -513,3 +513,30 @@ model discovery, native WebSocket preservation and actual pickers are proven.
 - This host is not yet the desktop's process entry point. Executable supervision,
   qualified installation/activation, browser ownership transfer, desktop wiring
   and proof of client exit before final listener cleanup are still outstanding.
+
+## Standalone recovery executable and catalog ownership receipt
+
+- Added the Windows GUI-subsystem cxweb-daemon executable. It takes explicit
+  absolute journal/config paths, independently matches the selected config to
+  the journal, and runs the recovered host. It never installs configuration,
+  starts a browser or exposes raw startup errors/capabilities on stdout/stderr.
+  Exit codes distinguish invalid launch inputs (2), recovery refusal (3), and
+  a failed serving future (4). Desktop launch/supervision is not wired yet.
+- Journals can now durably record exact published and native model IDs before
+  application. The receipt is bounded, validated and immutable after its initial
+  preparation. Recovered hosts obtain removal ownership from this record, not
+  caller-supplied model lists. Missing receipts refuse this recovery entry point;
+  legacy fixture journals remain readable for explicit diagnostic recovery.
+- The real executable integration test launches hidden child processes against
+  temporary protected state, checks private readiness and exclusive ownership,
+  removes an exact owned selection while retaining the original native selection
+  and user comment, then restarts and checks the original address and pending
+  restart state. Stale operation instances are rejected. The binary's Windows
+  subsystem is inspected. Children are terminated only through test-owned handles.
+- All 85 workspace tests passed, including this process test and a catalog receipt
+  validation/persistence test. One opt-in Chrome test was skipped. Clippy with
+  warnings denied, formatting and diff checks passed. No real account requests,
+  native credentials, user config changes or desktop/browser restart occurred.
+- This establishes the recovery executable, not a supervised active integration.
+  Browser ownership transfer, first activation, desktop launch/attachment,
+  restart policy and live Codex qualification remain required.
