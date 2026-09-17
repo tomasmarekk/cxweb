@@ -106,8 +106,18 @@ impl Snapshot {
     pub fn original(&self) -> &[u8] {
         &self.bytes
     }
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
     pub fn existed(&self) -> bool {
         self.identity.is_some()
+    }
+    pub fn verify_unchanged(&self) -> io::Result<()> {
+        let current = Self::capture(&self.path)?;
+        if current.identity != self.identity || current.bytes != self.bytes {
+            return Err(io::Error::other("E_CONFIG_CHANGED"));
+        }
+        Ok(())
     }
 
     /// Creates a caller-named same-directory private file with create-new semantics.

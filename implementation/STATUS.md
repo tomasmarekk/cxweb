@@ -4,8 +4,9 @@
 
 Target: the complete supplied PRD, not a substitute chat application. No subagents.
 Current gate: **G0 IN PROGRESS**. No client or browser combination is certified.
-User login and actual App/CLI picker checks remain NOT RUN. Production integration
-must remain disabled until the relevant evidence exists.
+Manual login and managed reuse of the saved session are user-confirmed. Account/
+model qualification and actual App/CLI picker checks remain incomplete. Production
+integration must remain disabled until the relevant evidence exists.
 
 ## Observed environment (2026-09-17)
 
@@ -355,3 +356,25 @@ model discovery, native WebSocket preservation and actual pickers are proven.
   Clippy with warnings denied, formatting and the three desktop UI tests passed.
 - The rebuilt CLI also passed scripts/probe-browser.ps1: no browser TCP listeners
   and all eight owned processes cleaned up when the diagnostic launcher exited.
+
+## Durable configuration preparation and recovery evidence
+
+- Added a private, exclusively locked configuration journal. It durably stores
+  original text/existence, the planned candidate, hashes and the exact selected
+  target before any configuration write. The original backup is embedded in this
+  internal receipt; it is not a public export of the PRD interchange schema.
+- Apply retains the original live file-identity snapshot and checks the journal
+  has not changed before touching the target. Restart reads classify original,
+  candidate and user-modified states without automatically rewriting any of them.
+  A reopened prepared journal cannot apply without fresh preflight.
+- Loading verifies the independently selected target and reproduces the exact
+  allowed TOML plan in addition to checking hashes. A modified candidate with a
+  recomputed hash, corrupt/redirected receipts, and identity substitutions fail.
+- Six temporary-filesystem tests cover preparation, exclusive ownership, restart,
+  a crash between config replacement and receipt update, user changes, absent
+  versus empty files, corruption and substitution. All 62 workspace tests passed
+  (the opt-in Chrome test was not rerun); Clippy, formatting and diff checks passed.
+- This supplies the prepare/apply/recovery layer, not the complete installation
+  lifecycle. Disconnect journaling, stale staging cleanup, daemon supervision,
+  activation receipts and client/editor qualification remain to integrate. It is
+  not wired to the desktop controller and no real Codex configuration was changed.
