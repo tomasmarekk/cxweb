@@ -1,4 +1,8 @@
 //! Isolated G0 diagnostic gateway; production browser routing is not enabled.
+pub mod gateway;
+pub mod ledger;
+pub mod native;
+pub mod scheduler;
 use axum::{
     Router,
     body::Bytes,

@@ -10,6 +10,15 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Prove private browser transport in a NEW dedicated test profile.
+    BrowserProbe {
+        #[arg(long)]
+        browser: PathBuf,
+        #[arg(long)]
+        profile: PathBuf,
+        #[arg(long, default_value_t = 0)]
+        hold_seconds: u8,
+    },
     /// Inspect one explicitly selected configuration without changing it.
     Inspect {
         #[arg(long)]
@@ -27,6 +36,29 @@ enum Command {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match Args::parse().command {
+        Command::BrowserProbe {
+            browser,
+            profile,
+            hold_seconds,
+        } => {
+            std::fs::create_dir(&profile)?;
+            #[cfg(windows)]
+            {
+                let mut browser =
+                    cxweb_browser_adapter::ManagedBrowser::launch(&browser, &profile, false)?;
+                let version = browser.version()?;
+                print_json(
+                    &serde_json::json!({"transport":"inherited_pipe", "pid":browser.pid(),"version":version["product"],"protocol":version["protocolVersion"],"login":"NOT RUN"}),
+                );
+                std::thread::sleep(std::time::Duration::from_secs(u64::from(hold_seconds)));
+                browser.close()?;
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = browser;
+                return Err("browser transport not qualified on this OS".into());
+            }
+        }
         Command::Inspect { config } => {
             let text = std::fs::read_to_string(config)?;
             let result = cxweb_codex_adapter::config::inspect(&text)?;

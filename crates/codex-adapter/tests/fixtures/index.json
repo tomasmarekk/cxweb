@@ -1,0 +1,96 @@
+{
+  "schema_version": "webbridge.fixtures.v1",
+  "provenance": "synthetic, not captured from Codex or ChatGPT",
+  "envelopes": [
+    {
+      "path": "valid-final.json",
+      "valid": true,
+      "purpose": "normal",
+      "reason": null
+    },
+    {
+      "path": "valid-function.json",
+      "valid": true,
+      "purpose": "normal",
+      "reason": null
+    },
+    {
+      "path": "valid-custom.json",
+      "valid": true,
+      "purpose": "normal",
+      "reason": null
+    },
+    {
+      "path": "valid-namespaced.json",
+      "valid": true,
+      "purpose": "normal",
+      "reason": null
+    },
+    {
+      "path": "valid-checkpoint.json",
+      "valid": true,
+      "purpose": "compaction",
+      "reason": null
+    },
+    {
+      "path": "invalid-unknown-tool.json",
+      "valid": false,
+      "purpose": "normal",
+      "reason": "registry"
+    },
+    {
+      "path": "invalid-nonce.json",
+      "valid": false,
+      "purpose": "normal",
+      "reason": "nonce"
+    },
+    {
+      "path": "invalid-function-type.json",
+      "valid": false,
+      "purpose": "normal",
+      "reason": "input_type"
+    },
+    {
+      "path": "invalid-function-schema.json",
+      "valid": false,
+      "purpose": "normal",
+      "reason": "input_schema"
+    },
+    {
+      "path": "invalid-custom-type.json",
+      "valid": false,
+      "purpose": "normal",
+      "reason": "input_type"
+    },
+    {
+      "path": "invalid-checkpoint-purpose.json",
+      "valid": false,
+      "purpose": "normal",
+      "reason": "purpose"
+    },
+    {
+      "path": "invalid-model-call-id.json",
+      "valid": false,
+      "purpose": "normal",
+      "reason": "schema"
+    },
+    {
+      "path": "invalid-duplicate-key.txt",
+      "valid": false,
+      "purpose": "normal",
+      "reason": "duplicate_key"
+    },
+    {
+      "path": "invalid-trailing-prose.txt",
+      "valid": false,
+      "purpose": "normal",
+      "reason": "trailing_data"
+    },
+    {
+      "path": "invalid-code-fence.txt",
+      "valid": false,
+      "purpose": "normal",
+      "reason": "non_json"
+    }
+  ]
+}

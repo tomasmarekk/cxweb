@@ -1,0 +1,6 @@
+{
+  "protocol": "webbridge.tool.v1",
+  "turn_nonce": "11111111111111111111111111111111",
+  "kind": "checkpoint",
+  "summary": "Goal: synthetic test. Files changed: none. Tool result: read completed. Pending calls: none."
+}

@@ -1,0 +1,13 @@
+{
+  "schema": "cxweb.browser-probe.v1",
+  "timestamp": "2026-09-17T16:10:31.7315941Z",
+  "browser": "Chrome/152.0.7977.84",
+  "protocol": "1.3",
+  "transport": "inherited_pipe",
+  "tcpListeners": 0,
+  "ownedProcessCount": 10,
+  "crashCleanup": "PASS",
+  "login": "NOT RUN",
+  "profileIsolation": "new dedicated directory; no personal profile accessed",
+  "result": "PASS local transport and containment only"
+}

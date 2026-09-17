@@ -1,0 +1,13 @@
+[package]
+name = "cxweb-browser-adapter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+cxweb-platform.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

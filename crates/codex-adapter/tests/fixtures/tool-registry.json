@@ -1,0 +1,70 @@
+{
+  "schema_version": "webbridge.test-registry.v1",
+  "turn_nonce": "11111111111111111111111111111111",
+  "purpose": "normal",
+  "parallel_tool_calls": true,
+  "tools": [
+    {
+      "key": "tool_0001",
+      "native_name": "read_file",
+      "namespace": null,
+      "kind": "function",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "key": "tool_0002",
+      "native_name": "apply_patch",
+      "namespace": null,
+      "kind": "custom",
+      "input_format": "text"
+    },
+    {
+      "key": "tool_0003",
+      "native_name": "lookup",
+      "namespace": "alpha",
+      "kind": "function",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "key": "tool_0004",
+      "native_name": "lookup",
+      "namespace": "beta",
+      "kind": "function",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

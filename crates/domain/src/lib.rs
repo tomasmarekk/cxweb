@@ -3,6 +3,18 @@ use serde::{Deserialize, Serialize};
 
 pub const OWNED_MODEL_PREFIX: &str = "webbridge/";
 
+/// Every dimension participates in session isolation. Account/workspace values
+/// are opaque scope hashes; this structure must not be printed in diagnostics.
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SessionKey {
+    pub installation: String,
+    pub native_session: String,
+    pub account_scope: String,
+    pub workspace_scope: String,
+    pub route: String,
+    pub epoch: u64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnState {

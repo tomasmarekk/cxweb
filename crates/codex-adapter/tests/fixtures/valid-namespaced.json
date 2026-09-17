@@ -1,0 +1,19 @@
+{
+  "protocol": "webbridge.tool.v1",
+  "turn_nonce": "11111111111111111111111111111111",
+  "kind": "tool_calls",
+  "calls": [
+    {
+      "tool_key": "tool_0003",
+      "input": {
+        "query": "first"
+      }
+    },
+    {
+      "tool_key": "tool_0004",
+      "input": {
+        "query": "second"
+      }
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/domain", "crates/codex-adapter", "crates/runtime", "apps/cli"]
+members = ["crates/domain", "crates/codex-adapter", "crates/platform", "crates/browser-adapter", "crates/runtime", "apps/cli"]
 resolver = "3"
 
 [workspace.package]
@@ -12,6 +12,8 @@ license = "UNLICENSED"
 cxweb-domain = { path = "crates/domain" }
 cxweb-codex-adapter = { path = "crates/codex-adapter" }
 cxweb-runtime = { path = "crates/runtime" }
+cxweb-platform = { path = "crates/platform" }
+cxweb-browser-adapter = { path = "crates/browser-adapter" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

@@ -1,0 +1,6 @@
+{
+  "protocol": "webbridge.tool.v1",
+  "turn_nonce": "22222222222222222222222222222222",
+  "kind": "final",
+  "text": "Wrong turn."
+}

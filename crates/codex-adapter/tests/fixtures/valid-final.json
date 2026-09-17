@@ -1,0 +1,6 @@
+{
+  "protocol": "webbridge.tool.v1",
+  "turn_nonce": "11111111111111111111111111111111",
+  "kind": "final",
+  "text": "Soubor obsahuje testovací funkci.\nBez dalších změn."
+}

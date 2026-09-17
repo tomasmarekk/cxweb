@@ -1,0 +1,178 @@
+//! Authentication/classification boundary shared by future web providers.
+use crate::native::{NativeRoute, NativeTransport, unavailable};
+use axum::{
+    Router,
+    body::Bytes,
+    extract::{DefaultBodyLimit, State},
+    http::{HeaderMap, Method, StatusCode, Uri},
+    response::{IntoResponse, Response},
+    routing::any,
+};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use cxweb_codex_adapter::strict_json;
+use serde_json::Value;
+use std::{future::Future, pin::Pin, sync::Arc};
+
+/// This payload cannot carry transport headers, native authorization or the
+/// installation capability. Its history is untrusted model input, never code.
+pub struct WebRequest {
+    pub payload: Value,
+    pub compact: bool,
+}
+pub type WebFuture = Pin<Box<dyn Future<Output = Response> + Send>>;
+pub trait WebProvider: Send + Sync {
+    fn respond(&self, request: WebRequest) -> WebFuture;
+}
+
+pub struct UnqualifiedProvider;
+impl WebProvider for UnqualifiedProvider {
+    fn respond(&self, _: WebRequest) -> WebFuture {
+        Box::pin(async { unavailable("E_COMPATIBILITY_UNQUALIFIED") })
+    }
+}
+
+#[derive(Clone)]
+pub struct Gateway {
+    authority: String,
+    capability: String,
+    native: NativeTransport,
+    web: Arc<dyn WebProvider>,
+}
+
+impl Gateway {
+    pub fn new(port: u16, native: NativeTransport, web: Arc<dyn WebProvider>) -> Self {
+        Self {
+            authority: format!("127.0.0.1:{port}"),
+            capability: URL_SAFE_NO_PAD.encode(rand::random::<[u8; 32]>()),
+            native,
+            web,
+        }
+    }
+    pub fn base_url(&self) -> String {
+        format!("http://{}/wb/{}/v1", self.authority, self.capability)
+    }
+    pub fn router(self) -> Router {
+        Router::new()
+            .fallback(any(handle))
+            .layer(DefaultBodyLimit::max(32 * 1024 * 1024))
+            .with_state(self)
+    }
+}
+
+async fn handle(
+    State(gateway): State<Gateway>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    bytes: Bytes,
+) -> Response {
+    if headers.contains_key("origin")
+        || headers.get_all("host").iter().count() != 1
+        || headers.get("host").and_then(|h| h.to_str().ok()) != Some(&gateway.authority)
+    {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let prefix = format!("/wb/{}/v1/", gateway.capability);
+    let Some(path) = uri.path().strip_prefix(&prefix) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let route = match (&method, path) {
+        (&Method::GET, "models") => NativeRoute::Models,
+        (&Method::POST, "responses") => NativeRoute::Responses,
+        (&Method::POST, "responses/compact") => NativeRoute::Compact,
+        // WebSocket/native auxiliary routes are not yet qualified. Never claim
+        // integration ready while this explicit gap remains.
+        _ => return StatusCode::NOT_FOUND.into_response(),
+    };
+    if method == Method::POST {
+        let payload = match strict_json::parse(&bytes, 32 * 1024 * 1024) {
+            Ok(payload) => payload,
+            Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+        };
+        let Some(model) = payload.get("model").and_then(Value::as_str) else {
+            return StatusCode::BAD_REQUEST.into_response();
+        };
+        if model.starts_with(cxweb_domain::OWNED_MODEL_PREFIX) {
+            if bytes.len() > 8 * 1024 * 1024 {
+                return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+            }
+            // Drop bearer-bearing transport state before entering browser code.
+            drop(headers);
+            return gateway
+                .web
+                .respond(WebRequest {
+                    payload,
+                    compact: matches!(route, NativeRoute::Compact),
+                })
+                .await;
+        }
+    }
+    gateway
+        .native
+        .forward(route, uri.query(), headers, bytes)
+        .await
+        .unwrap_or_else(unavailable)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{body::Body, http::Request};
+    use http_body_util::BodyExt;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tower::ServiceExt;
+
+    struct Spy {
+        calls: AtomicUsize,
+    }
+    impl WebProvider for Spy {
+        fn respond(&self, request: WebRequest) -> WebFuture {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            assert!(!request.payload.to_string().contains("NATIVE_SECRET"));
+            Box::pin(async { "web branch".into_response() })
+        }
+    }
+
+    #[tokio::test]
+    async fn request_branch_never_exposes_native_authorization_to_web_provider() {
+        let spy = Arc::new(Spy {
+            calls: AtomicUsize::new(0),
+        });
+        let gateway = Gateway::new(12345, NativeTransport::subscription().unwrap(), spy.clone());
+        let url = format!("{}/responses", gateway.base_url());
+        let request = Request::builder()
+            .method("POST")
+            .uri(url)
+            .header("host", "127.0.0.1:12345")
+            .header("authorization", "Bearer NATIVE_SECRET")
+            .body(Body::from(r#"{"model":"webbridge/test","input":"hello"}"#))
+            .unwrap();
+        let response = gateway.router().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.into_body().collect().await.unwrap().to_bytes(),
+            "web branch"
+        );
+        assert_eq!(spy.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn malformed_request_cannot_choose_a_different_route_via_duplicate_model() {
+        let spy = Arc::new(Spy {
+            calls: AtomicUsize::new(0),
+        });
+        let gateway = Gateway::new(12345, NativeTransport::subscription().unwrap(), spy.clone());
+        let url = format!("{}/responses", gateway.base_url());
+        let request = Request::builder()
+            .method("POST")
+            .uri(url)
+            .header("host", "127.0.0.1:12345")
+            .body(Body::from(r#"{"model":"native","model":"webbridge/test"}"#))
+            .unwrap();
+        assert_eq!(
+            gateway.router().oneshot(request).await.unwrap().status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(spy.calls.load(Ordering::SeqCst), 0);
+    }
+}

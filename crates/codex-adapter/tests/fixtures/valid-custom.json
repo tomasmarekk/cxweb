@@ -1,0 +1,11 @@
+{
+  "protocol": "webbridge.tool.v1",
+  "turn_nonce": "11111111111111111111111111111111",
+  "kind": "tool_calls",
+  "calls": [
+    {
+      "tool_key": "tool_0002",
+      "input": "*** Begin Patch\n*** Add File: example.txt\n+synthetic\n*** End Patch"
+    }
+  ]
+}

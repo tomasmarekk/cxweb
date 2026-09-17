@@ -67,3 +67,41 @@ model/list and provider request evidence separately from actual renderer/picker
 evidence. Inspect desktop backend exact source/schema, then implement the native
 mock upstream and private browser transport. Do not report G0 complete from an
 app-server listing alone.
+
+## Additional implementation and evidence
+
+The G0 actual-picker gate remains open. Per quality document section 2, independent
+implementation continues without claiming a live gate passed. No production UI
+or real configuration mutation is enabled yet.
+
+- Windows private browser transport implemented in the small OS-only platform
+  crate, with explicit inherited-handle allowlist, suspended startup, job-object
+  containment, bounded CDP frames and no debug TCP endpoint.
+- `scripts/probe-browser.ps1 -Browser <Chrome executable>` passed with
+  Chrome/152.0.7977.84, CDP 1.3: zero listeners, 10 owned processes, all cleaned up
+  after forcibly terminating the launcher. Separate fresh profile, no login.
+  Evidence: `integration-tests/compatibility/windows-chrome-pipe.local.json`.
+  This uses the installed signed Chrome payload for the development spike;
+  bundled browser delivery/signature/update qualification is still outstanding.
+- Strict envelope parser rejects duplicate keys at all depths, trailing data,
+  fences, wrong nonce/purpose, model-supplied IDs, unknown tools and bad schemas.
+  Native function/custom/namespace identities are kept separate. All 15 supplied
+  synthetic PRD envelope fixtures pass their expected accept/reject results.
+  Only plain-text custom tools are currently supported; grammar tools are
+  explicitly rejected pending a qualified grammar adapter.
+- Native HTTP transport uses a fixed reviewed subscription host, TLS validation,
+  disabled environment proxies and redirects, streaming backpressure and bounded
+  concurrency. Mock tests prove native byte/header/status preservation. Browser
+  branch receives no native transport headers. Native WebSocket and auxiliary
+  endpoint qualification are still outstanding, so no production route is installed.
+- Added bounded per-account scheduler (2 generations, 8 queued, 10 minute queue
+  deadline), cancellation cleanup and session isolation. Added SQLite metadata
+  ledger on blocking workers: request/session/input hashes only, durable state,
+  replay rejection and explicit uncertainty after a crash during submission.
+- Current `cargo test --workspace`: 25 tests pass (includes the 15-case fixture
+  loop). `cargo clippy --workspace --all-targets -- -D warnings` passes.
+  Initial ledger build found a MutexGuard coercion error, fixed before these passes.
+
+Next independent work: canonical request/response wire mapping, native transport
+completion, browser DOM fixture adapter and protected state/config lifecycle.
+User login is not yet requested: the runnable app flow is still being assembled.
