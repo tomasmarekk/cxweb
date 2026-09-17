@@ -247,6 +247,14 @@ async fn handle(
     {
         return crate::catalog_proxy::forward(&gateway.native, uri.query(), headers, catalog).await;
     }
+    let inspected = if method == Method::POST {
+        match crate::request_body::decode(&headers, bytes.clone()).await {
+            Ok(decoded) => decoded,
+            Err(status) => return status.into_response(),
+        }
+    } else {
+        bytes.clone()
+    };
     if matches!(route, NativeRoute::RealtimeCall) {
         // Subscription clients send JSON with a nested session; older call
         // creation also supports raw SDP. Neither is a Responses request.
@@ -258,7 +266,7 @@ async fn handle(
         match media {
             Some(value) if value.eq_ignore_ascii_case("application/sdp") => (),
             Some(value) if value.eq_ignore_ascii_case("application/json") => {
-                let Ok(payload) = strict_json::parse(&bytes, 32 * 1024 * 1024) else {
+                let Ok(payload) = strict_json::parse(&inspected, 32 * 1024 * 1024) else {
                     return StatusCode::BAD_REQUEST.into_response();
                 };
                 let Some(session) = payload.get("session").and_then(Value::as_object) else {
@@ -286,7 +294,7 @@ async fn handle(
             _ => return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response(),
         }
     } else if method == Method::POST {
-        let payload = match strict_json::parse(&bytes, 32 * 1024 * 1024) {
+        let payload = match strict_json::parse(&inspected, 32 * 1024 * 1024) {
             Ok(payload) => payload,
             Err(_) => return StatusCode::BAD_REQUEST.into_response(),
         };
@@ -300,7 +308,7 @@ async fn handle(
             if !generation {
                 return unavailable("E_WEB_CAPABILITY_UNSUPPORTED");
             }
-            if bytes.len() > 8 * 1024 * 1024 {
+            if inspected.len() > 8 * 1024 * 1024 {
                 return StatusCode::PAYLOAD_TOO_LARGE.into_response();
             }
             // Drop bearer-bearing transport state before entering browser code.
@@ -666,6 +674,107 @@ mod tests {
             "web branch"
         );
         assert_eq!(spy.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn compressed_requests_preserve_native_bytes_and_enforce_decoded_web_limits() {
+        let native_body =
+            zstd::stream::encode_all(&br#"{"model":"native","input":"fixture"}"#[..], 1).unwrap();
+        let expected = native_body.clone();
+        let received = Arc::new(AtomicUsize::new(0));
+        let counter = received.clone();
+        let upstream = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let native =
+            NativeTransport::new(format!("http://{}", upstream.local_addr().unwrap())).unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                upstream,
+                Router::new().route(
+                    "/responses",
+                    any(move |headers: HeaderMap, bytes: Bytes| {
+                        let expected = expected.clone();
+                        let counter = counter.clone();
+                        async move {
+                            assert_eq!(bytes.as_ref(), expected.as_slice());
+                            assert_eq!(headers["content-encoding"], "zstd");
+                            assert_eq!(headers["authorization"], "Bearer MOCK_NATIVE_SECRET");
+                            counter.fetch_add(1, Ordering::SeqCst);
+                            Response::builder()
+                                .header("content-encoding", "zstd")
+                                .body(Body::from(bytes))
+                                .unwrap()
+                        }
+                    }),
+                ),
+            )
+            .await
+            .unwrap();
+        });
+        let spy = Arc::new(Spy {
+            calls: AtomicUsize::new(0),
+        });
+        let gateway = Gateway::new(12345, native, spy.clone());
+        let base = gateway.base_url();
+        let router = gateway.router();
+        let request = |body: Vec<u8>| {
+            Request::builder()
+                .method("POST")
+                .uri(format!("{base}/responses"))
+                .header("host", "127.0.0.1:12345")
+                .header("content-encoding", "zstd")
+                .header("content-type", "application/json")
+                .header("authorization", "Bearer MOCK_NATIVE_SECRET")
+                .body(Body::from(body))
+                .unwrap()
+        };
+        let response = router
+            .clone()
+            .oneshot(request(native_body.clone()))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["content-encoding"], "zstd");
+        assert_eq!(
+            response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .as_ref(),
+            native_body.as_slice()
+        );
+        let web =
+            zstd::stream::encode_all(&br#"{"model":"webbridge/test","input":"fixture"}"#[..], 1)
+                .unwrap();
+        assert_eq!(
+            router.clone().oneshot(request(web)).await.unwrap().status(),
+            StatusCode::OK
+        );
+        let duplicate =
+            zstd::stream::encode_all(&br#"{"model":"native","model":"webbridge/test"}"#[..], 1)
+                .unwrap();
+        assert_eq!(
+            router
+                .clone()
+                .oneshot(request(duplicate))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        let large =
+            serde_json::json!({"model":"webbridge/test","input":"x".repeat(8 * 1024 * 1024)})
+                .to_string();
+        let large = zstd::stream::encode_all(large.as_bytes(), 1).unwrap();
+        assert!(large.len() < 8192);
+        assert_eq!(
+            router.oneshot(request(large)).await.unwrap().status(),
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
+        assert_eq!(received.load(Ordering::SeqCst), 1);
+        assert_eq!(spy.calls.load(Ordering::SeqCst), 1);
+        server.abort();
     }
 
     #[tokio::test]

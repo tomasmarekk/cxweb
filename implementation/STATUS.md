@@ -747,3 +747,30 @@ model discovery, native WebSocket preservation and actual pickers are proven.
   a per-generation idempotency key.
 - Binding the real managed browser driver, live route discovery/qualification,
   tool round trips, compressed request classification and activation remain open.
+
+## Compressed request classification
+
+- Added Zstandard request inspection for the reviewed Codex compression mode.
+  The gateway decodes a separate copy for model classification and validation;
+  native requests retain their exact compressed bytes and Content-Encoding.
+  Browser requests receive only the decoded, classified payload.
+- Decompression runs on bounded blocking workers with four shared permits,
+  a 32 MiB output limit and a 32 MiB decoder window bound. Dropping a client does
+  not release a worker's permit before decoding finishes. Unsupported/stacked
+  encodings, invalid frames and truncated/trailing input fail explicitly.
+  The stricter 8 MiB web request limit applies after decompression.
+- Added zstd 0.14.0 with default features disabled and its two locked dependencies.
+  No unrelated dependency versions changed. Decoder behavior and window controls
+  were checked against the [library documentation](https://docs.rs/zstd/0.14.0/zstd/stream/read/struct.Decoder.html).
+- Regression tests verify byte-preserving native forwarding, correct web routing,
+  duplicate JSON rejection after decompression, bounded expansion and malformed
+  streams. A request smaller than 8 KiB on the wire but larger than the web limit
+  after expansion is refused. The coordinator retry test now switches from plain
+  JSON to compressed SSE delivery without a second browser submission.
+- All 107 workspace tests passed, with two opt-in tests ignored. Clippy with
+  warnings denied, formatting and diff checks passed. Release desktop and daemon
+  builds succeeded. These are local synthetic tests; real subscription
+  compression and authenticated browser generation still require qualification.
+- Reviewed source condition: [App compression selection](https://github.com/openai/codex/blob/bf6f0a4ec97919bf697cdc532e7b8af4ec482fc6/codex-rs/core/src/client.rs).
+  The existing isolated harness uses an API key, so its successful runs do not
+  establish the subscription-only compression branch as a live client result.

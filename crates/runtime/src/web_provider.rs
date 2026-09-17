@@ -321,9 +321,15 @@ mod tests {
         assert_eq!(first.headers()["x-cxweb-delivery"], "buffered");
         let body = first.into_body().collect().await.unwrap().to_bytes();
         let original: Value = serde_json::from_slice(&body).unwrap();
+        let (mut parts, body) = request(&base, "turn-one", "context-one", true).into_parts();
+        let body = body.collect().await.unwrap().to_bytes();
+        let compressed = zstd::stream::encode_all(body.as_ref(), 1).unwrap();
+        parts
+            .headers
+            .insert("content-encoding", "zstd".parse().unwrap());
         let retry = router
             .clone()
-            .oneshot(request(&base, "turn-one", "context-one", true))
+            .oneshot(Request::from_parts(parts, Body::from(compressed)))
             .await
             .unwrap();
         assert_eq!(retry.headers()["content-type"], "text/event-stream");
