@@ -130,6 +130,11 @@ pub(crate) fn login_error(code: &str) -> &'static str {
         "E_SEND_DISABLED" => "E_SEND_DISABLED",
         "E_COMPOSER_MISMATCH" => "E_COMPOSER_MISMATCH",
         "E_LIVE_QUALIFICATION" => "E_LIVE_QUALIFICATION",
+        "E_TURN_AMBIGUOUS" => "E_TURN_AMBIGUOUS",
+        "E_TURN_ATTRIBUTION" => "E_TURN_ATTRIBUTION",
+        "E_USER_MESSAGE_MISMATCH" => "E_USER_MESSAGE_MISMATCH",
+        "E_MODEL_FIDELITY" => "E_MODEL_FIDELITY",
+        "E_INVALID_TOOL_ENVELOPE" => "E_INVALID_TOOL_ENVELOPE",
         "E_QUALIFICATION_SELECT" => "E_QUALIFICATION_SELECT",
         "E_QUALIFICATION_BASELINE" => "E_QUALIFICATION_BASELINE",
         "E_QUALIFICATION_INSERT" => "E_QUALIFICATION_INSERT",
@@ -147,6 +152,15 @@ pub(crate) fn login_error(code: &str) -> &'static str {
 
 #[test]
 fn login_failures_never_export_arbitrary_backend_text() {
+    for code in [
+        "E_TURN_AMBIGUOUS",
+        "E_TURN_ATTRIBUTION",
+        "E_USER_MESSAGE_MISMATCH",
+        "E_MODEL_FIDELITY",
+        "E_INVALID_TOOL_ENVELOPE",
+    ] {
+        assert_eq!(login_error(code), code);
+    }
     assert_eq!(
         login_error("E_QUALIFICATION_PROTOCOL"),
         "E_QUALIFICATION_PROTOCOL"

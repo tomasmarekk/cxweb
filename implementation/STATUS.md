@@ -19,6 +19,22 @@ entry was visible, which is the expected evidence while activation remains absen
 
 ## Composer integrity correction (2026-09-18)
 
+- A subsequent user attempt passed the Send guard but failed with the generic
+  live-qualification error. Stage-specific attribution codes now distinguish
+  ambiguous turns, model changes, user-message mismatch and fenced output.
+  One desktop-driven diagnostic attempt then returned `E_USER_MESSAGE_MISMATCH`.
+  This establishes a post-click readback failure, not a verified response.
+- At most one failed qualification tab is retained for inspection; the next
+  explicit qualification closes the previous retained target. No automatic
+  resubmission is added. Computer Use could read the cxweb result but refused
+  the Chrome snapshot because it could not establish the browser URL. The live
+  DOM cause therefore remains unconfirmed.
+- Known no-click refusals now terminate the durable intent as failed, while
+  unknown/post-click failures remain submission-uncertain. Regression tests
+  verify recovery and repeated admission cannot resend either outcome.
+  The full Rust workspace suite, all 12 JavaScript tests, Clippy with warnings
+  denied, formatting and diff checks passed after these changes.
+
 - The user confirmed five effort candidates and Temporary Chat, then reported
   `E_COMPOSER_MISMATCH` during the explicit text test. Send was not clicked.
 - Replaced CDP live typing with the browser's plain-text editing command in the

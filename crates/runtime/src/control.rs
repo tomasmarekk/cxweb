@@ -58,6 +58,85 @@ impl Default for ControlStatus {
     }
 }
 type Reply = oneshot::Sender<Result<ControlStatus, &'static str>>;
+
+fn qualification_failure_state(submission_intent: bool, error: &str) -> TurnState {
+    let send_refused = matches!(
+        error,
+        "E_SEND_SURFACE" | "E_SEND_DISABLED" | "E_COMPOSER_MISMATCH" | "E_MODEL_SELECTION"
+    );
+    if submission_intent && !send_refused {
+        TurnState::SubmissionUncertain
+    } else {
+        TurnState::Failed
+    }
+}
+
+#[cfg(test)]
+mod qualification_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn known_send_refusal_is_terminal_without_becoming_uncertain_or_replayable() {
+        for code in [
+            "E_SEND_SURFACE",
+            "E_SEND_DISABLED",
+            "E_COMPOSER_MISMATCH",
+            "E_MODEL_SELECTION",
+        ] {
+            let ledger = Ledger::in_memory();
+            let scope = SessionKey {
+                installation: "fixture".into(),
+                native_session: "fixture".into(),
+                account_scope: "fixture".into(),
+                workspace_scope: "fixture".into(),
+                route: "webbridge/fixture".into(),
+                epoch: 0,
+            };
+            assert_eq!(
+                ledger.admit("test", &scope, b"test").await.unwrap(),
+                Admission::New
+            );
+            ledger
+                .transition("test", TurnState::ObservedBaseline)
+                .await
+                .unwrap();
+            ledger
+                .transition("test", TurnState::Submitting)
+                .await
+                .unwrap();
+            let terminal = qualification_failure_state(true, code);
+            assert_eq!(terminal, TurnState::Failed);
+            ledger.transition("test", terminal).await.unwrap();
+            assert_eq!(ledger.recover().await.unwrap(), 0);
+            assert_eq!(
+                ledger.admit("test", &scope, b"test").await.unwrap(),
+                Admission::Existing(TurnState::Failed)
+            );
+            assert!(
+                ledger
+                    .transition("test", TurnState::Submitting)
+                    .await
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_and_post_click_failures_remain_uncertain_after_intent() {
+        for code in [
+            "E_SUBMISSION_UNCERTAIN",
+            "E_USER_MESSAGE_MISMATCH",
+            "E_QUALIFICATION_OBSERVE",
+            "arbitrary backend error",
+        ] {
+            assert_eq!(
+                qualification_failure_state(true, code),
+                TurnState::SubmissionUncertain
+            );
+            assert_eq!(qualification_failure_state(false, code), TurnState::Failed);
+        }
+    }
+}
 enum WorkerCommand {
     Connect(Reply),
     Status(Reply),
@@ -323,7 +402,7 @@ impl Control {
                                             continue;
                                         }
                                         Err(error) => {
-                                            let terminal = if submission_intent { TurnState::SubmissionUncertain } else { TurnState::Failed };
+                                            let terminal = qualification_failure_state(submission_intent, &error.to_string());
                                             let _ = runtime.block_on(ledger.transition(&nonce, terminal));
                                             let code = match error.to_string().as_str() {
                                                 "E_SUBMISSION_UNCERTAIN" => {
@@ -341,6 +420,11 @@ impl Control {
                                                 "E_QUALIFICATION_BASELINE" => "E_QUALIFICATION_BASELINE",
                                                 "E_QUALIFICATION_INSERT" => "E_QUALIFICATION_INSERT",
                                                 "E_QUALIFICATION_OBSERVE" => "E_QUALIFICATION_OBSERVE",
+                                                "E_TURN_AMBIGUOUS" => "E_TURN_AMBIGUOUS",
+                                                "E_TURN_ATTRIBUTION" => "E_TURN_ATTRIBUTION",
+                                                "E_USER_MESSAGE_MISMATCH" => "E_USER_MESSAGE_MISMATCH",
+                                                "E_MODEL_FIDELITY" => "E_MODEL_FIDELITY",
+                                                "E_INVALID_TOOL_ENVELOPE" => "E_INVALID_TOOL_ENVELOPE",
                                                 _ => "E_LIVE_QUALIFICATION",
                                             };
                                             let _ = reply.send(Err(code));

@@ -40,7 +40,9 @@ impl TurnState {
             (*self, next),
             (Prepared, ObservedBaseline | Cancelled | Failed)
                 | (ObservedBaseline, Submitting | Cancelled | Failed)
-                | (Submitting, Submitted | SubmissionUncertain)
+                // Failed is permitted only with positive evidence that Send
+                // was not clicked. Timeouts still require SubmissionUncertain.
+                | (Submitting, Submitted | Failed | SubmissionUncertain)
                 | (Submitted, Generating | Completed | Failed | Cancelled)
                 | (Generating, Completed | Failed | Cancelled)
         );

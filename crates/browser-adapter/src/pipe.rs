@@ -62,6 +62,7 @@ pub struct ManagedBrowser {
     process: BrowserProcess,
     replies: Receiver<io::Result<Value>>,
     next_id: u64,
+    failed_qualification: Option<ManagedPage>,
 }
 
 impl ManagedBrowser {
@@ -86,6 +87,7 @@ impl ManagedBrowser {
             process,
             replies,
             next_id: 0,
+            failed_qualification: None,
         })
     }
 
@@ -359,7 +361,7 @@ impl ManagedBrowser {
     }
 
     /// Runs one explicitly requested, non-retried qualification turn in a new
-    /// Temporary Chat target and closes only that owned target afterward.
+    /// Temporary Chat target. Retain at most one failed target for inspection.
     pub fn qualify_candidate(
         &mut self,
         identity: &str,
@@ -367,10 +369,15 @@ impl ManagedBrowser {
         prompt: &str,
         before_send: impl FnOnce() -> io::Result<()>,
     ) -> io::Result<QualificationOutcome> {
+        if let Some(previous) = self.failed_qualification.take() {
+            let _ = self.close_page(previous);
+        }
         let page = self.open_temporary_chat()?;
         let result = self.qualify_page(&page, identity, expected_label, prompt, before_send);
         if result.is_err() {
             let _ = self.stop(&page);
+            self.failed_qualification = Some(page);
+            return result;
         }
         let closed = self.close_page(page);
         let outcome = result?;

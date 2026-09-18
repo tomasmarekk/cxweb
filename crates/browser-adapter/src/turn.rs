@@ -84,15 +84,20 @@ impl TurnTracker {
         ) {
             return Err("E_TURN_STATE");
         }
-        if observation.ambiguous || observation.selected_model != self.model {
-            return self.fail("E_TURN_ATTRIBUTION");
+        if observation.ambiguous {
+            return self.fail("E_TURN_AMBIGUOUS");
+        }
+        if observation.selected_model != self.model {
+            return self.fail("E_MODEL_FIDELITY");
         }
         let Some(user) = observation.user_id else {
             return Ok(Progress::AwaitingAcknowledgement);
         };
+        if !observation.user_matches {
+            return self.fail("E_USER_MESSAGE_MISMATCH");
+        }
         if user.is_empty()
             || self.baseline.contains(&user)
-            || !observation.user_matches
             || self.user.as_ref().is_some_and(|id| id != &user)
         {
             return self.fail("E_TURN_ATTRIBUTION");
@@ -213,6 +218,45 @@ mod tests {
         o.assistant_id = Some("regenerated".into());
         assert!(tracker.observe(o).is_err());
     }
+    #[test]
+    fn attribution_failures_identify_the_failed_check_without_accepting_output() {
+        for (code, observation) in [
+            (
+                "E_TURN_AMBIGUOUS",
+                Observation {
+                    ambiguous: true,
+                    ..observation()
+                },
+            ),
+            (
+                "E_MODEL_FIDELITY",
+                Observation {
+                    selected_model: "changed".into(),
+                    ..observation()
+                },
+            ),
+            (
+                "E_USER_MESSAGE_MISMATCH",
+                Observation {
+                    user_matches: false,
+                    ..observation()
+                },
+            ),
+            (
+                "E_INVALID_TOOL_ENVELOPE",
+                Observation {
+                    fenced_output: true,
+                    ..observation()
+                },
+            ),
+        ] {
+            let mut tracker = tracker();
+            assert_eq!(tracker.observe(observation).err(), Some(code));
+            assert!(tracker.state().terminal());
+            assert!(tracker.begin_submission().is_err());
+        }
+    }
+
     #[test]
     fn cancelling_unknown_submission_does_not_claim_unsent() {
         let mut tracker = tracker();
