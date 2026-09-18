@@ -1,12 +1,10 @@
 //! Login and explicit qualification worker. Browser IPC stays off the reactor.
 use crate::ledger::{Admission, Ledger};
+use crate::qualification::Kind;
 use cxweb_browser_adapter::{
     LoginObservation, ManagedBrowser, ManagedPage, ModelSurfaceDiagnostic, QualificationDiagnostic,
 };
-use cxweb_codex_adapter::{
-    envelope::{self, ValidatedOutput},
-    request::CanonicalRequest,
-};
+use cxweb_codex_adapter::envelope;
 use cxweb_domain::{SessionKey, TurnState};
 use cxweb_platform::state::{StatePaths, installed_browser};
 use serde::{Deserialize, Serialize};
@@ -30,6 +28,8 @@ pub struct ControlStatus {
     pub model_discovery_diagnostic: Option<ModelSurfaceDiagnostic>,
     #[serde(default)]
     pub text_qualified_model: Option<String>,
+    #[serde(default)]
+    pub tool_qualified_model: Option<String>,
     #[serde(default)]
     pub qualification_evidence: Option<String>,
     #[serde(default)]
@@ -55,6 +55,7 @@ impl Default for ControlStatus {
             temporary_chat_available: None,
             model_discovery_diagnostic: None,
             text_qualified_model: None,
+            tool_qualified_model: None,
             qualification_evidence: None,
             qualification_diagnostic: None,
         }
@@ -144,7 +145,7 @@ enum WorkerCommand {
     Connect(Reply),
     Status(Reply),
     Qualify(Reply),
-    QualifyText(Reply),
+    QualifyTurn(Kind, Reply),
 }
 #[derive(Clone)]
 pub struct Control {
@@ -167,11 +168,13 @@ impl Control {
                 let mut status = ControlStatus::default();
                 let mut observed_routes: Vec<(QualifiedModel, String)> = Vec::new();
                 while let Some(command) = incoming.blocking_recv() {
-                    let (connect, qualify, qualify_text, reply) = match command {
-                        WorkerCommand::Connect(reply) => (true, false, false, reply),
-                        WorkerCommand::Status(reply) => (false, false, false, reply),
-                        WorkerCommand::Qualify(reply) => (false, true, false, reply),
-                        WorkerCommand::QualifyText(reply) => (false, false, true, reply),
+                    let (connect, qualify, qualification_kind, reply) = match command {
+                        WorkerCommand::Connect(reply) => (true, false, None, reply),
+                        WorkerCommand::Status(reply) => (false, false, None, reply),
+                        WorkerCommand::Qualify(reply) => (false, true, None, reply),
+                        WorkerCommand::QualifyTurn(kind, reply) => {
+                            (false, false, Some(kind), reply)
+                        }
                     };
                     if reply.is_closed() {
                         continue;
@@ -215,6 +218,7 @@ impl Control {
                         // A fresh observation supersedes the previous text test,
                         // including when discovery exits early with an error.
                         status.text_qualified_model = None;
+                        status.tool_qualified_model = None;
                         status.qualification_evidence = None;
                         match browser.login_observation(page) {
                             Ok(observation) => {
@@ -325,7 +329,9 @@ impl Control {
                                         }
                                     }
                                 }
-                                if qualify_text && status.phase == "awaiting_qualification" {
+                                if let Some(kind) = qualification_kind
+                                    .filter(|_| status.phase == "awaiting_qualification")
+                                {
                                     status.text_qualified_model = None;
                                     status.qualification_evidence = None;
                                     status.qualification_diagnostic = None;
@@ -340,22 +346,19 @@ impl Control {
                                     let (model, identity) = selected[0];
                                     let fresh = browser.discover_models(page);
                                     if !fresh.is_ok_and(|surface| {
-                                        surface.candidates.iter().filter(|c| c.selected).count() == 1
-                                            && surface.candidates.iter().any(|c| c.selected
-                                                && c.identity == *identity && c.label == model.label)
+                                        surface.candidates.iter().filter(|c| c.selected).count()
+                                            == 1
+                                            && surface.candidates.iter().any(|c| {
+                                                c.selected
+                                                    && c.identity == *identity
+                                                    && c.label == model.label
+                                            })
                                     }) {
                                         let _ = reply.send(Err("E_MODEL_SELECTION"));
                                         continue;
                                     }
                                     let nonce = format!("{:032x}", rand::random::<u128>());
-                                    let request_bytes = serde_json::json!({
-                                        "model": model.id,
-                                        "input": "Complete the cxweb transport qualification. Return the requested final protocol envelope with the exact final text: cxweb live qualification passed",
-                                        "tool_choice": "none",
-                                        "parallel_tool_calls": false
-                                    })
-                                    .to_string();
-                                    let request = match CanonicalRequest::decode(request_bytes.as_bytes()) {
+                                    let request = match kind.request(&model.id) {
                                         Ok(request) => request,
                                         Err(_) => {
                                             let _ = reply.send(Err("E_QUALIFICATION_REQUEST"));
@@ -370,46 +373,76 @@ impl Control {
                                         }
                                     };
                                     let intent = runtime.block_on(async {
-                                        let ledger = Ledger::open(&paths.state.join("qualification.sqlite")).await?;
+                                        let ledger =
+                                            Ledger::open(&paths.state.join("qualification.sqlite"))
+                                                .await?;
                                         // This scope is a diagnostic operation, not a certified account.
                                         let scope = SessionKey {
                                             installation: "cxweb-qualification".into(),
                                             native_session: nonce.clone(),
                                             account_scope: "unqualified-diagnostic".into(),
                                             workspace_scope: "unqualified-diagnostic".into(),
-                                            route: model.id.clone(), epoch: 0,
+                                            route: model.id.clone(),
+                                            epoch: 0,
                                         };
-                                        if ledger.admit(&nonce, &scope, prompt.as_bytes()).await? != Admission::New {
+                                        if ledger.admit(&nonce, &scope, prompt.as_bytes()).await?
+                                            != Admission::New
+                                        {
                                             return Err("E_REQUEST_ALREADY_ADMITTED");
                                         }
                                         Ok(ledger)
                                     });
                                     let ledger = match intent {
                                         Ok(ledger) => ledger,
-                                        Err(code) => { let _ = reply.send(Err(code)); continue; }
+                                        Err(code) => {
+                                            let _ = reply.send(Err(code));
+                                            continue;
+                                        }
                                     };
                                     let mut submission_intent = false;
-                                    let result = browser.qualify_candidate(identity, &model.label, &prompt, || {
-                                        runtime.block_on(async {
-                                            ledger.transition(&nonce, TurnState::ObservedBaseline).await?;
-                                            ledger.transition(&nonce, TurnState::Submitting).await
-                                        }).map_err(std::io::Error::other)?;
-                                        submission_intent = true;
-                                        Ok(())
-                                    });
-                                    status.qualification_diagnostic = browser.qualification_diagnostic();
+                                    let result = browser.qualify_candidate(
+                                        identity,
+                                        &model.label,
+                                        &prompt,
+                                        || {
+                                            runtime
+                                                .block_on(async {
+                                                    ledger
+                                                        .transition(
+                                                            &nonce,
+                                                            TurnState::ObservedBaseline,
+                                                        )
+                                                        .await?;
+                                                    ledger
+                                                        .transition(&nonce, TurnState::Submitting)
+                                                        .await
+                                                })
+                                                .map_err(std::io::Error::other)?;
+                                            submission_intent = true;
+                                            Ok(())
+                                        },
+                                    );
+                                    status.qualification_diagnostic =
+                                        browser.qualification_diagnostic();
                                     let outcome = match result {
                                         Ok(outcome) if outcome.candidate_label == model.label => {
                                             outcome
                                         }
                                         Ok(_) => {
-                                            let _ = runtime.block_on(ledger.transition(&nonce, TurnState::SubmissionUncertain));
+                                            let _ = runtime.block_on(ledger.transition(
+                                                &nonce,
+                                                TurnState::SubmissionUncertain,
+                                            ));
                                             let _ = reply.send(Err("E_MODEL_SELECTION"));
                                             continue;
                                         }
                                         Err(error) => {
-                                            let terminal = qualification_failure_state(submission_intent, &error.to_string());
-                                            let _ = runtime.block_on(ledger.transition(&nonce, terminal));
+                                            let terminal = qualification_failure_state(
+                                                submission_intent,
+                                                &error.to_string(),
+                                            );
+                                            let _ = runtime
+                                                .block_on(ledger.transition(&nonce, terminal));
                                             let code = match error.to_string().as_str() {
                                                 "E_SUBMISSION_UNCERTAIN" => {
                                                     "E_SUBMISSION_UNCERTAIN"
@@ -422,15 +455,27 @@ impl Control {
                                                 "E_SEND_DISABLED" => "E_SEND_DISABLED",
                                                 "E_COMPOSER_MISMATCH" => "E_COMPOSER_MISMATCH",
                                                 "E_MODEL_SELECTION" => "E_MODEL_SELECTION",
-                                                "E_QUALIFICATION_SELECT" => "E_QUALIFICATION_SELECT",
-                                                "E_QUALIFICATION_BASELINE" => "E_QUALIFICATION_BASELINE",
-                                                "E_QUALIFICATION_INSERT" => "E_QUALIFICATION_INSERT",
-                                                "E_QUALIFICATION_OBSERVE" => "E_QUALIFICATION_OBSERVE",
+                                                "E_QUALIFICATION_SELECT" => {
+                                                    "E_QUALIFICATION_SELECT"
+                                                }
+                                                "E_QUALIFICATION_BASELINE" => {
+                                                    "E_QUALIFICATION_BASELINE"
+                                                }
+                                                "E_QUALIFICATION_INSERT" => {
+                                                    "E_QUALIFICATION_INSERT"
+                                                }
+                                                "E_QUALIFICATION_OBSERVE" => {
+                                                    "E_QUALIFICATION_OBSERVE"
+                                                }
                                                 "E_TURN_AMBIGUOUS" => "E_TURN_AMBIGUOUS",
                                                 "E_TURN_ATTRIBUTION" => "E_TURN_ATTRIBUTION",
-                                                "E_USER_MESSAGE_MISMATCH" => "E_USER_MESSAGE_MISMATCH",
+                                                "E_USER_MESSAGE_MISMATCH" => {
+                                                    "E_USER_MESSAGE_MISMATCH"
+                                                }
                                                 "E_MODEL_FIDELITY" => "E_MODEL_FIDELITY",
-                                                "E_INVALID_TOOL_ENVELOPE" => "E_INVALID_TOOL_ENVELOPE",
+                                                "E_INVALID_TOOL_ENVELOPE" => {
+                                                    "E_INVALID_TOOL_ENVELOPE"
+                                                }
                                                 _ => "E_LIVE_QUALIFICATION",
                                             };
                                             let _ = reply.send(Err(code));
@@ -441,22 +486,25 @@ impl Control {
                                         ledger.transition(&nonce, TurnState::Submitted).await?;
                                         ledger.transition(&nonce, TurnState::Generating).await
                                     });
-                                    if let Err(code) = recorded { let _ = reply.send(Err(code)); continue; }
+                                    if let Err(code) = recorded {
+                                        let _ = reply.send(Err(code));
+                                        continue;
+                                    }
                                     let valid = envelope::validate(
                                         outcome.response.as_bytes(),
                                         &request.context(&nonce),
                                     );
-                                    if !matches!(
-                                        valid,
-                                        Ok(ValidatedOutput::Final(ref text))
-                                            if text == "cxweb live qualification passed"
-                                    ) {
-                                        let _ = runtime.block_on(ledger.transition(&nonce, TurnState::Failed));
+                                    if !valid.as_ref().is_ok_and(|output| kind.accepts(output)) {
+                                        let _ = runtime
+                                            .block_on(ledger.transition(&nonce, TurnState::Failed));
                                         let _ = reply.send(Err("E_QUALIFICATION_PROTOCOL"));
                                         continue;
                                     }
-                                    if let Err(code) = runtime.block_on(ledger.transition(&nonce, TurnState::Completed)) {
-                                        let _ = reply.send(Err(code)); continue;
+                                    if let Err(code) = runtime
+                                        .block_on(ledger.transition(&nonce, TurnState::Completed))
+                                    {
+                                        let _ = reply.send(Err(code));
+                                        continue;
                                     }
                                     let mut evidence = Sha256::new();
                                     let evidence_parts: [&[u8]; 4] = [
@@ -469,10 +517,21 @@ impl Control {
                                         evidence.update((value.len() as u64).to_le_bytes());
                                         evidence.update(value);
                                     }
-                                    status.text_qualified_model = Some(model.id.clone());
+                                    match kind {
+                                        Kind::Text => {
+                                            status.text_qualified_model = Some(model.id.clone())
+                                        }
+                                        Kind::Tools => {
+                                            status.tool_qualified_model = Some(model.id.clone())
+                                        }
+                                    }
                                     status.qualification_evidence =
                                         Some(format!("{:x}", evidence.finalize()));
-                                    status.phase = "text_qualified".into();
+                                    status.phase = match kind {
+                                        Kind::Text => "text_qualified",
+                                        Kind::Tools => "tool_protocol_qualified",
+                                    }
+                                    .into();
                                 }
                             }
                             Err(_) => {
@@ -512,9 +571,15 @@ impl Control {
             .map_err(|_| "E_CONTROL_CLOSED")?
     }
     pub async fn qualify_text(&self) -> Result<ControlStatus, &'static str> {
+        self.qualify_turn(Kind::Text).await
+    }
+    pub async fn qualify_tools(&self) -> Result<ControlStatus, &'static str> {
+        self.qualify_turn(Kind::Tools).await
+    }
+    async fn qualify_turn(&self, kind: Kind) -> Result<ControlStatus, &'static str> {
         let (reply, receive) = oneshot::channel();
         self.commands
-            .try_send(WorkerCommand::QualifyText(reply))
+            .try_send(WorkerCommand::QualifyTurn(kind, reply))
             .map_err(|_| "E_CONTROL_BUSY")?;
         tokio::time::timeout(Duration::from_secs(330), receive)
             .await

@@ -39,6 +39,17 @@ function panel(respond) {
   return { nodes, calls, requests, timers, document };
 }
 
+test('tool protocol evidence is distinguished from actual Codex execution', async () => {
+  const ui = panel(async () => ({ phase: 'tool_protocol_qualified', tool_qualified_model: 'webbridge/fixture' }));
+  await flush();
+  assert.equal(ui.nodes.get('heading').textContent, 'Tool protocol test passed');
+  assert.equal(ui.nodes.get('codex').textContent, 'Awaiting integration');
+  assert.match(ui.nodes.get('description').textContent, /Execution through Codex still needs verification/);
+  assert.deepEqual(ui.calls, ['status']);
+  await ui.nodes.get('connect').click();
+  assert.deepEqual(ui.calls, ['status', 'qualify']);
+});
+
 test('login starts only after explicit action and failed browser can reconnect', async () => {
   let phase = 'disconnected';
   const ui = panel(async () => ({ phase }));

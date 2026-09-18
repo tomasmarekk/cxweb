@@ -78,6 +78,12 @@ function render(status) {
     $('chatgpt').textContent = 'Text verified';
     $('codex').textContent = 'Awaiting integration';
     $('connect').textContent = 'Refresh model candidates';
+  } else if (phase === 'tool_protocol_qualified') {
+    $('heading').textContent = 'Tool protocol test passed';
+    $('description').textContent = 'ChatGPT returned valid function and custom tool requests. Execution through Codex still needs verification.';
+    $('chatgpt').textContent = 'Tool requests verified';
+    $('codex').textContent = 'Awaiting integration';
+    $('connect').textContent = 'Refresh model candidates';
   } else if (phase === 'discovery_failed') {
     $('heading').textContent = 'Model menu changed';
     $('description').textContent = 'The signed-in page is available, but its current model menu structure is not recognized yet.';
@@ -106,7 +112,7 @@ async function check(connect = false, refresh = true) {
   }
 }
 async function act() {
-  if (phase === 'awaiting_qualification' || phase === 'candidates_observed' || phase === 'discovery_failed' || phase === 'text_qualified') {
+  if (phase === 'awaiting_qualification' || phase === 'candidates_observed' || phase === 'discovery_failed' || phase === 'text_qualified' || phase === 'tool_protocol_qualified') {
     if (pending) return;
     pending = true; $('connect').disabled = true;
     try { render(await invoke('qualify')); } catch (error) { showError(error); }

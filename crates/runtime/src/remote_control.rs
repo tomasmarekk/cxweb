@@ -114,6 +114,9 @@ impl RemoteControl {
     pub async fn qualify_text(&self) -> Result<ControlStatus, &'static str> {
         self.perform(LoginAction::QualifyText).await
     }
+    pub async fn qualify_tools(&self) -> Result<ControlStatus, &'static str> {
+        self.perform(LoginAction::QualifyTools).await
+    }
     pub async fn status(&self, refresh: bool) -> Result<ControlStatus, &'static str> {
         if refresh {
             return self.perform(LoginAction::Refresh).await;
@@ -135,7 +138,7 @@ impl RemoteControl {
         };
         let mut response = control_protocol::exchange(&self.channel, &request).await;
         let deadline = tokio::time::Instant::now()
-            + if action == LoginAction::QualifyText {
+            + if matches!(action, LoginAction::QualifyText | LoginAction::QualifyTools) {
                 Duration::from_secs(335)
             } else {
                 Duration::from_secs(35)
@@ -218,7 +221,7 @@ mod tests {
                 LoginAction::Qualify => {
                     self.refreshes.fetch_add(1, Ordering::SeqCst);
                 }
-                LoginAction::QualifyText => {
+                LoginAction::QualifyText | LoginAction::QualifyTools => {
                     self.refreshes.fetch_add(1, Ordering::SeqCst);
                 }
             }
@@ -232,6 +235,7 @@ mod tests {
                         LoginAction::Refresh => "awaiting_qualification",
                         LoginAction::Qualify => "candidates_observed",
                         LoginAction::QualifyText => "text_qualified",
+                        LoginAction::QualifyTools => "tool_protocol_qualified",
                     }
                     .into(),
                     ..ControlStatus::default()

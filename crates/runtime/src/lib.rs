@@ -15,6 +15,8 @@ pub mod lifecycle;
 pub mod native;
 mod native_ws;
 #[cfg(windows)]
+mod qualification;
+#[cfg(windows)]
 pub mod remote_control;
 mod request_body;
 pub mod scheduler;

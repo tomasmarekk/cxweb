@@ -32,6 +32,7 @@ pub enum LoginAction {
     Refresh,
     Qualify,
     QualifyText,
+    QualifyTools,
 }
 pub type LoginWork = Pin<Box<dyn Future<Output = Result<ControlStatus, &'static str>> + Send>>;
 pub trait LoginBackend: Send + Sync + 'static {
@@ -46,6 +47,7 @@ impl LoginBackend for Control {
                 LoginAction::Refresh => control.status().await,
                 LoginAction::Qualify => control.qualify().await,
                 LoginAction::QualifyText => control.qualify_text().await,
+                LoginAction::QualifyTools => control.qualify_tools().await,
             }
         })
     }
@@ -333,6 +335,7 @@ impl Service {
                         Err(code) => {
                             let mut cached = status.lock().expect("login status lock poisoned");
                             cached.text_qualified_model = None;
+                            cached.tool_qualified_model = None;
                             cached.qualification_evidence = None;
                             cached.qualification_diagnostic = None;
                             cached.phase = "awaiting_qualification".into();

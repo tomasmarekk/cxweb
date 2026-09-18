@@ -19,6 +19,20 @@ entry was visible, which is the expected evidence while activation remains absen
 
 ## Composer integrity correction (2026-09-18)
 
+- Added an explicit `browser-control test-tools` operation through the same
+  private runtime and durable qualification path. It requests exactly one
+  function call and one custom call with fixed fixture inputs and executes
+  neither. Strict schema, nonce and exact-input checks gate its separate
+  `tool_protocol_qualified` result; it does not enable Codex routing.
+- The authenticated tool protocol test passed: both expected requests validated,
+  user content matched, an assistant response was attributed, generation had
+  ended and the expected/observed control labels both read `Velmi vysoká`.
+  This proves the two envelope formats can traverse the current web surface.
+  It does not prove native tool execution, result delivery or actual pickers.
+- The runtime suite passed 69 tests, workspace Clippy passed, and all three
+  release binaries built. The panel distinguishes protocol verification from
+  actual integration. Actual Codex execution remains the next integration step.
+
 - The user supplied a screenshot showing the submitted prompt collapsed behind
   an expand control. User-message matching now excludes button labels on a clone
   of the message subtree and preserves structural newlines. It still compares

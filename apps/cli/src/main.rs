@@ -56,6 +56,7 @@ enum BrowserAction {
     Refresh,
     Discover,
     TestText,
+    TestTools,
 }
 
 #[tokio::main]
@@ -71,6 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     BrowserAction::Refresh => control.status(true).await?,
                     BrowserAction::Discover => control.qualify().await?,
                     BrowserAction::TestText => control.qualify_text().await?,
+                    BrowserAction::TestTools => control.qualify_tools().await?,
                 };
                 // Fixed summary only: no account metadata, prompt or response body.
                 print_json(&serde_json::json!({
@@ -78,6 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "candidate_count": status.candidate_models.len(),
                     "temporary_chat_verified": status.temporary_chat_available,
                     "text_verified": status.text_qualified_model.is_some(),
+                    "tool_protocol_verified": status.tool_qualified_model.is_some(),
                     "routing_installed": status.routing_installed,
                     "qualification_diagnostic": status.qualification_diagnostic,
                 }));
