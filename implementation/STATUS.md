@@ -19,6 +19,26 @@ entry was visible, which is the expected evidence while activation remains absen
 
 ## Composer integrity correction (2026-09-18)
 
+- The user supplied a screenshot showing the submitted prompt collapsed behind
+  an expand control. User-message matching now excludes button labels on a clone
+  of the message subtree and preserves structural newlines. It still compares
+  the whole message. The Chrome fixture now includes clipped content and an
+  expand control; full-content attribution passes while a prefix or an appended
+  control label is rejected.
+- A live attempt initially returned `E_MODEL_FIDELITY`. Bounded qualification
+  diagnostics now report only model labels and attribution booleans, never the
+  request, response, raw turn IDs or account data. A subsequent explicitly run
+  test passed with both labels `Velmi vysoká`, matched user content, an attributed
+  completed assistant response and the required nonce-bound final envelope.
+  This is authenticated text transport evidence, not tool execution or picker
+  certification. A following fresh status observation correctly invalidated the
+  cached qualification while retaining the last diagnostic result.
+- Chrome 153.0.8010.48 synthetic checks, seven browser-adapter tests (one opt-in
+  ignored), six control-protocol tests, all 12 JavaScript tests, workspace Clippy,
+  formatting and diff checks passed. CLI and daemon release builds succeeded.
+  Computer Use reinitialization and focusing the address bar did not resolve its
+  URL-verification failure; no tool safety checks were altered.
+
 - A subsequent user attempt passed the Send guard but failed with the generic
   live-qualification error. Stage-specific attribution codes now distinguish
   ambiguous turns, model changes, user-message mismatch and fenced output.

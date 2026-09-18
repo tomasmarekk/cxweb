@@ -334,6 +334,7 @@ impl Service {
                             let mut cached = status.lock().expect("login status lock poisoned");
                             cached.text_qualified_model = None;
                             cached.qualification_evidence = None;
+                            cached.qualification_diagnostic = None;
                             cached.phase = "awaiting_qualification".into();
                             Outcome::LoginFailed {
                                 code: login_error(code).to_owned(),

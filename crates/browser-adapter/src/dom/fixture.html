@@ -26,7 +26,10 @@ document.querySelector('[data-testid="send-button"]').onclick = () => {
   const composer = document.querySelector('#prompt-textarea');
   const userContainer = document.createElement('div'); userContainer.dataset.turnIdContainer = 'new-user';
   const user = document.createElement('section'); user.dataset.testid = 'conversation-turn-user'; user.dataset.turnId = 'new-user'; user.dataset.turn = 'user';
-  const userContent = document.createElement('div'); userContent.dataset.messageAuthorRole = 'user'; userContent.innerText = composer.innerText; user.append(userContent); userContainer.append(user); document.body.append(userContainer);
+  const userContent = document.createElement('div'); userContent.dataset.messageAuthorRole = 'user';
+  const message = document.createElement('div'); message.style.whiteSpace = 'pre-wrap'; message.style.maxHeight = '24px'; message.style.overflow = 'hidden'; message.textContent = composer.innerText;
+  const expand = document.createElement('button'); expand.type = 'button'; expand.textContent = 'Show more';
+  userContent.append(message, expand); user.append(userContent); userContainer.append(user); document.body.append(userContainer);
   const assistantContainer = document.createElement('div'); assistantContainer.dataset.turnIdContainer = 'new-assistant';
   const turn = document.createElement('section'); turn.dataset.testid = 'conversation-turn-new'; turn.dataset.turnId = 'new-assistant'; turn.dataset.turn = 'assistant';
   const assistant = document.createElement('div'); assistant.dataset.messageAuthorRole = 'assistant';

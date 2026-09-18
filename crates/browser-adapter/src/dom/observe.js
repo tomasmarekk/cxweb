@@ -22,11 +22,33 @@ function (baselineIds, expectedPrompt) {
   const assistant = assistants.length === 1 ? assistants[0] : null;
   const content = assistant?.querySelector('.markdown');
   const userContent = user?.querySelector('[data-message-author-role="user"]') ?? user;
+  // Collapsed messages contain their own expand/copy controls. Compare the
+  // message text, not those localized control labels. Keep the source DOM
+  // untouched and require the entire remaining text to match, never a prefix.
+  const messageCopy = userContent?.cloneNode(true);
+  const controlsInMessage = messageCopy?.querySelectorAll('button, [role="button"]');
+  controlsInMessage?.forEach(control => control.remove());
+  const plainText = node => {
+    if (node.nodeType === 3) return node.textContent;
+    if (node.nodeType !== 1) return '';
+    if (node.tagName === 'BR') return '\n';
+    const children = [...node.childNodes];
+    const block = child => child.nodeType === 1 && ['DIV', 'P', 'PRE', 'LI'].includes(child.tagName);
+    return children.map((child, index) =>
+      (index > 0 && (block(child) || block(children[index - 1])) ? '\n' : '') + plainText(child)
+    ).join('');
+  };
+  const normalize = value => value.replace(/\r\n/g, '\n').trim();
+  const expected = normalize(expectedPrompt);
+  const userMatches = !!userContent && (
+    (!controlsInMessage.length && normalize(userContent.innerText) === expected) ||
+    normalize(plainText(messageCopy)) === expected
+  );
   const text = content?.innerText ?? '';
   if (text.length > 4 * 1024 * 1024) throw new Error('E_PAYLOAD_LIMIT');
   return {
     user_id: user?.getAttribute('data-turn-id-container') ?? null,
-    user_matches: !!userContent && userContent.innerText.replace(/\r\n/g, '\n').trim() === expectedPrompt.replace(/\r\n/g, '\n').trim(),
+    user_matches: userMatches,
     assistant_id: assistant?.getAttribute('data-turn-id-container') ?? null,
     text,
     generating: !!document.querySelector('[data-testid="stop-button"]'),

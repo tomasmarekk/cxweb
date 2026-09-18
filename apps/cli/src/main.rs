@@ -79,6 +79,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "temporary_chat_verified": status.temporary_chat_available,
                     "text_verified": status.text_qualified_model.is_some(),
                     "routing_installed": status.routing_installed,
+                    "qualification_diagnostic": status.qualification_diagnostic,
                 }));
             }
             #[cfg(not(windows))]

@@ -58,11 +58,23 @@ pub struct QualificationOutcome {
     pub response: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QualificationDiagnostic {
+    pub expected_model_label: String,
+    pub observed_model_label: String,
+    pub user_present: bool,
+    pub user_matches: bool,
+    pub assistant_present: bool,
+    pub generating: bool,
+}
+
 pub struct ManagedBrowser {
     process: BrowserProcess,
     replies: Receiver<io::Result<Value>>,
     next_id: u64,
     failed_qualification: Option<ManagedPage>,
+    qualification_diagnostic: Option<QualificationDiagnostic>,
 }
 
 impl ManagedBrowser {
@@ -88,6 +100,7 @@ impl ManagedBrowser {
             replies,
             next_id: 0,
             failed_qualification: None,
+            qualification_diagnostic: None,
         })
     }
 
@@ -369,6 +382,7 @@ impl ManagedBrowser {
         prompt: &str,
         before_send: impl FnOnce() -> io::Result<()>,
     ) -> io::Result<QualificationOutcome> {
+        self.qualification_diagnostic = None;
         if let Some(previous) = self.failed_qualification.take() {
             let _ = self.close_page(previous);
         }
@@ -383,6 +397,10 @@ impl ManagedBrowser {
         let outcome = result?;
         closed?;
         Ok(outcome)
+    }
+
+    pub fn qualification_diagnostic(&self) -> Option<QualificationDiagnostic> {
+        self.qualification_diagnostic.clone()
     }
 
     fn qualify_page(
@@ -423,6 +441,14 @@ impl ManagedBrowser {
             let observation = self
                 .observe(page, &baseline, prompt)
                 .map_err(|_| io::Error::other("E_QUALIFICATION_OBSERVE"))?;
+            self.qualification_diagnostic = Some(QualificationDiagnostic {
+                expected_model_label: baseline.selected_model.clone(),
+                observed_model_label: observation.selected_model.clone(),
+                user_present: observation.user_id.is_some(),
+                user_matches: observation.user_matches,
+                assistant_present: observation.assistant_id.is_some(),
+                generating: observation.generating,
+            });
             match tracker.observe(observation).map_err(io::Error::other)? {
                 Progress::Completed(response) => {
                     return Ok(QualificationOutcome {
@@ -709,6 +735,13 @@ impl ManagedBrowser {
         let observation = self
             .observe(page, &baseline, prompt)
             .map_err(|_| io::Error::other("E_FIXTURE_OBSERVE"))?;
+        // A collapsed message must match its full content, not its visible
+        // prefix, and its expand-control label is never part of the prompt.
+        for mismatch in ["Literal input:", &format!("{prompt}\nShow more")] {
+            if self.observe(page, &baseline, mismatch)?.user_matches {
+                return Err(io::Error::other("E_MESSAGE_MATCH_FIXTURE"));
+            }
+        }
         match tracker.observe(observation).map_err(io::Error::other)? {
             Progress::Completed(text) if text == "fixture response" => {
                 self.call("Page.setDocumentContent", json!({"frameId":frame["frameTree"]["frame"]["id"],"html":include_str!("dom/fixture_stop.html")}), Some(&page.session))?;

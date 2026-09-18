@@ -1,7 +1,7 @@
 //! Login and explicit qualification worker. Browser IPC stays off the reactor.
 use crate::ledger::{Admission, Ledger};
 use cxweb_browser_adapter::{
-    LoginObservation, ManagedBrowser, ManagedPage, ModelSurfaceDiagnostic,
+    LoginObservation, ManagedBrowser, ManagedPage, ModelSurfaceDiagnostic, QualificationDiagnostic,
 };
 use cxweb_codex_adapter::{
     envelope::{self, ValidatedOutput},
@@ -32,6 +32,8 @@ pub struct ControlStatus {
     pub text_qualified_model: Option<String>,
     #[serde(default)]
     pub qualification_evidence: Option<String>,
+    #[serde(default)]
+    pub qualification_diagnostic: Option<QualificationDiagnostic>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,6 +56,7 @@ impl Default for ControlStatus {
             model_discovery_diagnostic: None,
             text_qualified_model: None,
             qualification_evidence: None,
+            qualification_diagnostic: None,
         }
     }
 }
@@ -325,6 +328,7 @@ impl Control {
                                 if qualify_text && status.phase == "awaiting_qualification" {
                                     status.text_qualified_model = None;
                                     status.qualification_evidence = None;
+                                    status.qualification_diagnostic = None;
                                     let selected = observed_routes
                                         .iter()
                                         .filter(|(model, _)| model.selected)
@@ -385,14 +389,16 @@ impl Control {
                                         Err(code) => { let _ = reply.send(Err(code)); continue; }
                                     };
                                     let mut submission_intent = false;
-                                    let outcome = match browser.qualify_candidate(identity, &model.label, &prompt, || {
+                                    let result = browser.qualify_candidate(identity, &model.label, &prompt, || {
                                         runtime.block_on(async {
                                             ledger.transition(&nonce, TurnState::ObservedBaseline).await?;
                                             ledger.transition(&nonce, TurnState::Submitting).await
                                         }).map_err(std::io::Error::other)?;
                                         submission_intent = true;
                                         Ok(())
-                                    }) {
+                                    });
+                                    status.qualification_diagnostic = browser.qualification_diagnostic();
+                                    let outcome = match result {
                                         Ok(outcome) if outcome.candidate_label == model.label => {
                                             outcome
                                         }
