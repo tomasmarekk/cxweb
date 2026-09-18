@@ -466,7 +466,7 @@ impl ManagedBrowser {
         }
     }
 
-    fn open_temporary_chat(&mut self) -> io::Result<ManagedPage> {
+    pub fn open_temporary_chat(&mut self) -> io::Result<ManagedPage> {
         let value = self.call(
             "Target.createTarget",
             json!({"url":"https://chatgpt.com/?temporary-chat=true","newWindow":false}),
@@ -619,7 +619,27 @@ impl ManagedBrowser {
     }
 
     pub fn close_page(&mut self, page: ManagedPage) -> io::Result<()> {
-        self.call("Target.closeTarget", json!({"targetId":page.target}), None)?;
+        self.close_page_checked(&page)
+    }
+
+    /// Keep the page lease until closure is confirmed, so cleanup can be retried.
+    pub fn close_page_checked(&mut self, page: &ManagedPage) -> io::Result<()> {
+        let result = self.call("Target.closeTarget", json!({"targetId":page.target}), None);
+        if result.is_ok_and(|result| result["success"] == true) {
+            return Ok(());
+        }
+        // A user may already have closed the owned tab. Confirm absence rather
+        // than claiming cleanup from an error or dropping the lease blindly.
+        let targets = self.call("Target.getTargets", json!({}), None)?;
+        let targets = targets["targetInfos"]
+            .as_array()
+            .ok_or_else(|| io::Error::other("E_BROWSER_RELEASE"))?;
+        if targets
+            .iter()
+            .any(|target| target["targetId"] == page.target)
+        {
+            return Err(io::Error::other("E_BROWSER_RELEASE"));
+        }
         Ok(())
     }
 

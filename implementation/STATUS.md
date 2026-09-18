@@ -189,6 +189,25 @@ cleanup. This is synthetic DOM evidence; no live prompt was sent.
 
 ## Additional implementation and evidence
 
+- Added `ManagedDriver`, a real private-pipe implementation of the coordinator's
+  `BrowserDriver` interface. Its owner thread serializes preparation, submission,
+  observation and cleanup, retains the instance/profile lock and allocates a
+  separate Temporary Chat target per admitted turn. The full canonical history
+  remains supplied by the coordinator; no browser history is shared across turns.
+- Runtime-owned bindings restrict installation/account/workspace/epoch/routes.
+  Activation must provide an independent DOM scope verifier, checked before
+  preparation, submission and observation. No production verifier or login-to-
+  driver ownership handoff is wired yet; this is not an activation claim.
+- Attempted sends are latched, queues and owned targets are bounded, and cleanup
+  commands remain queued after a waiter disappears. Failed tab closure retains
+  ownership rather than silently freeing a session slot. Adapter closure now
+  requires acknowledgement or confirmed target absence.
+- Four driver contract tests passed for scope boundaries, route validation,
+  queue overload and dropped cleanup waiters. All 73 runtime tests passed before
+  the final cleanup refinement; the four targeted tests and workspace Clippy
+  passed afterward. The Chrome 153 synthetic probe passed with confirmed target
+  closure. Actual native-client execution through this driver remains untested.
+
 The user confirmed the release UI after commit e29fc9a: five effort candidates,
 effort four selected, and Temporary Chat verified. This is authenticated manual
 evidence for discovery and selected-state verification, not generation or Codex
