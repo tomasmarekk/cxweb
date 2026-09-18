@@ -17,6 +17,27 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Composer integrity correction (2026-09-18)
+
+- The user confirmed five effort candidates and Temporary Chat, then reported
+  `E_COMPOSER_MISMATCH` during the explicit text test. Send was not clicked.
+- Replaced CDP live typing with the browser's plain-text editing command in the
+  empty focused editor. A reviewed competitor comment identifies live-typing
+  Markdown transformations as a failure mode; its implementation was not copied.
+- The send guard still requires exact content. It additionally recognizes plain
+  paragraph boundaries as single newlines when layout-derived `innerText` differs.
+  It preserves blank lines and spaces and refuses unknown rich nodes in this
+  fallback. No whitespace trimming or delimiter removal was introduced.
+- Four new guard regressions passed, together with all eight existing JavaScript
+  tests. Browser-adapter tests passed (six tests, one opt-in test ignored).
+  Workspace Clippy, formatting and diff checks passed. Release CLI and daemon
+  builds passed. The synthetic Chrome 153.0.8010.48 probe passed literal insertion,
+  guarded sending and response attribution; an earlier probe exited during Chrome
+  startup. These tests do not establish the cause or resolution on the live page.
+- Restarted the runtime and rediscovered five candidates with Temporary Chat
+  verified. A fresh user-initiated text test is pending; no live generation was
+  submitted during this correction. Codex routing remains disabled.
+
 ## Observed environment (2026-09-17)
 
 - Windows x64; Rust/Cargo 1.97.0.

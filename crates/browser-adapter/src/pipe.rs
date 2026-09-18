@@ -524,12 +524,16 @@ impl ManagedBrowser {
         if self.dom(page, include_str!("dom/focus.js"), vec![])? != true {
             return Err(io::Error::other("E_COMPOSER_FOCUS"));
         }
-        // Prompt is a CDP string argument, never executable JavaScript.
-        self.call(
-            "Input.insertText",
-            json!({"text":prompt}),
-            Some(&page.session),
-        )?;
+        // Keep literal input out of the editor's live-typing shortcuts. The
+        // prompt remains a CDP argument, never executable JavaScript.
+        if self.dom(
+            page,
+            include_str!("dom/insert_prompt.js"),
+            vec![json!(prompt)],
+        )? != true
+        {
+            return Err(io::Error::other("E_COMPOSER_INSERT"));
+        }
         Ok(())
     }
 
