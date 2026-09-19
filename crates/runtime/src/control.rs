@@ -12,6 +12,14 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::{mpsc, oneshot};
 
+fn replacement_error(error: &std::io::Error) -> &'static str {
+    match error.to_string().as_str() {
+        "E_BROWSER_OTHER_PAGES" => "E_BROWSER_OTHER_PAGES",
+        "E_BROWSER_BUSY" => "E_BROWSER_BUSY",
+        _ => "E_BROWSER_RELEASE",
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ControlStatus {
@@ -261,25 +269,47 @@ impl Control {
                     }
                     // Reconnect never replays a qualification request.
                     if connect && status.phase == "browser_unavailable" {
-                        page = None;
-                        browser = None;
-                        status = ControlStatus::default();
-                        observed_routes.clear();
-                        observed_scope = None;
+                        // A failed DOM/pipe observation cannot authorize killing
+                        // a live browser and its uncertain qualification tabs.
+                        match browser.as_ref().map(ManagedBrowser::has_exited) {
+                            Some(Ok(false)) if page.is_some() => {
+                                // Reobserve the same page below; do not recreate it.
+                            }
+                            Some(Err(_)) => {
+                                let _ = reply.send(Err("E_BROWSER_RELEASE"));
+                                continue;
+                            }
+                            None | Some(Ok(true)) | Some(Ok(false)) => {
+                                if let Some(current) = browser.as_mut()
+                                    && let Err(error) = current.close_for_replacement(None)
+                                {
+                                    let _ = reply.send(Err(replacement_error(&error)));
+                                    continue;
+                                }
+                                page = None;
+                                browser = None;
+                                status = ControlStatus::default();
+                                observed_routes.clear();
+                                observed_scope = None;
+                            }
+                        }
                     }
                     if connect
                         && (page.is_none()
                             || (status.phase == "authenticating"
                                 && page.as_ref().is_some_and(ManagedPage::is_hidden)))
                     {
-                        let opened = (|| {
-                            if page.as_ref().is_some_and(ManagedPage::is_hidden) {
-                                if let Some(current) = browser.as_mut() {
-                                    current.close().map_err(|_| "E_BROWSER_RELEASE")?;
-                                }
-                                page = None;
-                                browser = None;
+                        if page.as_ref().is_some_and(ManagedPage::is_hidden) {
+                            if let Some(current) = browser.as_mut()
+                                && let Err(error) = current.close_for_replacement(page.as_ref())
+                            {
+                                let _ = reply.send(Err(replacement_error(&error)));
+                                continue;
                             }
+                            page = None;
+                            browser = None;
+                        }
+                        let opened = (|| {
                             if browser.is_none() {
                                 browser = Some(
                                     ManagedBrowser::launch(&executable, &paths.profile, true)
@@ -313,9 +343,19 @@ impl Control {
                             Ok(())
                         })();
                         if let Err(error) = opened {
-                            page = None;
-                            browser = None;
-                            status = ControlStatus::default();
+                            // Keep a live owner on launch/navigation failure;
+                            // dropping it would kill other retained targets.
+                            status = ControlStatus {
+                                phase: if browser.is_some() {
+                                    "browser_unavailable"
+                                } else {
+                                    "disconnected"
+                                }
+                                .into(),
+                                ..Default::default()
+                            };
+                            observed_routes.clear();
+                            observed_scope = None;
                             let _ = reply.send(Err(error));
                             continue;
                         }
@@ -331,6 +371,7 @@ impl Control {
                                 .close_login_window(page)
                                 .map_err(|error| match error.to_string().as_str() {
                                     "E_BROWSER_BUSY" => "E_BROWSER_BUSY",
+                                    "E_BROWSER_OTHER_PAGES" => "E_BROWSER_OTHER_PAGES",
                                     "E_LOGIN_REQUIRED" => "E_LOGIN_REQUIRED",
                                     _ => "E_BROWSER_RELEASE",
                                 }),
@@ -345,18 +386,22 @@ impl Control {
                     let restore_background = (background && browser.is_none() && page.is_none())
                         || match (browser.as_mut(), page.as_ref()) {
                             (Some(browser), Some(current)) => {
-                                matches!(browser.page_exists(current), Ok(false))
+                                matches!(browser.has_exited(), Ok(true))
+                                    || matches!(browser.page_exists(current), Ok(false))
                             }
                             _ => false,
                         };
                     if restore_background {
+                        if let Some(current) = browser.as_mut()
+                            && let Err(error) = current.close_for_replacement(None)
+                        {
+                            let _ = reply.send(Err(replacement_error(&error)));
+                            continue;
+                        }
                         // A closed login window does not discard the saved
                         // session. Replace only a positively absent target;
                         // transport timeouts never trigger a second browser.
                         let restored = (|| {
-                            if let Some(current) = browser.as_mut() {
-                                current.close()?;
-                            }
                             page = None;
                             browser = None;
                             let mut managed =

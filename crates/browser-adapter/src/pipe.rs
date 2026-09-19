@@ -347,8 +347,55 @@ impl ManagedBrowser {
             .any(|target| target["targetId"] == page.target))
     }
 
+    pub fn has_exited(&self) -> io::Result<bool> {
+        self.process.has_exited()
+    }
+
+    /// Inventory failure is not evidence that an owned browser is disposable.
+    pub fn ensure_no_other_pages(&mut self, allowed: Option<&ManagedPage>) -> io::Result<()> {
+        let result = self.call("Target.getTargets", json!({}), None)?;
+        check_replacement_targets(
+            &result,
+            allowed.map(|page| page.target.as_str()),
+            self.login_keeper.as_ref().map(|page| page.target.as_str()),
+        )
+    }
+
+    /// Preserve unrelated tabs and drafts when replacing a background session.
+    /// The caller must retain this owner if any step fails.
+    pub fn close_for_replacement(&mut self, allowed: Option<&ManagedPage>) -> io::Result<()> {
+        if self.has_exited()? {
+            return Ok(());
+        }
+        self.ensure_no_other_pages(allowed)?;
+        if let Some(page) = allowed
+            && self.page_exists(page)?
+        {
+            match self
+                .dom(page, include_str!("dom/replacement_idle.js"), vec![])?
+                .as_str()
+            {
+                Some("idle") => (),
+                Some("busy") => return Err(io::Error::other("E_BROWSER_BUSY")),
+                _ => return Err(io::Error::other("E_BROWSER_RELEASE")),
+            }
+            self.close_page_checked(page)?;
+        }
+        // Recheck after target closure. A newly opened tab must not be closed
+        // just because it was absent from the earlier inventory.
+        self.ensure_no_other_pages(None)?;
+        self.close()
+    }
+
     pub fn close_login_window(&mut self, page: &ManagedPage) -> io::Result<()> {
         if page.hidden {
+            return Ok(());
+        }
+        if self.has_exited()? {
+            return Ok(());
+        }
+        self.ensure_no_other_pages(Some(page))?;
+        if !self.page_exists(page)? {
             return Ok(());
         }
         let observation = self.login_observation(page)?;
@@ -1903,9 +1950,114 @@ fn read_frame(input: &mut impl BufRead) -> io::Result<Vec<u8>> {
     }
 }
 
+fn check_replacement_targets(
+    result: &Value,
+    allowed: Option<&str>,
+    keeper: Option<&str>,
+) -> io::Result<()> {
+    let invalid = || io::Error::other("E_BROWSER_TARGETS");
+    let targets = result["targetInfos"].as_array().ok_or_else(invalid)?;
+    let mut seen = std::collections::HashSet::new();
+    let mut other_page = false;
+    for target in targets {
+        let id = target["targetId"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .ok_or_else(invalid)?;
+        let kind = target["type"]
+            .as_str()
+            .filter(|kind| !kind.is_empty())
+            .ok_or_else(invalid)?;
+        if !seen.insert(id) {
+            return Err(invalid());
+        }
+        // Workers and iframe targets are not independently retained tabs.
+        let blank_keeper = Some(id) == keeper && target["url"] == "about:blank";
+        if kind == "page" && Some(id) != allowed && !blank_keeper {
+            other_page = true;
+        }
+    }
+    if other_page {
+        Err(io::Error::other("E_BROWSER_OTHER_PAGES"))
+    } else {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn replacement_preserves_other_tabs_even_after_login_is_closed() {
+        let inventory = json!({"targetInfos":[
+            {"targetId":"login", "type":"page"},
+            {"targetId":"test", "type":"page"},
+            {"targetId":"worker", "type":"service_worker"}
+        ]});
+        assert_eq!(
+            check_replacement_targets(&inventory, Some("login"), None)
+                .unwrap_err()
+                .to_string(),
+            "E_BROWSER_OTHER_PAGES"
+        );
+        let only_test = json!({"targetInfos":[{"targetId":"test", "type":"page"}]});
+        for allowed in [None, Some("login")] {
+            assert_eq!(
+                check_replacement_targets(&only_test, allowed, None)
+                    .unwrap_err()
+                    .to_string(),
+                "E_BROWSER_OTHER_PAGES"
+            );
+        }
+        assert!(check_replacement_targets(&only_test, Some("test"), None).is_ok());
+        assert!(
+            check_replacement_targets(
+                &json!({"targetInfos":[{"targetId":"worker", "type":"service_worker"}]}),
+                None,
+                None
+            )
+            .is_ok()
+        );
+        assert!(check_replacement_targets(&json!({"targetInfos":[]}), None, None).is_ok());
+        let keeper =
+            json!({"targetInfos":[{"targetId":"keeper", "type":"page", "url":"about:blank"}]});
+        assert!(check_replacement_targets(&keeper, None, Some("keeper")).is_ok());
+        assert!(check_replacement_targets(&keeper, None, Some("different-target")).is_err());
+        for url in [
+            json!("https://chatgpt.com/"),
+            json!("about:blank#changed"),
+            Value::Null,
+        ] {
+            let mut navigated = keeper.clone();
+            navigated["targetInfos"][0]["url"] = url;
+            assert_eq!(
+                check_replacement_targets(&navigated, None, Some("keeper"))
+                    .unwrap_err()
+                    .to_string(),
+                "E_BROWSER_OTHER_PAGES"
+            );
+        }
+    }
+
+    #[test]
+    fn incomplete_or_ambiguous_inventory_never_permits_replacement() {
+        for inventory in [
+            json!({}),
+            json!({"targetInfos":null}),
+            json!({"targetInfos":[{"targetId":"login"}]}),
+            json!({"targetInfos":[{"type":"page"}]}),
+            json!({"targetInfos":[{"targetId":"", "type":"page"}]}),
+            json!({"targetInfos":[{"targetId":"login", "type":""}]}),
+            json!({"targetInfos":[{"targetId":"login", "type":"page"}, {"targetId":"login", "type":"page"}]}),
+        ] {
+            assert_eq!(
+                check_replacement_targets(&inventory, Some("login"), None)
+                    .unwrap_err()
+                    .to_string(),
+                "E_BROWSER_TARGETS"
+            );
+        }
+    }
     fn default_scope() -> ScopeSurface {
         ScopeSurface {
             account: Some("fixture@example.invalid".into()),
@@ -1951,6 +2103,117 @@ mod tests {
                 }),
                 ..ScopeDiagnostic::default()
             },
+        }
+    }
+    #[test]
+    #[ignore = "requires an installed Chrome; creates fresh diagnostic profiles"]
+    fn browser_replacement_preserves_tabs_and_drafts() {
+        let executable = cxweb_platform::state::installed_browser().unwrap();
+        for offscreen in [false, true] {
+            let profile = std::env::temp_dir().join(format!(
+                "cxweb-replacement-{}-{}-{offscreen}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            cxweb_platform::state::protected_directory(&profile).unwrap();
+            let mut browser = if offscreen {
+                ManagedBrowser::launch_offscreen(&executable, &profile)
+            } else {
+                ManagedBrowser::launch(&executable, &profile, false)
+            }
+            .unwrap();
+            assert!(!browser.has_exited().unwrap());
+            // The real login flow keeps one owned empty target alive after its
+            // last visible window closes. It is not an unrelated user tab.
+            browser.login_keeper = Some(browser.open_hidden_page("about:blank", false).unwrap());
+            let login = browser.open_hidden_page("about:blank", true).unwrap();
+            let retained = browser.open_hidden_page("about:blank", true).unwrap();
+            for allowed in [None, Some(&login)] {
+                assert_eq!(
+                    browser
+                        .close_for_replacement(allowed)
+                        .unwrap_err()
+                        .to_string(),
+                    "E_BROWSER_OTHER_PAGES"
+                );
+                assert!(browser.page_exists(&login).unwrap());
+                assert!(browser.page_exists(&retained).unwrap());
+                assert!(!browser.has_exited().unwrap());
+            }
+            browser.close_page_checked(&login).unwrap();
+            assert_eq!(
+                browser
+                    .close_for_replacement(Some(&login))
+                    .unwrap_err()
+                    .to_string(),
+                "E_BROWSER_OTHER_PAGES"
+            );
+            assert!(browser.page_exists(&retained).unwrap());
+            let frame = browser
+                .call("Page.getFrameTree", json!({}), Some(&retained.session))
+                .unwrap();
+            for content in [
+                "<textarea id='prompt-textarea'>unfinished draft</textarea>",
+                "<textarea id='prompt-textarea'></textarea><button data-testid='stop-button'>Stop</button>",
+            ] {
+                let html = format!(
+                    "<!doctype html><form>{content}<button aria-haspopup='menu' data-tone='neutral'>Fixture</button></form>"
+                );
+                browser
+                    .call(
+                        "Page.setDocumentContent",
+                        json!({"frameId":frame["frameTree"]["frame"]["id"],"html":html}),
+                        Some(&retained.session),
+                    )
+                    .unwrap();
+                assert_eq!(
+                    browser
+                        .close_for_replacement(Some(&retained))
+                        .unwrap_err()
+                        .to_string(),
+                    "E_BROWSER_BUSY"
+                );
+                assert!(browser.page_exists(&retained).unwrap());
+                assert!(!browser.has_exited().unwrap());
+            }
+            for content in [
+                "<p>Unknown page</p>",
+                "<button data-testid='login-button'>Log in</button><textarea>draft</textarea>",
+                "<div id='challenge-stage'></div><input type='password'>",
+            ] {
+                browser.call("Page.setDocumentContent", json!({"frameId":frame["frameTree"]["frame"]["id"],"html":format!("<!doctype html>{content}")}), Some(&retained.session)).unwrap();
+                assert_eq!(
+                    browser
+                        .close_for_replacement(Some(&retained))
+                        .unwrap_err()
+                        .to_string(),
+                    "E_BROWSER_RELEASE"
+                );
+                assert!(browser.page_exists(&retained).unwrap());
+            }
+            for content in [
+                "<button data-testid='login-button'>Log in</button>",
+                "<div id='challenge-stage'></div>",
+                "<textarea id='prompt-textarea'></textarea>",
+            ] {
+                browser.call("Page.setDocumentContent", json!({"frameId":frame["frameTree"]["frame"]["id"],"html":format!("<!doctype html>{content}")}), Some(&retained.session)).unwrap();
+                assert_eq!(
+                    browser
+                        .dom(&retained, include_str!("dom/replacement_idle.js"), vec![])
+                        .unwrap(),
+                    "idle"
+                );
+            }
+            if offscreen {
+                browser.call("Page.setDocumentContent", json!({"frameId":frame["frameTree"]["frame"]["id"],"html":"<!doctype html><button data-testid='login-button'>Log in</button>"}), Some(&retained.session)).unwrap();
+            }
+            browser.close_for_replacement(Some(&retained)).unwrap();
+            assert!(browser.has_exited().unwrap());
+            // A dead owner can be released even when no pipe observation works.
+            browser.close_for_replacement(None).unwrap();
         }
     }
     #[test]

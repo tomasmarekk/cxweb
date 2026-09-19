@@ -21,6 +21,37 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Browser replacement preserves retained pages (2026-09-20)
+
+- Background/login transitions now check the target inventory before releasing
+  the browser. Other tabs, including retained uncertain qualification pages,
+  prevent replacement. The known login keeper is exempt only while its exact
+  target still reports `about:blank`. Malformed inventories and duplicate target
+  identities cannot authorize closure. The inventory is checked again after the
+  selected target closes; this is not an atomic lock against external navigation.
+- A background page must be idle before explicit replacement. Drafts and active
+  responses remain open. Recognized login/verification surfaces without a composer
+  can transition to visible sign-in; unknown markup and credential forms cannot.
+  This check reads no credential values and does not complete any verification.
+- The process owner checks its actual Windows process handle. A transport failure
+  no longer discards a live browser. Reconnect reobserves the same tracked page;
+  a positively exited process can be released without a successful CDP observation.
+  Launch/transition failures retain the owner instead of killing its other tabs.
+- The desktop explains the extra-tab refusal in English and does not retry the
+  action or claim background success. A new test covers this error receipt.
+- The opt-in regression ran against installed Chrome 153.0.8010.48 using fresh
+  headless and offscreen profiles. It exercised retained tabs, a closed login
+  target, the login keeper, drafts, active responses, unknown markup, empty
+  composers, login/challenge fixtures and confirmed process exit. No account,
+  saved production profile or ChatGPT desktop application was used. Portable
+  evidence: `integration-tests/compatibility/browser-replacement-windows.json`.
+- Verification: 197 workspace tests passed (5 opt-in tests ignored by the default
+  run); the new real-browser test passed separately; all 27 desktop UI tests,
+  workspace Clippy with warnings denied, formatting and diff checks passed.
+  Release CLI, daemon and desktop builds succeeded. These results do not certify
+  live authentication, the actual Codex App picker
+  or production browser handoff/activation.
+
 ## Desktop target selection and actual preflight UI (2026-09-20)
 
 - Desktop details now include explicit executable, CODEX_HOME and working-directory

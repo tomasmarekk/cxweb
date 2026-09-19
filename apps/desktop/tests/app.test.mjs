@@ -266,6 +266,20 @@ test('a busy browser preserves its window and releases controls without retries'
   assert.equal(ui.nodes.get('background').disabled, false);
 });
 
+test('other browser tabs prevent background transition without an automatic retry', async () => {
+  const ui = panel(async command => {
+    if (command === 'background') throw 'E_BROWSER_OTHER_PAGES';
+    return { phase: 'awaiting_qualification' };
+  });
+  await flush();
+  await ui.nodes.get('background').click();
+  assert.deepEqual(ui.calls, ['status', 'background', 'status']);
+  assert.equal(ui.requests.at(-1).refresh, false);
+  assert.match(ui.nodes.get('error').textContent, /Other cxweb browser tabs.*left open/);
+  assert.equal(ui.nodes.get('background-status').hidden, true);
+  assert.equal(ui.nodes.get('background').disabled, false);
+});
+
 test('failed operation and unavailable receipt suppress old test actions', async () => {
   let failed = false;
   const ui = panel(async command => {

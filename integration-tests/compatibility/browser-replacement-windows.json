@@ -1,0 +1,28 @@
+{
+  "schema": "cxweb.browser-replacement.v1",
+  "date": "2026-09-20",
+  "result": "PASS",
+  "browser": "Chrome 153.0.8010.48",
+  "command": "cargo test -p cxweb-browser-adapter browser_replacement_preserves_tabs_and_drafts -- --ignored --nocapture",
+  "fixture": "Bundled synthetic markup in fresh protected browser profiles",
+  "modes": ["headless", "offscreen"],
+  "checks": {
+    "unrelated_tabs_preserved": true,
+    "retained_tab_preserved_after_login_closed": true,
+    "known_blank_login_keeper_allows_replacement": true,
+    "draft_preserved": true,
+    "active_response_preserved": true,
+    "unknown_page_refused": true,
+    "credential_form_refused_without_reading_values": true,
+    "empty_composer_recognized": true,
+    "login_and_challenge_without_composer_recognized": true,
+    "idle_session_closed": true,
+    "process_exit_confirmed": true,
+    "exited_owner_release_is_idempotent": true
+  },
+  "limits": [
+    "No live authentication, account generation, actual Codex App picker or production activation was tested.",
+    "The saved manual-login profile was not opened or modified.",
+    "Target inventory checks are not an atomic lock against external navigation."
+  ]
+}

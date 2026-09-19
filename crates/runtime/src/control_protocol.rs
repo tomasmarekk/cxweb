@@ -156,6 +156,7 @@ pub(crate) fn login_error(code: &str) -> &'static str {
         "E_MODEL_SELECT" => "E_MODEL_SELECT",
         "E_MODEL_LABEL" => "E_MODEL_LABEL",
         "E_BROWSER_BUSY" => "E_BROWSER_BUSY",
+        "E_BROWSER_OTHER_PAGES" => "E_BROWSER_OTHER_PAGES",
         "E_BROWSER_RELEASE" => "E_BROWSER_RELEASE",
         "E_LOGIN_REQUIRED" => "E_LOGIN_REQUIRED",
         "E_QUALIFICATION_PROTOCOL" => "E_QUALIFICATION_PROTOCOL",
@@ -182,6 +183,7 @@ fn login_failures_never_export_arbitrary_backend_text() {
         "E_USER_MESSAGE_MISMATCH",
         "E_MODEL_FIDELITY",
         "E_INVALID_TOOL_ENVELOPE",
+        "E_BROWSER_OTHER_PAGES",
     ] {
         assert_eq!(login_error(code), code);
     }

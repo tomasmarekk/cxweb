@@ -15,6 +15,7 @@ function showError(code) {
     E_CONTROL_UNAVAILABLE: 'The runtime is not responding. Check status again shortly.',
     E_CONTROL_BUSY: 'Another cxweb window is processing a request. Try again shortly.',
     E_BROWSER_BUSY: 'The sign-in page contains a draft or an active response. Finish or clear it before closing the window.',
+    E_BROWSER_OTHER_PAGES: 'Other cxweb browser tabs are still open. Finish or close them before changing browser mode. They have been left open.',
     E_LOGIN_REQUIRED: 'Complete sign-in before continuing in the background.',
     E_BROWSER_RELEASE: 'The browser could not close safely. Check status before trying again.',
     E_BACKGROUND_NAVIGATION: 'The saved session could not load in the background. Check status for sign-in or verification requirements.',

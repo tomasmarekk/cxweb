@@ -44,6 +44,14 @@ impl BrowserProcess {
     pub fn pid(&self) -> u32 {
         self.pid
     }
+    pub fn has_exited(&self) -> io::Result<bool> {
+        // SAFETY: this owns the process handle; the zero timeout never blocks.
+        match unsafe { WaitForSingleObject(self._process.as_raw_handle(), 0) } {
+            WAIT_OBJECT_0 => Ok(true),
+            WAIT_TIMEOUT => Ok(false),
+            _ => Err(io::Error::other("E_BROWSER_RELEASE")),
+        }
+    }
     pub fn background_bounds() -> (i32, i32, i32, i32) {
         crate::browser_window::bounds()
     }
