@@ -10,6 +10,15 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Inspect a reviewed native backend's selected home/cwd without generating or changing configuration.
+    NativePreflight {
+        #[arg(long)]
+        client: PathBuf,
+        #[arg(long)]
+        home: PathBuf,
+        #[arg(long)]
+        cwd: PathBuf,
+    },
     /// Isolated real browser gateway. Close the cxweb runtime first. Uses ChatGPT allowance.
     LiveProbe {
         #[arg(long)]
@@ -84,6 +93,17 @@ enum BrowserAction {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match Args::parse().command {
+        Command::NativePreflight { client, home, cwd } => {
+            #[cfg(windows)]
+            print_json(&serde_json::to_value(
+                cxweb_runtime::native_preflight::inspect(&client, &home, &cwd).await?,
+            )?);
+            #[cfg(not(windows))]
+            {
+                let _ = (client, home, cwd);
+                return Err("native preflight requires Windows".into());
+            }
+        }
         Command::LiveProbe {
             output,
             websocket,

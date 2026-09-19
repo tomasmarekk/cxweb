@@ -1,0 +1,31 @@
+{
+  "schema": "cxweb.preflight-release.v1",
+  "elapsedMs": 1538,
+  "report": {
+    "activation_eligible": false,
+    "assessment": {
+      "active_layers": [
+        "system",
+        "user"
+      ],
+      "auth_mode": "signed_out",
+      "configuration_compatible": false,
+      "conflicts": [
+        "subscription_auth_required"
+      ],
+      "disabled_layer_count": 0
+    },
+    "catalog_codec": "codex-model-info-0.155.1",
+    "client_build": "0.155.1",
+    "executable_sha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+    "executable_unchanged": true,
+    "model_requests": 0,
+    "remaining_checks": [
+      "target filesystem ownership and permissions",
+      "actual client picker and native coexistence",
+      "browser route and coding qualification"
+    ],
+    "user_config_unchanged": true
+  },
+  "result": "PASS"
+}

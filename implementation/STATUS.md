@@ -21,6 +21,66 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Native configuration preflight (2026-09-19)
+
+- Added `cxweb native-preflight --client <absolute executable> --home <absolute
+  selected home> --cwd <absolute project directory>`. It queries the reviewed
+  backend's `config/read`, `configRequirements/read` and `account/read` APIs
+  (`refreshToken:false`), rather than duplicating native configuration precedence
+  or opening native credential files. No model, login, config mutation or tool
+  operation is requested. The child is hidden and owned by this inspection.
+- Only the two reviewed executable SHA-256 fingerprints may start. The selected
+  user configuration's canonical file identity and original bytes must agree
+  with the native response and remain unchanged afterward. The executable is
+  fingerprinted again after inspection. Unknown binaries fail before execution.
+  Shutdown affects only the child; RPC deadlines, frame size and message count
+  are bounded. Server-originated actions are denied, and arbitrary native errors
+  are replaced with fixed error codes.
+- Results contain sanitized auth mode, fixed layer categories and conflict codes,
+  not account metadata, URLs, instructions, configuration contents or native
+  diagnostics. Existing route/catalog declarations, different providers, selected
+  profiles, unknown layers, relevant managed constraints and environment routing/
+  auth overrides block compatibility. Disabled project layers retain native
+  behavior. Unrelated native approval/sandbox requirements are not modified.
+- Native `config/read` includes serialized defaults without provenance. Tests
+  caught an initial false conflict from its default ChatGPT URL and empty profiles
+  table; only provenance-backed declarations now count as configured values.
+  Actual API-key fixture login and a bare OPENAI_API_KEY environment variable also
+  differ in `account/read`; environment overrides are therefore checked separately.
+- Both installed native backends passed ten isolated cases each: signed out,
+  synthetic API-key login, environment auth, user route, environment route,
+  custom provider, deprecated home policy file, static catalog, disabled project,
+  and an unreviewed executable. Input config/catalog/policy bytes were unchanged;
+  no user config was created when absent. The synthetic key was installed only by
+  the native login command inside disposable fixture homes. No real native account,
+  system policy, desktop UI or browser was used.
+- Windows source and both actual builds confirm CODEX_HOME/managed_config.toml is
+  ignored. Earlier documentation describing it as active is stale for these builds.
+  Tests now explicitly verify that behavior. Managed routing rejection is covered
+  by unit RPC fixtures; no actual system/cloud policy was changed for testing.
+- Evidence: `cli-0.155.1.preflight.json` and
+  `app-backend-0.155.0-alpha.9.2.preflight.json` under
+  `integration-tests/compatibility`. `scripts/probe-preflight.mjs` reproduces the
+  isolated checks. The five new assessment/RPC tests passed, alongside two existing
+  journal preflight regressions. Clippy with warnings denied and debug CLI build
+  passed. The final provenance scan was narrowed to fixed routing keys to avoid
+  quadratic work on unrelated configuration; its regression tests and Clippy passed.
+- Release CLI, daemon and desktop builds succeeded. A release preflight smoke
+  test against the actual CLI and the signed-out fixture passed in 1,538 ms,
+  including both executable hashes and configuration identity checks. This is one
+  local timing observation, not a general performance guarantee. Evidence:
+  `cli-0.155.1.preflight-release.json`.
+- This report covers exactly the selected backend/home/cwd/inherited environment,
+  without CLI overrides or an explicit selected profile. It does not discover all
+  existing terminals or certify another GUI process's environment. Native startup
+  may maintain its own logs/cache. Filesystem ownership/permission qualification,
+  actual App picker, native subscription coexistence and browser/coding gates still
+  prevent activation; a clean config assessment cannot enable production routing.
+- Reviewed official sources:
+  [configuration RPC contract](https://github.com/openai/codex/blob/3d2ee51ca2d5db578f328aa75e20aa22c0197c9a/codex-rs/app-server-protocol/src/protocol/v2/config.rs),
+  [native configuration loader](https://github.com/openai/codex/blob/3d2ee51ca2d5db578f328aa75e20aa22c0197c9a/codex-rs/config/src/loader/mod.rs),
+  [Windows legacy policy behavior](https://github.com/openai/codex/blob/3d2ee51ca2d5db578f328aa75e20aa22c0197c9a/codex-rs/config/src/loader/layer_io.rs).
+
 ## Client-specific catalogs and desktop target correction (2026-09-19)
 
 - Added independent catalog encoders for CLI 0.155.1 and App backend
