@@ -54,6 +54,28 @@ mod desktop {
             .map_err(str::to_owned)
     }
 
+    #[tauri::command]
+    async fn qualify_tools(state: tauri::State<'_, AppState>) -> Result<ControlStatus, String> {
+        state
+            .control
+            .as_ref()
+            .map_err(|e| e.to_string())?
+            .qualify_tools()
+            .await
+            .map_err(str::to_owned)
+    }
+
+    #[tauri::command]
+    async fn background(state: tauri::State<'_, AppState>) -> Result<ControlStatus, String> {
+        state
+            .control
+            .as_ref()
+            .map_err(|e| e.to_string())?
+            .background()
+            .await
+            .map_err(str::to_owned)
+    }
+
     pub fn run() {
         tauri::Builder::default()
             .setup(|app| {
@@ -79,7 +101,9 @@ mod desktop {
                 connect,
                 status,
                 qualify,
-                qualify_text
+                qualify_text,
+                qualify_tools,
+                background
             ])
             .run(tauri::generate_context!())
             .expect("cxweb desktop runtime");

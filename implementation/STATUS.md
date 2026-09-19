@@ -21,6 +21,39 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Desktop background and tool-test controls (2026-09-20)
+
+- The desktop now exposes the existing private runtime actions for background
+  transition and tool-protocol qualification. Tauri handlers, generated command
+  permissions and the local main-window capability are connected; no remote UI
+  receives these commands. No arbitrary command, path or browser script is accepted.
+- A detected foreground session offers Continue in background. The existing
+  controller checks the official signed-in page and refuses a draft or active
+  response before closing it. Loading or verification challenges are displayed
+  separately from a recognized background session. Closing the control window
+  continues to leave the separate runtime alive.
+- A successful text receipt with verified Temporary Chat offers one explicit tool
+  protocol test. The disclosure describes allowance use and fixture-only tool calls;
+  the result still states that execution through Codex needs verification. The UI
+  does not install routing or treat either diagnostic as production qualification.
+- All action buttons share pending-state exclusion. Duplicate and cross-action
+  clicks cannot enqueue another test or close the browser during a pending test.
+  After an error, the UI retrieves the cached runtime state with refresh:false,
+  without repeating browser work. An unavailable receipt suppresses stale success
+  and test controls while keeping the original failure visible.
+- Validation: all 19 Node desktop UI tests passed, covering action sequencing,
+  qualification prerequisites, uncertain submissions, background loading/failure,
+  stale-state recovery and command permissions. All four real Windows-pipe
+  RemoteControl tests passed, including runtime survival when the UI waiter closes.
+  Desktop Clippy with warnings denied, formatting and diff checks passed.
+  The release desktop build succeeded.
+- These checks use synthetic browser results and do not establish a new live
+  background or tool-generation pass. Windows Computer Use refused observation
+  of the existing Chrome window because its URL could not be established reliably.
+  The separate local static UI preview was also unavailable in the in-app browser
+  (net::ERR_BLOCKED_BY_CLIENT); its temporary server was stopped. Neither blocked
+  surface was accessed through another method. No ChatGPT desktop was launched.
+
 ## Original target path identity in native preflight (2026-09-20)
 
 - Native inspection now checks the original executable, home and workspace paths

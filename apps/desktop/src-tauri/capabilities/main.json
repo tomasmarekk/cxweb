@@ -3,5 +3,5 @@
   "identifier": "main",
   "description": "Only the bundled local control window can request login/status.",
   "windows": ["main"],
-  "permissions": ["core:default", "allow-connect", "allow-status", "allow-qualify", "allow-qualify-text"]
+  "permissions": ["core:default", "allow-connect", "allow-status", "allow-qualify", "allow-qualify-text", "allow-qualify-tools", "allow-background"]
 }

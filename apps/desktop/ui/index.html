@@ -14,6 +14,15 @@
     <p>Send one fixed test message in a new Temporary Chat using the selected route. This uses your ChatGPT allowance.</p>
     <button id="test-text" class="primary">Send text test</button>
   </section>
+  <section id="tool-qualification" hidden>
+    <p>Send one tool protocol test in a new Temporary Chat. This uses your ChatGPT allowance. The test requests sample tool calls; it does not execute tools or change files.</p>
+    <button id="test-tools" class="primary">Send tool protocol test</button>
+  </section>
+  <section id="background-control" hidden>
+    <p>Close the sign-in window and check whether the saved session works in the background. Closing the cxweb control window keeps its runtime running.</p>
+    <button id="background" class="secondary">Continue in background</button>
+  </section>
+  <p id="background-status" class="disclosure" hidden>The ChatGPT session is running in the background. No browser window needs to remain open.</p>
   <p class="disclosure">Unofficial integration. Task content is sent to ChatGPT. Your account terms apply.</p>
   <details><summary>Details and privacy</summary><div class="details-body">
     <p>ChatGPT Web routes support text and coding tools. Built-in Codex web search is unavailable on these routes; use a native Codex model for web search.</p>

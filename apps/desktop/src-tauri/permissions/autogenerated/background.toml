@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-background"
+description = "Enables the background command without any pre-configured scope."
+commands.allow = ["background"]
+
+[[permission]]
+identifier = "deny-background"
+description = "Denies the background command without any pre-configured scope."
+commands.deny = ["background"]
