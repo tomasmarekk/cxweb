@@ -16,6 +16,10 @@ enum Command {
         output: PathBuf,
         #[arg(long)]
         websocket: bool,
+        #[arg(long)]
+        client_build: String,
+        #[arg(long)]
+        coding: bool,
     },
     /// Invoke a fixed operation through the same private runtime as the desktop.
     BrowserControl {
@@ -58,7 +62,12 @@ enum Command {
         websocket_output: Option<PathBuf>,
     },
     /// Emit diagnostic model metadata for an isolated model_catalog_json.
-    ProbeCatalog,
+    ProbeCatalog {
+        #[arg(long)]
+        client_build: Option<String>,
+        #[arg(long)]
+        coding: bool,
+    },
 }
 
 #[derive(Clone, clap::ValueEnum)]
@@ -75,10 +84,17 @@ enum BrowserAction {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match Args::parse().command {
-        Command::LiveProbe { output, websocket } => {
+        Command::LiveProbe {
+            output,
+            websocket,
+            client_build,
+            coding,
+        } => {
+            let codec = cxweb_codex_adapter::catalog_codec::CatalogCodec::for_build(&client_build)
+                .ok_or("E_CATALOG_CLIENT_BUILD")?;
             #[cfg(windows)]
             {
-                let report = cxweb_runtime::live_probe::serve(&output, websocket, async {
+                let report = cxweb_runtime::live_probe::serve(&output, websocket, codec, coding, async {
                     use tokio::io::AsyncReadExt;
                     let mut stdin = tokio::io::stdin();
                     let mut byte = [0];
@@ -88,7 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             #[cfg(not(windows))]
             {
-                let _ = (output, websocket);
+                let _ = (output, websocket, codec, coding);
                 return Err("live browser qualification requires Windows".into());
             }
         }
@@ -238,9 +254,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let result = cxweb_codex_adapter::config::inspect(&text)?;
             print_json(&serde_json::to_value(result)?);
         }
-        Command::ProbeCatalog => print_json(
-            &serde_json::json!({"models":[cxweb_codex_adapter::catalog::synthetic_model()]}),
-        ),
+        Command::ProbeCatalog {
+            client_build,
+            coding,
+        } => {
+            let model = if let Some(build) = client_build {
+                let codec = cxweb_codex_adapter::catalog_codec::CatalogCodec::for_build(&build)
+                    .ok_or("E_CATALOG_CLIENT_BUILD")?;
+                codec.encode(&cxweb_codex_adapter::catalog_codec::CatalogRoute {
+                    id: "webbridge/diagnostic".into(),
+                    observed_label: "Diagnostic".into(),
+                    effort: "medium".into(),
+                    coding,
+                })?
+            } else {
+                if coding {
+                    return Err("--coding requires --client-build".into());
+                }
+                cxweb_codex_adapter::catalog::synthetic_model()
+            };
+            print_json(&serde_json::json!({"models":[model]}));
+        }
         Command::Probe {
             output,
             tools_output,

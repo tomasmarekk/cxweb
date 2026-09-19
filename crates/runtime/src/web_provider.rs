@@ -104,6 +104,7 @@ pub struct CoordinatorProvider {
     coordinator: Coordinator,
     scope: Arc<ProviderScope>,
     routes: Arc<BTreeSet<String>>,
+    catalog: Option<Arc<crate::catalog_snapshot::CatalogSnapshot>>,
 }
 impl CoordinatorProvider {
     /// The activation owner supplies only routes whose codec and browser driver
@@ -136,7 +137,30 @@ impl CoordinatorProvider {
             coordinator,
             scope: Arc::new(scope),
             routes: Arc::new(routes),
+            catalog: None,
         })
+    }
+
+    /// Publish an immutable, explicitly qualified snapshot for selected clients.
+    /// Callers must replace the provider on account/workspace/epoch changes.
+    pub fn with_catalog(
+        mut self,
+        generation: u64,
+        qualified: Vec<(
+            cxweb_codex_adapter::catalog_codec::CatalogCodec,
+            Vec<cxweb_codex_adapter::catalog_codec::CatalogRoute>,
+        )>,
+    ) -> Result<Self, &'static str> {
+        if self.catalog.is_some() {
+            return Err("E_CATALOG_SNAPSHOT");
+        }
+        self.catalog = Some(Arc::new(crate::catalog_snapshot::CatalogSnapshot::new(
+            &self.scope,
+            &self.routes,
+            generation,
+            qualified,
+        )?));
+        Ok(self)
     }
 
     pub(crate) async fn execute(&self, request: WebRequest) -> Result<Response, &'static str> {
@@ -203,6 +227,12 @@ impl CoordinatorProvider {
     }
 }
 impl WebProvider for CoordinatorProvider {
+    fn catalog(
+        &self,
+        codec: cxweb_codex_adapter::catalog_codec::CatalogCodec,
+    ) -> Option<crate::catalog_proxy::OwnedCatalog> {
+        self.catalog.as_ref()?.for_client(codec)
+    }
     fn validate_warmup(&self, request: &WebRequest) -> Result<(), &'static str> {
         request.identity.as_ref().ok_or("E_REQUEST_IDENTITY")?;
         let bytes = serde_json::to_vec(&request.payload).map_err(|_| "E_INVALID_REQUEST")?;
@@ -313,7 +343,7 @@ mod tests {
             Box::pin(async { Ok(()) })
         }
     }
-    fn fixture(waiting: bool) -> (Gateway, Arc<Browser>) {
+    fn provider_fixture(waiting: bool) -> (CoordinatorProvider, Arc<Browser>) {
         let browser = Arc::new(Browser {
             sends: AtomicUsize::new(0),
             stops: AtomicUsize::new(0),
@@ -334,6 +364,10 @@ mod tests {
             vec!["webbridge/test".into()],
         )
         .unwrap();
+        (provider, browser)
+    }
+    fn fixture(waiting: bool) -> (Gateway, Arc<Browser>) {
+        let (provider, browser) = provider_fixture(waiting);
         (
             Gateway::new(
                 12345,
@@ -343,6 +377,37 @@ mod tests {
             browser,
         )
     }
+    #[test]
+    fn catalog_requires_explicit_publication_and_does_not_mutate_existing_provider() {
+        use cxweb_codex_adapter::catalog_codec::{CatalogCodec, CatalogRoute};
+        let (provider, browser) = provider_fixture(false);
+        assert!(provider.catalog(CatalogCodec::Cli01551).is_none());
+        let published = provider
+            .clone()
+            .with_catalog(
+                1,
+                vec![(
+                    CatalogCodec::Cli01551,
+                    vec![CatalogRoute {
+                        id: "webbridge/test".into(),
+                        observed_label: "Fixture text".into(),
+                        effort: "high".into(),
+                        coding: false,
+                    }],
+                )],
+            )
+            .unwrap();
+        assert!(provider.catalog(CatalogCodec::Cli01551).is_none());
+        assert!(published.catalog(CatalogCodec::App01550Alpha92).is_none());
+        assert_eq!(
+            published.catalog(CatalogCodec::Cli01551).unwrap().entries[0]["slug"],
+            "webbridge/test"
+        );
+        assert!(published.with_catalog(2, vec![]).is_err());
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 0);
+        assert!(browser.sessions.lock().unwrap().is_empty());
+    }
+
     fn request(base: &str, turn: &str, context: &str, stream: bool) -> Request<Body> {
         Request::builder().method("POST").uri(format!("{base}/responses"))
             .header("host", "127.0.0.1:12345")

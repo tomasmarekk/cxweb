@@ -24,7 +24,12 @@ const bridge = resolve('target/debug/cxweb.exe');
 const descriptor = live ? join(work, 'runtime', 'connection.json') : join(work, 'connection.json');
 const identityPath = join(work, 'identity.json');
 const websocketPath = join(work, 'websocket.json');
-const server = spawn(bridge, live ? ['live-probe', '--output', descriptor, ...(liveWebsocket ? ['--websocket'] : [])] : ['probe', '--output', descriptor, '--identity-output', identityPath, ...(websocket ? ['--websocket-output', websocketPath] : [])], {
+const clientVersion = execFileSync(executable, ['--version'], { encoding: 'utf8', windowsHide: true }).trim();
+const clientBuild = /^codex-cli (\S+)$/.exec(clientVersion)?.[1];
+assert.ok(clientBuild, 'native client reports its build');
+const catalogArgs = ['--client-build', clientBuild];
+const diagnosticCatalog = execFileSync(bridge, ['probe-catalog', ...catalogArgs], { windowsHide: true });
+const server = spawn(bridge, live ? ['live-probe', '--output', descriptor, ...catalogArgs, ...(liveWebsocket ? ['--websocket'] : [])] : ['probe', '--output', descriptor, '--identity-output', identityPath, ...(websocket ? ['--websocket-output', websocketPath] : [])], {
   windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
 });
 let serverOutput = '';
@@ -48,7 +53,8 @@ try {
     try { connection = JSON.parse(await readFile(descriptor, 'utf8')); break; } catch { await delay(50); }
   }
   assert.ok(connection?.base_url?.endsWith('/backend-api/codex'));
-  const catalog = live ? JSON.stringify(connection.catalog) : execFileSync(bridge, ['probe-catalog'], { windowsHide: true });
+  const catalog = live ? JSON.stringify(connection.catalog) : diagnosticCatalog;
+  evidence.catalogCodec = connection.catalog_codec ?? `codex-model-info-${clientBuild}`;
   await writeFile(join(home, 'catalog.json'), catalog);
   await writeFile(join(home, 'config.toml'), `openai_base_url = ${JSON.stringify(connection.base_url)}\nmodel_catalog_json = ${JSON.stringify(join(home, 'catalog.json').replaceAll('\\', '/'))}\n`);
   const env = { ...process.env };

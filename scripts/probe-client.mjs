@@ -35,7 +35,12 @@ if (readProbe) for (const name of ['pwsh.exe', 'powershell.exe']) {
 }
 const bridge = resolve('target/debug/cxweb.exe');
 const descriptor = live ? join(work, 'runtime', 'connection.json') : join(work, 'probe.json');
-const server = spawn(bridge, live ? ['live-probe', '--output', descriptor, ...(liveWebsocket ? ['--websocket'] : [])] : ['probe', '--output', descriptor, '--tools-output', join(work, 'tools.json'), '--identity-output', join(work, 'identity.json')], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+const clientVersion = execFileSync(executable, ['--version'], { encoding: 'utf8', windowsHide: true }).trim();
+const clientBuild = /^codex-cli (\S+)$/.exec(clientVersion)?.[1];
+assert.ok(clientBuild, 'native client reports its build');
+const catalogArgs = ['--client-build', clientBuild, ...(readProbe || captureTools ? ['--coding'] : [])];
+const diagnosticCatalog = JSON.parse(execFileSync(bridge, ['probe-catalog', ...catalogArgs], { encoding: 'utf8', windowsHide: true }));
+const server = spawn(bridge, live ? ['live-probe', '--output', descriptor, ...catalogArgs, ...(liveWebsocket ? ['--websocket'] : [])] : ['probe', '--output', descriptor, '--tools-output', join(work, 'tools.json'), '--identity-output', join(work, 'identity.json')], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
 let serverOutput = '', serverError = '';
 server.stdout.on('data', data => { if (serverOutput.length < 16000) serverOutput += data; });
 server.stderr.on('data', data => { if (serverError.length < 16000) serverError += data; });
@@ -55,9 +60,8 @@ try {
   assert.ok(endpoint.endsWith('/backend-api/codex'), 'probe uses the subscription-shaped product route');
   evidence.routeLayout = 'subscription backend-api/codex';
   const route = live ? connection.model : 'webbridge/diagnostic';
-  const catalog = live ? connection.catalog : JSON.parse(execFileSync(bridge, ['probe-catalog'], { encoding: 'utf8', windowsHide: true }));
-  if (readProbe || captureTools) catalog.models[0].shell_type = 'unified_exec';
-  if (patchProbe || captureTools) catalog.models[0].apply_patch_tool_type = 'freeform';
+  const catalog = live ? connection.catalog : diagnosticCatalog;
+  evidence.catalogCodec = connection.catalog_codec ?? `codex-model-info-${clientBuild}`;
   await writeFile(join(home, 'catalog.json'), JSON.stringify(catalog));
   // Exercise the client's default optional hosted-search definition. cxweb
   // reports hosted search as unavailable on its text/coding route; no global

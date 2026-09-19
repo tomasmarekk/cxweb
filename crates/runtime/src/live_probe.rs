@@ -94,6 +94,8 @@ fn output_format_observation(payload: &Value) -> Value {
 pub async fn serve(
     output: &Path,
     websocket: bool,
+    codec: cxweb_codex_adapter::catalog_codec::CatalogCodec,
+    coding: bool,
     stop: impl Future<Output = ()> + Send + 'static,
 ) -> Result<Value, &'static str> {
     if !output.is_absolute() || output.exists() {
@@ -258,14 +260,13 @@ pub async fn serve(
         let websocket_requests = Arc::new(AtomicUsize::new(0));
         let warmups = Arc::new(AtomicUsize::new(0));
         let gateway = Gateway::new(listener.local_addr().map_err(|_| "E_PROBE_LISTENER")?.port(), native, Arc::new(ProbeProvider { provider, failures: failures.clone(), search_requests: search_requests.clone(), output_formats: output_formats.clone(), websocket_requests: websocket_requests.clone(), warmups: warmups.clone() }));
-        let mut model = cxweb_codex_adapter::catalog::synthetic_model();
-        model["slug"] = json!(ROUTE);
-        model["display_name"] = json!(format!("ChatGPT Web · {label}"));
-        model["description"] = json!(format!("ChatGPT Web · {label}. Authenticated diagnostic; hosted search unavailable"));
-        model["default_reasoning_level"] = json!(effort);
-        model["supported_reasoning_levels"] = json!([{"effort":effort,"description":label}]);
+        // Exercise the exact reviewed encoder in isolation; this diagnostic
+        // catalog does not publish a production qualification snapshot.
+        let model = codec.encode(&cxweb_codex_adapter::catalog_codec::CatalogRoute {
+            id: ROUTE.into(), observed_label: label.clone(), effort, coding,
+        })?;
         let mut descriptor = std::fs::OpenOptions::new().write(true).create_new(true).open(output).map_err(|_| "E_PROBE_OUTPUT")?;
-        descriptor.write_all(json!({"base_url":gateway.base_url(),"model":ROUTE,"catalog":{"models":[model]},"live":true}).to_string().as_bytes()).map_err(|_| "E_PROBE_OUTPUT")?;
+        descriptor.write_all(json!({"base_url":gateway.base_url(),"model":ROUTE,"catalog":{"models":[model]},"catalog_codec":codec.id(),"live":true}).to_string().as_bytes()).map_err(|_| "E_PROBE_OUTPUT")?;
         descriptor.sync_all().map_err(|_| "E_PROBE_OUTPUT")?;
         let server_stop = CancellationToken::new();
         let server = axum::serve(listener, gateway.clone().router()).with_graceful_shutdown(server_stop.clone().cancelled_owned()).into_future();

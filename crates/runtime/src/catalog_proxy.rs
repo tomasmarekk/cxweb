@@ -9,7 +9,42 @@ use cxweb_codex_adapter::{catalog::append_owned, strict_json};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+/// Reduce untrusted transport metadata to a reviewed encoding identifier before
+/// crossing the web-provider boundary. Unknown clients keep native passthrough.
+pub(crate) fn select_codec(
+    query: Option<&str>,
+    headers: &HeaderMap,
+) -> Option<cxweb_codex_adapter::catalog_codec::CatalogCodec> {
+    let query = query.filter(|query| query.len() <= 4096 && query.is_ascii())?;
+    // Reject malformed percent escapes instead of accepting the URL decoder's
+    // replacement characters or an ambiguous alternate spelling of a key.
+    for (index, byte) in query.bytes().enumerate() {
+        if byte == b'%'
+            && !query
+                .as_bytes()
+                .get(index + 1..index + 3)
+                .is_some_and(|pair| pair.iter().all(u8::is_ascii_hexdigit))
+        {
+            return None;
+        }
+    }
+    let mut url = reqwest::Url::parse("http://localhost/").ok()?;
+    url.set_query(Some(query));
+    let mut pairs = url.query_pairs().filter(|(key, _)| key == "client_version");
+    let (_, version) = pairs.next()?;
+    if pairs.next().is_some() {
+        return None;
+    }
+    let mut agents = headers.get_all("user-agent").iter();
+    let agent = agents.next()?.to_str().ok()?;
+    if agents.next().is_some() {
+        return None;
+    }
+    cxweb_codex_adapter::catalog_codec::CatalogCodec::select(&version, agent)
+}
+
 /// Created by the qualified web provider, never from client-supplied metadata.
+#[derive(Clone)]
 pub struct OwnedCatalog {
     pub codec: String,
     pub web_scope: String,
@@ -143,6 +178,53 @@ mod tests {
     use cxweb_codex_adapter::catalog::synthetic_model;
     use http_body_util::BodyExt;
     use serde_json::json;
+
+    #[test]
+    fn codec_selection_requires_one_valid_version_and_matching_full_build() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "user-agent",
+            "codex_cli_rs/0.155.1 (Windows 11)".parse().unwrap(),
+        );
+        for query in [
+            "client_version=0.155.1",
+            "extra=kept&client_version=0.155.1",
+            "client_%76ersion=0.155.1",
+        ] {
+            assert_eq!(
+                select_codec(Some(query), &headers),
+                Some(cxweb_codex_adapter::catalog_codec::CatalogCodec::Cli01551)
+            );
+        }
+        for query in [
+            None,
+            Some(""),
+            Some("client_version=0.155.0"),
+            Some("client_version=0.156.0"),
+            Some("client_version=0.155.1&client_%76ersion=0.155.1"),
+            Some("client_version=0.155.1&extra=%0"),
+            Some("client_version=0.155.1#fragment"),
+        ] {
+            assert!(select_codec(query, &headers).is_none());
+        }
+        headers.append("user-agent", "codex_cli_rs/0.155.1".parse().unwrap());
+        assert!(select_codec(Some("client_version=0.155.1"), &headers).is_none());
+        headers.remove("user-agent");
+        assert!(select_codec(Some("client_version=0.155.1"), &headers).is_none());
+        headers.insert(
+            "user-agent",
+            "codex_desktop/0.155.0-alpha.9.2".parse().unwrap(),
+        );
+        assert_eq!(
+            select_codec(Some("client_version=0.155.0"), &headers),
+            Some(cxweb_codex_adapter::catalog_codec::CatalogCodec::App01550Alpha92)
+        );
+        headers.insert(
+            "user-agent",
+            "codex_desktop/0.155.0-alpha.9.3".parse().unwrap(),
+        );
+        assert!(select_codec(Some("client_version=0.155.0"), &headers).is_none());
+    }
 
     fn snapshot(generation: u64) -> OwnedCatalog {
         OwnedCatalog {

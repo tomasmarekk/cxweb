@@ -2,6 +2,7 @@
 #[cfg(windows)]
 mod browser_scope;
 pub mod catalog_proxy;
+mod catalog_snapshot;
 #[cfg(windows)]
 pub mod config_journal;
 #[cfg(windows)]

@@ -1,4 +1,5 @@
 pub mod catalog;
+pub mod catalog_codec;
 pub mod config;
 pub mod envelope;
 mod output_format;

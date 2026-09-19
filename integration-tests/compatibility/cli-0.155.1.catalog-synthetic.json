@@ -1,0 +1,30 @@
+{
+  "schema": "cxweb.client-probe.v1",
+  "client": "codex-cli 0.155.1",
+  "synthetic": true,
+  "actualPicker": "NOT RUN",
+  "authentication": "synthetic API key in isolated child environment",
+  "events": [
+    "model/list accepted owned model",
+    "thread/start selected owned model",
+    "turn/start completed through loopback",
+    "expected synthetic assistant text received"
+  ],
+  "routeLayout": "subscription backend-api/codex",
+  "catalogCodec": "codex-model-info-0.155.1",
+  "executableSha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+  "model": {
+    "id": "webbridge/diagnostic",
+    "model": "webbridge/diagnostic",
+    "displayName": "ChatGPT Web · Diagnostic",
+    "hidden": false,
+    "defaultReasoningEffort": "medium"
+  },
+  "selectedReasoningEffort": null,
+  "identity": {
+    "raw_identifiers_recorded": false,
+    "verified_native_identity": true
+  },
+  "result": "PASS backend-only synthetic test",
+  "executableUnchanged": true
+}

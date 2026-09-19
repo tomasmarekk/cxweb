@@ -21,6 +21,55 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Client-specific catalogs and desktop target correction (2026-09-19)
+
+- Added independent catalog encoders for CLI 0.155.1 and App backend
+  0.155.0-alpha.9.2. Rows are built from observed English labels, route IDs,
+  explicit effort and separately qualified tool support. They do not clone native
+  instructions, context limits, image support, service tiers or compaction data.
+- Dynamic catalog selection requires one `client_version` query value and one
+  matching full-build User-Agent. Native queries omit prerelease suffixes, so the
+  full build is necessary to distinguish reviewed alpha builds. Duplicate,
+  malformed, missing and unknown selectors leave the native catalog unchanged.
+  Only the selected codec enum crosses into the web provider; transport headers
+  and native authorization do not.
+- Coordinator providers now accept an explicit immutable catalog snapshot. It is
+  bound to installation/account/workspace/epoch and generation, checks executable
+  route membership, rejects duplicate/contradictory entries, and publishes only
+  the client codecs explicitly supplied by the activation owner. Construction
+  does not itself qualify a route. Production activation remains disabled.
+- The isolated client harnesses use the reviewed encoder selected from the actual
+  executable's version, including for live tests. Both actual native backends
+  accepted their text catalog, selected the owned model and completed synthetic
+  requests. Both also passed the authenticated WebSocket read/apply_patch/final
+  cycle with their coding catalogs: each recorded three web requests, two
+  upgrades, zero native inference frames, zero provider failures and confirmed
+  browser shutdown.
+- Evidence: `cli-0.155.1.catalog-synthetic.json`,
+  `app-backend-0.155.0-alpha.9.2.catalog-synthetic.json` and
+  `cli-0.155.1.catalog-live-tools.json` plus
+  `app-backend-0.155.0-alpha.9.2.catalog-live-tools.json` in
+  `integration-tests/compatibility`.
+  These are static isolated catalogs; they do not establish authenticated native
+  subscription coexistence or the graphical App picker.
+- Validation: 25 adapter and 99 runtime tests passed before the final provider
+  publication regression was added. All nine catalog-related runtime tests then
+  passed, including that regression and contradictory cross-client route
+  rejection. Clippy with warnings denied, formatting, JavaScript syntax, debug
+  CLI build and diff checks passed.
+- A separate desktop experiment launched the installed package's `ChatGPT.exe`
+  in an isolated home/UI directory. The user rejected this target as ChatGPT
+  desktop. The test-owned instance was closed; the original window was preserved.
+  The experiment did not verify picker selection or a round trip and is not
+  counted as a Codex App result. Windows currently registers the installed
+  `OpenAI.Codex` package's main application as `ChatGPT.exe` with a ChatGPT shortcut;
+  this registration alone does not satisfy the requested App UI qualification.
+  No further such desktop instance is launched by the backend tests.
+- Source review: the official pinned
+  [model metadata contract](https://github.com/openai/codex/blob/3d2ee51ca2d5db578f328aa75e20aa22c0197c9a/codex-rs/protocol/src/openai_models.rs),
+  [catalog query version](https://github.com/openai/codex/blob/3d2ee51ca2d5db578f328aa75e20aa22c0197c9a/codex-rs/models-manager/src/lib.rs)
+  and [full-build User-Agent](https://github.com/openai/codex/blob/3d2ee51ca2d5db578f328aa75e20aa22c0197c9a/codex-rs/login/src/auth/default_client.rs).
+
 ## Owned Responses WebSocket routing (2026-09-19)
 
 - Added owned Responses dispatch to the existing native WebSocket relay. Native
