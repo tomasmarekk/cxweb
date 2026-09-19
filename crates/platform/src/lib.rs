@@ -14,4 +14,6 @@ pub mod loopback;
 #[cfg(windows)]
 pub mod scheduled_runtime;
 #[cfg(windows)]
+pub mod secret;
+#[cfg(windows)]
 pub mod state;

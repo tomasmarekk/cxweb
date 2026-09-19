@@ -21,6 +21,34 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Checkpoint encryption and current-user key protection (2026-09-19)
+
+- Added a bounded `wbr1:` checkpoint codec using AES-256-GCM, a fresh random
+  96-bit nonce and authenticated installation/task/account/workspace/route/epoch/
+  codec context. Invalid prefixes, malformed encodings, altered ciphertext,
+  different keys and any changed scope dimension are refused before plaintext
+  is returned. The plaintext limit is 2 MiB; no compression is involved.
+- Persistent 256-bit keys are wrapped with current-user Windows DPAPI and stored
+  through private atomic file creation. DPAPI is non-interactive and never uses
+  machine-wide protection or a plaintext fallback. The installation identity is
+  included in key-wrapping context. Existing key files are checked for identity
+  and permission changes; unreadable, corrupt or mismatched state is never
+  regenerated or repaired. Raw key and DPAPI output buffers use zeroization.
+- Added `aes-gcm` 0.10.3, with ten newly locked packages in total, plus direct
+  use of the existing `zeroize` dependency. Unrelated locked versions are unchanged.
+  This is a checkpoint storage primitive: the model-generated checkpoint schema,
+  coordinator purpose, native v2 output and restored-history expansion still need
+  to be connected and qualified. Production compaction remains explicitly refused.
+- Validation: actual local DPAPI wrapping/unwrapping passed; tests cover reopening
+  the stored key, tampering, wrong binding/key, size bounds and preservation of
+  corrupted key state. `cargo test --workspace` passed 177 tests with two opt-in
+  tests ignored. After adding the final key-file recheck, both checkpoint tests
+  and workspace Clippy with warnings denied passed again. Formatting and diff
+  checks passed. Release CLI, daemon and desktop builds all succeeded. No account
+  credentials or native authentication files were read.
+- References: [Windows current-user DPAPI](https://learn.microsoft.com/en-us/windows/win32/api/dpapi/nf-dpapi-cryptprotectdata)
+  and [reviewed RustCrypto AES-GCM implementation](https://docs.rs/aes-gcm/0.10.3/aes_gcm/).
+
 ## Actual compaction transport and context boundaries (2026-09-19)
 
 - Both reviewed native backends use remote compaction v2 by default: the ordinary

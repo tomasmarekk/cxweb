@@ -4,6 +4,8 @@ mod browser_scope;
 pub mod catalog_proxy;
 mod catalog_snapshot;
 #[cfg(windows)]
+pub mod checkpoint;
+#[cfg(windows)]
 pub mod config_journal;
 mod context_boundary;
 #[cfg(windows)]
