@@ -20,6 +20,7 @@ pub mod live_probe;
 pub mod managed_driver;
 pub mod native;
 mod native_ws;
+mod probe_ws;
 #[cfg(windows)]
 mod qualification;
 #[cfg(windows)]
@@ -31,7 +32,7 @@ pub mod web_provider;
 use axum::{
     Router,
     body::Bytes,
-    extract::{DefaultBodyLimit, State},
+    extract::{DefaultBodyLimit, State, WebSocketUpgrade},
     http::{HeaderMap, Method, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::any,
@@ -48,6 +49,7 @@ pub struct ProbeState {
     pub observations: Arc<Mutex<Vec<&'static str>>>,
     registry_capture: Option<std::path::PathBuf>,
     identity_capture: Option<std::path::PathBuf>,
+    websocket_capture: Option<probe_ws::Capture>,
 }
 
 impl ProbeState {
@@ -58,6 +60,7 @@ impl ProbeState {
             observations: Arc::default(),
             registry_capture: None,
             identity_capture: None,
+            websocket_capture: None,
         }
     }
     pub fn base_url(&self) -> String {
@@ -78,6 +81,11 @@ impl ProbeState {
         self.identity_capture = Some(path);
         self
     }
+
+    pub fn with_websocket_capture(mut self, path: std::path::PathBuf) -> std::io::Result<Self> {
+        self.websocket_capture = Some(probe_ws::Capture::create(path)?);
+        Ok(self)
+    }
 }
 
 pub fn diagnostic_router(state: ProbeState) -> Router {
@@ -97,6 +105,7 @@ fn error(status: StatusCode, code: &str) -> Response {
 
 async fn probe(
     State(state): State<ProbeState>,
+    upgrade: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
     method: Method,
     uri: Uri,
     headers: HeaderMap,
@@ -114,6 +123,25 @@ async fn probe(
     };
     match (method, path) {
         (Method::GET, "responses") => {
+            if let Some(capture) = state.websocket_capture.clone() {
+                let Ok(upgrade) = upgrade else {
+                    return StatusCode::BAD_REQUEST.into_response();
+                };
+                let correlation = |name| {
+                    headers
+                        .get(name)
+                        .and_then(|value| value.to_str().ok())
+                        .map(str::to_owned)
+                };
+                let session = correlation("session-id");
+                let thread = correlation("thread-id");
+                drop(headers);
+                record(&state, "diagnostic_websocket");
+                return upgrade
+                    .max_message_size(1024 * 1024)
+                    .max_frame_size(1024 * 1024)
+                    .on_upgrade(move |socket| probe_ws::serve(socket, capture, session, thread));
+            }
             // Native Codex explicitly negotiates HTTP fallback on 426. This
             // synthetic server has no WebSocket implementation. A generic 404
             // caused five unnecessary connection retries in the actual TUI.

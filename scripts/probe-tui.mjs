@@ -10,8 +10,9 @@ import assert from 'node:assert/strict';
 
 const executable = process.argv[2];
 const live = process.argv[3] === '--live';
-if (!executable || !isAbsolute(executable) || process.argv.length !== (live ? 4 : 3)) {
-  throw new Error('Usage: node scripts/probe-tui.mjs <absolute codex executable> [--live]');
+const websocket = process.argv[3] === '--websocket';
+if (!executable || !isAbsolute(executable) || process.argv.length !== (live || websocket ? 4 : 3)) {
+  throw new Error('Usage: node scripts/probe-tui.mjs <absolute codex executable> [--live | --websocket]');
 }
 const root = resolve('.local/probes');
 await mkdir(root, { recursive: true });
@@ -21,7 +22,8 @@ await mkdir(home); await mkdir(cwd);
 const bridge = resolve('target/debug/cxweb.exe');
 const descriptor = live ? join(work, 'runtime', 'connection.json') : join(work, 'connection.json');
 const identityPath = join(work, 'identity.json');
-const server = spawn(bridge, live ? ['live-probe', '--output', descriptor] : ['probe', '--output', descriptor, '--identity-output', identityPath], {
+const websocketPath = join(work, 'websocket.json');
+const server = spawn(bridge, live ? ['live-probe', '--output', descriptor] : ['probe', '--output', descriptor, '--identity-output', identityPath, ...(websocket ? ['--websocket-output', websocketPath] : [])], {
   windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
 });
 let serverOutput = '';
@@ -64,7 +66,10 @@ try {
   evidence.clientExitCode = await new Promise((resolve, reject) => {
     client.once('error', reject); client.once('exit', resolve);
   });
-  if (!live) {
+  if (websocket) {
+    evidence.websocket = JSON.parse(await readFile(websocketPath, 'utf8'));
+    assert.ok(evidence.websocket.frames.some(frame => !frame.warmup && frame.session_matches_handshake && frame.thread_matches_handshake && frame.turn_id_matches_metadata));
+  } else if (!live) {
     evidence.identity = JSON.parse(await readFile(identityPath, 'utf8'));
     assert.equal(evidence.identity.verified_native_identity, true);
     assert.equal(evidence.identity.raw_identifiers_recorded, false);

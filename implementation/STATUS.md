@@ -21,6 +21,30 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Native WebSocket wire observation (2026-09-19)
+
+- `probe --websocket-output` and `probe-tui.mjs --websocket` add an explicitly
+  synthetic WebSocket diagnostic. No browser or native upstream is connected.
+  The capture contains counts and correlation booleans only, without prompts,
+  response content, identifiers or authorization. Production routing is unchanged.
+- Unmodified CLI 0.155.1 passed an actual picker selection and two visible fixed
+  response turns over WebSocket. Five frames were observed: initial empty-input
+  warmup (`generate=false`), a three-item request referencing the warmup response,
+  a separate auxiliary warmup, a full structured title request, and a one-item
+  continuation referencing the prior main response. The native client also
+  displayed the synthetic generated title in its resume instruction.
+- Every observed frame carried reviewed `client_metadata`, matching handshake
+  session/thread fields and consistent turn metadata including context-window
+  identity. `stream` was present. This confirms the installed client's wire
+  behavior; it does not certify browser WebSockets or native coexistence.
+  Report: `cli-0.155.1.tui-websocket-synthetic.json`.
+- All 87 runtime tests passed, including real loopback WebSocket warmup/continuation,
+  content/auth exclusion and structural capture redaction. Runtime/CLI Clippy
+  with warnings denied, debug build, script syntax and diff checks passed.
+- Next: implement per-frame owned routing, validated connection-local history
+  reconstruction, warmup without browser submission, cancellation/draining and
+  mixed native forwarding, then test the actual App/CLI builds through that path.
+
 ## Structured output and auxiliary CLI requests (2026-09-19)
 
 - Structural diagnostics confirmed that the six rejected auxiliary TUI requests
