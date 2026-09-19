@@ -502,6 +502,8 @@ impl Control {
                                                 "E_MODEL_CLOSE" => "E_MODEL_CLOSE",
                                                 "E_MODEL_PARSE" => "E_MODEL_PARSE",
                                                 "E_MODEL_RESULT" => "E_MODEL_RESULT",
+                                                "E_MODEL_RESTORE" => "E_MODEL_RESTORE",
+                                                "E_BROWSER_BUSY" => "E_BROWSER_BUSY",
                                                 _ => "E_MODEL_DISCOVERY",
                                             };
                                             let _ = reply.send(Err(code));

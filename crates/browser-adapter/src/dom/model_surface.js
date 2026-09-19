@@ -20,6 +20,7 @@ function () {
   }).filter(candidate => candidate.label && candidate.identity);
   const sliderContainer = [...document.querySelectorAll('[data-model-reasoning-effort-slider]')].filter(visible).at(-1);
   const slider = sliderContainer?.querySelector('[role="slider"]');
+  const menuOptions = candidates;
   const min = Number(slider?.getAttribute('aria-valuemin'));
   const max = Number(slider?.getAttribute('aria-valuemax'));
   const value = Number(slider?.getAttribute('aria-valuenow'));
@@ -34,11 +35,11 @@ function () {
     const control = controls.at(-1);
     if (!control) throw new Error('E_MODEL_MENU');
     const selectedLabel = (control?.textContent ?? 'ChatGPT route').replace(/\s+/g, ' ').trim().slice(0, 90) || 'ChatGPT route';
-    candidates = Array.from({ length: max - min + 1 }, (_, index) => ({
-      label: `${selectedLabel} · effort ${index + 1}`.slice(0, 120),
-      identity: `reasoning-slider:${min}:${max}:${min + index}`,
-      selected: min + index === value
-    }));
+    candidates = [{
+      label: `${selectedLabel} · ${readEffortLabel(slider, min, max, value)}`,
+      identity: `reasoning-slider:${min}:${max}:${value}`,
+      selected: true
+    }];
   }
   const unique = [];
   const seen = new Set();
@@ -68,6 +69,8 @@ function () {
     candidates: unique,
     temporary_chat: temporary,
     diagnostic: {
+      menu_options: menuOptions,
+      effort_range: rangeValid ? { min, max, current: value } : null,
       switcher_expanded: expanded === 'true' ? true : expanded === 'false' ? false : null,
       visible_roots: roots.length,
       candidate_nodes: nodes.length,

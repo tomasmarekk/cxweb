@@ -84,6 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "phase": status.phase,
                     "background_session": status.background_session,
                     "candidate_count": status.candidate_models.len(),
+                    "candidate_models": status.candidate_models,
                     "temporary_chat_verified": status.temporary_chat_available,
                     "text_verified": status.text_qualified_model.is_some(),
                     "tool_protocol_verified": status.tool_qualified_model.is_some(),

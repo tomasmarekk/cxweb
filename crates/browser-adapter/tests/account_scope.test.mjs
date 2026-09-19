@@ -32,7 +32,7 @@ test('profile opening chooses an actionable entry point and refuses obscured or 
   assert.equal(openProfiles({ expanded: 1 }), true);
   assert.equal(openProfiles({ expanded: 2 }).failure, 'E_ACCOUNT_AMBIGUOUS');
 });
-function scope(text, workspaces = [], expandedProfiles = 1) {
+function scope(text, workspaces = [], expandedProfiles = 1, controls = []) {
   class Visible { getClientRects() { return [1]; } }
   const workspaceNodes = workspaces.map(({ id, selected }) => Object.assign(new Visible(), {
     matches: () => selected, getAttribute: () => id
@@ -40,7 +40,11 @@ function scope(text, workspaces = [], expandedProfiles = 1) {
   const menu = Object.assign(new Visible(), {
     innerText: text,
     querySelector: selector => selector === '[data-workspace-id]' ? workspaceNodes[0] : null,
-    querySelectorAll: selector => selector.startsWith('[data-workspace-id]') ? workspaceNodes : []
+    querySelectorAll: selector => selector.startsWith('[data-workspace-id]') ? workspaceNodes
+      : selector.startsWith('button, a,') ? controls.map(({ label, role = 'menuitem', submenu = false }) => Object.assign(new Visible(), {
+        textContent: label, tagName: 'DIV',
+        getAttribute: name => name === 'role' ? role : name === 'aria-haspopup' && submenu ? 'menu' : null
+      })) : []
   });
   const profiles = Array.from({ length: expandedProfiles }, () => Object.assign(new Visible(), {
     getAttribute: name => name === 'aria-expanded' ? 'true' : 'account-menu'
@@ -74,6 +78,19 @@ test('missing workspace is never silently labeled personal', () => {
   const result = scope('fixture@example.invalid');
   assert.equal(result.account, 'fixture@example.invalid');
   assert.equal(result.workspace, null);
+});
+
+test('scope diagnostics expose only known control labels and plan markers', () => {
+  const result = scope('Private name\nPro\nprivate@example.invalid', [], 1, [
+    { label: 'Private name' }, { label: 'private@example.invalid' },
+    { label: 'Settings' }, { label: 'Help', submenu: true }
+  ]);
+  assert.deepEqual(Array.from(result.diagnostic.menu_controls), [
+    'menuitem:other:action', 'menuitem:other:action', 'menuitem:Settings:action', 'menuitem:Help:submenu'
+  ]);
+  assert.deepEqual(Array.from(result.diagnostic.workspace_markers), ['Pro']);
+  assert.equal(result.workspace, null);
+  assert.doesNotMatch(JSON.stringify(result.diagnostic), /Private name|private@example/);
 });
 
 test('multiple account or workspace candidates stay unqualified', () => {

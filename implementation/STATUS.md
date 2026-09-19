@@ -115,6 +115,39 @@ entry was visible, which is the expected evidence while activation remains absen
   They do not specify stable DOM identifiers; missing workspace metadata is not
   treated as proof of a personal workspace.
 
+## Observed effort labels and selection restoration (2026-09-19)
+
+- Replaced fabricated `effort 1` through `effort 5` labels with the actual
+  accessible labels of each selected slider position. Discovery visits each
+  position without sending a message and restores the original selection,
+  including after a failed read. A failed restoration invalidates discovery
+  with an explicit error. Drafts and active generations block this operation.
+- The current live English UI exposes Instant, Medium, High, Extra High and Pro.
+  These are observed slider routes, not five independently verified model
+  families. Separate advanced-menu choices were observed (Latest selected,
+  GPT-5.6 Sol and GPT-5.5); family selection/binding is still required before
+  publishing routes. No claim about underlying server weights is made.
+- The selected-position announcement must agree with the slider's numeric value
+  and range. Delayed hydration cannot assign the previous position's label to
+  the next one. Missing labels remain unqualified rather than getting a guessed
+  name. The new helper is bundled code; no dynamic script input was added.
+- Live background discovery restored Extra High, and one subsequent real text
+  qualification passed with exact submitted-message attribution and completed
+  assistant output. Browser/page language remained en-US. This is browser
+  transport evidence, not actual Codex picker or tool execution qualification.
+- Bounded account-menu diagnostics now distinguish known public controls from
+  redacted labels. The live menu shows Pro and no workspace selector/selected ID;
+  this does not establish a workspace. The email remains absent from diagnostics.
+- All 82 browser-adapter/runtime tests passed (one opt-in ignored); all 29 browser
+  and desktop JavaScript tests passed. A real Chrome off-screen fixture passed
+  delayed labels, restoration after a failed scan, preservation of an unsent
+  draft, exact submission, cancellation and owned-target cleanup. Initial native
+  taskbar-capable styles remain a previously recorded UX qualification gap.
+- Affected-crate Clippy with warnings denied and format/diff checks passed.
+  Release CLI, daemon and desktop builds succeeded.
+  Production integration remains disabled; workspace scope, model-family binding,
+  actual App/CLI integration and all remaining PRD gates are still open.
+
 ## Composer integrity correction (2026-09-18)
 
 - Added an explicit `browser-control test-tools` operation through the same

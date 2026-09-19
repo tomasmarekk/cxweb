@@ -10,6 +10,7 @@ function (expectedIdentity) {
   const sliders = [...containers[0].querySelectorAll('[role="slider"]')];
   if (sliders.length !== 1 || !(sliders[0] instanceof HTMLElement)) throw new Error('E_MODEL_SLIDER');
   const slider = sliders[0];
+  if (!['aria-valuemin', 'aria-valuemax', 'aria-valuenow'].every(name => slider.hasAttribute(name))) throw new Error('E_MODEL_SLIDER');
   const min = Number(slider.getAttribute('aria-valuemin'));
   const max = Number(slider.getAttribute('aria-valuemax'));
   const current = Number(slider.getAttribute('aria-valuenow'));
@@ -22,5 +23,7 @@ function (expectedIdentity) {
   const form = composer?.closest('form');
   const controls = form ? [...form.querySelectorAll('button[aria-haspopup="menu"][data-tone="neutral"], button[data-testid="model-switcher-dropdown-button"][aria-haspopup="menu"]')].filter(visible) : [];
   const label = (controls.at(-1)?.textContent ?? 'ChatGPT route').replace(/\s+/g, ' ').trim().slice(0, 90) || 'ChatGPT route';
-  return { min, max, current, target, label, candidate_label: `${label} · effort ${target - min + 1}`.slice(0, 120) };
+  let effortLabel = null;
+  try { effortLabel = readEffortLabel(slider, min, max, current); } catch { /* The label may hydrate after the numeric value. */ }
+  return { min, max, current, target, label, candidate_label: effortLabel ? `${label} · ${effortLabel}` : null };
 }

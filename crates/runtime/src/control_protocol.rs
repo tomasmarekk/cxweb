@@ -163,6 +163,7 @@ pub(crate) fn login_error(code: &str) -> &'static str {
         "E_MODEL_CLOSE" => "E_MODEL_CLOSE",
         "E_MODEL_PARSE" => "E_MODEL_PARSE",
         "E_MODEL_RESULT" => "E_MODEL_RESULT",
+        "E_MODEL_RESTORE" => "E_MODEL_RESTORE",
         _ => "E_LOGIN_OPERATION",
     }
 }

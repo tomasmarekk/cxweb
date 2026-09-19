@@ -14,7 +14,7 @@
 <div id="model-menu" role="group" data-testid="composer-intelligence-picker-content" hidden>
   <button role="menuitemradio" data-testid="model-fixture-text" aria-checked="true">Fixture text mode</button>
   <button role="menuitemradio" data-testid="model-fixture-reasoning" aria-checked="false">Fixture reasoning mode</button>
-  <div data-model-reasoning-effort-slider><input role="slider" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0"></div>
+  <div data-testid="composer-model-picker-slider-simple-view"><span id="fixture-effort-label">Standard, 1 of 2.</span><div data-model-reasoning-effort-slider><input role="slider" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0"></div></div>
 </div>
 <div data-turn-id-container="old-assistant"><section data-testid="conversation-turn-old" data-turn-id="old-assistant" data-turn="assistant"><div data-message-author-role="assistant"><div class="markdown">historical message must not be returned</div></div><button data-testid="copy-turn-action-button">Copy</button></section></div>
 <div id="prompt-textarea" contenteditable="true"></div><button type="button" data-testid="send-button">Send</button></form>
@@ -64,7 +64,14 @@ document.addEventListener('keydown', event => {
     const slider = event.target;
     const current = Number(slider.getAttribute('aria-valuenow'));
     const next = Math.max(0, Math.min(1, current + (event.key === 'ArrowRight' ? 1 : -1)));
-    setTimeout(() => slider.setAttribute('aria-valuenow', String(next)), 40);
+    setTimeout(() => {
+      slider.setAttribute('aria-valuenow', String(next));
+      // Delayed accessible text must not be paired with the new numeric value.
+      setTimeout(() => {
+        document.querySelector('#fixture-effort-label').textContent = next === 1 && document.body.dataset.fixtureEffortFailure === 'true'
+          ? 'Unqualified label' : `${next === 0 ? 'Standard' : 'Extended'}, ${next + 1} of 2.`;
+      }, 40);
+    }, 40);
   }
 });
 document.querySelector('[data-testid="send-button"]').onclick = () => {
