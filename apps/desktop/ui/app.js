@@ -4,6 +4,7 @@ const invoke = window.__TAURI__?.core.invoke;
 let phase = 'disconnected';
 let pending = false;
 let signInRequired = false;
+let discoveryPending = false;
 function showError(code) {
   const messages = {
     E_ALREADY_RUNNING: 'cxweb is already running. Use the existing app window.',
@@ -180,5 +181,40 @@ $('test-tools').addEventListener('click', async () => {
 $('background').addEventListener('click', async () => {
   if (pending || $('background-control').hidden) return;
   await runAction('background');
+});
+$('native-discover').addEventListener('click', async () => {
+  if (discoveryPending) return;
+  discoveryPending = true; $('native-discover').disabled = true;
+  const results = $('native-targets');
+  results.hidden = false; results.textContent = 'Inspecting local executable files…';
+  try {
+    const report = await invoke('native_discover');
+    results.replaceChildren();
+    const description = document.createElement('p');
+    description.textContent = report.candidates.length
+      ? 'Executable candidates found. Selecting a target and checking its configuration are still required.'
+      : 'No supported executable locations were found. A custom installation may need an explicit path.';
+    results.append(description);
+    const list = document.createElement('ul');
+    for (const candidate of report.candidates) {
+      const item = document.createElement('li');
+      const sources = candidate.sources.map(source => ({path_executable:'PATH', npm_installation:'npm installation', desktop_backend_cache:'App backend cache'})[source] || 'Other location').join(', ');
+      item.textContent = `${candidate.reviewed_build ? `Reviewed backend ${candidate.reviewed_build}` : 'Unreviewed backend'} (${sources}): ${candidate.executable}`;
+      list.append(item);
+    }
+    results.append(list);
+    if (report.diagnostics.length) {
+      const note = document.createElement('p');
+      note.textContent = `Some locations could not be inspected: ${report.diagnostics.join(', ')}.`;
+      results.append(note);
+    }
+    const scope = document.createElement('p');
+    scope.textContent = 'This inspection does not launch Codex, read credentials or change configuration. A cached App backend does not identify the backend used by a running Codex window.';
+    results.append(scope);
+  } catch {
+    results.textContent = 'Codex installations could not be inspected. Your connection has not been changed.';
+  } finally {
+    discoveryPending = false; $('native-discover').disabled = false;
+  }
 });
 if (invoke) check(false, false); else showError('E_DESKTOP_IPC');

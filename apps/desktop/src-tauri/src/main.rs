@@ -10,6 +10,11 @@ mod desktop {
     }
 
     #[tauri::command]
+    async fn native_discover() -> cxweb_runtime::native_discovery::Report {
+        cxweb_runtime::native_discovery::discover().await
+    }
+
+    #[tauri::command]
     async fn connect(state: tauri::State<'_, AppState>) -> Result<ControlStatus, String> {
         state
             .control
@@ -103,7 +108,8 @@ mod desktop {
                 qualify,
                 qualify_text,
                 qualify_tools,
-                background
+                background,
+                native_discover
             ])
             .run(tauri::generate_context!())
             .expect("cxweb desktop runtime");

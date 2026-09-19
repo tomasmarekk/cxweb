@@ -21,6 +21,42 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Read-only native executable discovery (2026-09-20)
+
+- Added `cxweb native-discover` and Find Codex installations in desktop details.
+  Both use the same read-only inventory: direct PATH executables, observed Windows
+  x64 npm loader layouts and the desktop backend cache. Script wrappers and package
+  hooks are never executed. Discovery does not open native credentials, inspect
+  conversation history, launch a client or change its configuration.
+- Candidate paths pass the existing original-path guard before filesystem reads
+  can follow an ancestor reparse point. Executables stay protected against writers
+  during bounded fingerprinting. Canonical duplicates merge their source labels;
+  different installations remain distinct. Only pinned binary hashes receive a
+  reviewed build/codec; unknown bytes are explicitly unreviewed. Relative PATH
+  entries, inaccessible/reparse targets and enumeration limits produce fixed
+  diagnostics without exporting raw environment values or OS errors.
+- The installed desktop cache contained four version directories but only one
+  remaining codex.exe. The live inventory found exactly the two expected reviewed
+  binaries: CLI 0.155.1 and App backend 0.155.0-alpha.9.2. An independent harness
+  reread each returned executable and confirmed its reported SHA-256. One target
+  identity diagnostic remained for an unsupported search location; discovery does
+  not claim every possible installation was inspected successfully.
+- Evidence: `integration-tests/compatibility/native-discovery-windows.json`,
+  reproduced by `node scripts/probe-native-discovery.mjs`. Portable evidence omits
+  user paths and environment values. The normal local UI/CLI output includes the
+  executable paths so a later target-selection flow can use them.
+- A cached backend is not proof of the running GUI's backend or effective home.
+  Target selection, configuration preflight and actual picker qualification remain
+  required. Custom package layouts and executable links need separate supported
+  discovery; this does not guess their targets or certify unknown versions.
+- Validation: all 194 workspace Rust tests passed (four opt-in tests ignored),
+  and all 21 Node desktop UI tests passed. Tests cover multiple sources, duplicate
+  locations, unknown executables, empty/relative PATH entries, bounded discovery,
+  explicit UI action and preserving browser state on discovery failure. Workspace
+  Clippy with warnings denied, formatting and diff checks passed. Release CLI,
+  daemon and desktop builds succeeded. Native App UI and browser qualification
+  were not exercised by these tests.
+
 ## Desktop background and tool-test controls (2026-09-20)
 
 - The desktop now exposes the existing private runtime actions for background

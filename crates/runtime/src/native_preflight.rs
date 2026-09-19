@@ -32,7 +32,7 @@ pub struct Report {
     pub remaining_checks: Vec<&'static str>,
 }
 
-fn reviewed(hash: &str) -> Option<(&'static str, CatalogCodec)> {
+pub(crate) fn reviewed(hash: &str) -> Option<(&'static str, CatalogCodec)> {
     match hash {
         "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316" => {
             Some(("0.155.1", CatalogCodec::Cli01551))
@@ -52,7 +52,7 @@ fn config_capture_error(error: std::io::Error) -> &'static str {
     }
 }
 
-async fn fingerprint(path: &Path) -> Result<String, &'static str> {
+pub(crate) async fn fingerprint(path: &Path) -> Result<String, &'static str> {
     let mut file = tokio::fs::File::open(path)
         .await
         .map_err(|_| "E_PREFLIGHT_EXECUTABLE")?;

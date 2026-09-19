@@ -27,6 +27,8 @@ pub mod live_probe;
 pub mod managed_driver;
 pub mod native;
 #[cfg(windows)]
+pub mod native_discovery;
+#[cfg(windows)]
 pub mod native_preflight;
 mod native_ws;
 mod probe_ws;

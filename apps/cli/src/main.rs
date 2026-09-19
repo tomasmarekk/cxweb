@@ -10,6 +10,8 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Inventory native executable candidates without launching clients or reading credentials.
+    NativeDiscover,
     /// Inspect a reviewed native backend's selected home/cwd without generating or changing configuration.
     NativePreflight {
         #[arg(long)]
@@ -97,6 +99,14 @@ enum BrowserAction {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match Args::parse().command {
+        Command::NativeDiscover => {
+            #[cfg(windows)]
+            print_json(&serde_json::to_value(
+                cxweb_runtime::native_discovery::discover().await,
+            )?);
+            #[cfg(not(windows))]
+            return Err("native discovery requires Windows".into());
+        }
         Command::NativePreflight { client, home, cwd } => {
             #[cfg(windows)]
             print_json(&serde_json::to_value(

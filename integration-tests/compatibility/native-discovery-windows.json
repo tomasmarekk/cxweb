@@ -1,0 +1,32 @@
+{
+  "schema": "cxweb.native-discovery-probe.v1",
+  "result": "PASS",
+  "scope": "Read-only local executable inventory; not running App identity or picker qualification",
+  "elapsed_ms": 3980,
+  "target_selection_required": true,
+  "activation_eligible": false,
+  "candidates": [
+    {
+      "catalog_codec": "codex-model-info-0.155.0-alpha.9.2",
+      "executable_sha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+      "reviewed_build": "0.155.0-alpha.9.2",
+      "sources": [
+        "path_executable",
+        "desktop_backend_cache"
+      ],
+      "fingerprint_independently_verified": true
+    },
+    {
+      "catalog_codec": "codex-model-info-0.155.1",
+      "executable_sha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+      "reviewed_build": "0.155.1",
+      "sources": [
+        "npm_installation"
+      ],
+      "fingerprint_independently_verified": true
+    }
+  ],
+  "diagnostics": [
+    "E_DISCOVERY_TARGET_IDENTITY"
+  ]
+}

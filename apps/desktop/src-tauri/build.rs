@@ -7,6 +7,7 @@ fn main() {
             "qualify_text",
             "qualify_tools",
             "background",
+            "native_discover",
         ]),
     ))
     .expect("Tauri build configuration");
