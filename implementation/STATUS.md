@@ -164,6 +164,14 @@ entry was visible, which is the expected evidence while activation remains absen
   `OpenAI.Codex` package's main application as `ChatGPT.exe` with a ChatGPT shortcut;
   this registration alone does not satisfy the requested App UI qualification.
   No further such desktop instance is launched by the backend tests.
+- Follow-up read-only inspection of package 26.915.4065.0 found both executables
+  signed by OpenAI. `owl-app.ini` identifies the Codex user-data directory and UI
+  build 26.915.31945, while the manifest still targets `app/ChatGPT.exe`.
+  The small `app/Codex.exe` contains the Windows updater trampoline build marker;
+  its basename is not evidence of a separate supported UI launch path. No binary
+  or bundle was changed or launched during this inspection. The next graphical
+  qualification must establish the actual Codex task surface and an isolated
+  supported launch path before input; backend success does not close that gate.
 - Source review: the official pinned
   [model metadata contract](https://github.com/openai/codex/blob/3d2ee51ca2d5db578f328aa75e20aa22c0197c9a/codex-rs/protocol/src/openai_models.rs),
   [catalog query version](https://github.com/openai/codex/blob/3d2ee51ca2d5db578f328aa75e20aa22c0197c9a/codex-rs/models-manager/src/lib.rs)
