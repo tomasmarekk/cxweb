@@ -384,6 +384,7 @@ mod tests {
         observing: Notify,
         prompt: Mutex<Value>,
         compact: std::sync::atomic::AtomicBool,
+        answer_bytes: AtomicUsize,
     }
     impl BrowserDriver for Browser {
         fn verify_completion(&self, _: String) -> BrowserFuture<()> {
@@ -396,7 +397,7 @@ mod tests {
                     handle: "fixture-target".into(),
                     verified_route: session.route.clone(),
                     verified_session: session,
-                    verified_effort: None,
+                    verified_effort: Some("medium".into()),
                     baseline: Baseline {
                         ids: vec![],
                         selected_model: "Fixture text".into(),
@@ -438,7 +439,13 @@ mod tests {
                 let summary = json!({"goal":"Preserve fixture goal","constraints":["Read only"],"changed_files":[],"decisions":[],"outstanding_work":["Await pending result"],"test_results":["Previous read denied"],"unresolved_tool_ids":prompt["unresolved_tool_ids"]});
                 json!({"protocol":"webbridge.tool.v1","turn_nonce":nonce,"kind":"checkpoint","summary":summary.to_string()}).to_string()
             } else {
-                json!({"protocol":"webbridge.tool.v1","turn_nonce":nonce,"kind":"final","text":"fixture answer"}).to_string()
+                let size = self.answer_bytes.load(Ordering::SeqCst);
+                let answer = if size == 0 {
+                    "fixture answer".into()
+                } else {
+                    "fixture ".repeat(size / 8)
+                };
+                json!({"protocol":"webbridge.tool.v1","turn_nonce":nonce,"kind":"final","text":answer}).to_string()
             };
             let waiting = self.waiting;
             Box::pin(async move {
@@ -473,6 +480,7 @@ mod tests {
             observing: Notify::new(),
             prompt: Mutex::new(Value::Null),
             compact: std::sync::atomic::AtomicBool::new(false),
+            answer_bytes: AtomicUsize::new(0),
         });
         let coordinator = Coordinator::new(Ledger::in_memory(), browser.clone());
         let provider = CoordinatorProvider::new(
@@ -975,5 +983,11 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
         assert_eq!(browser.stops.load(Ordering::SeqCst), 1);
         assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
+    }
+
+    #[cfg(windows)]
+    mod native_context_probe {
+        use super::*;
+        include!("native_context_probe.rs");
     }
 }

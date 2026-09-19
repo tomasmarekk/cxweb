@@ -21,6 +21,45 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Actual native context recovery through the runtime (2026-09-20)
+
+- Added an opt-in integration test that runs each fingerprint-pinned native
+  backend through the real gateway, WebSocket history reconstruction, coordinator,
+  context guardrails, DPAPI-backed checkpoint key and authenticated expansion.
+  Only the browser driver is a fixed synthetic fixture; there is no browser or
+  native account access. Each native client uses a new disposable home/workspace.
+- CLI 0.155.1 and App backend 0.155.0-alpha.9.2 both passed separately over HTTP
+  and WebSocket. In all four cases, two turns completed, the third exceeded the
+  local byte ceiling without a browser submission, and the fourth triggered native
+  automatic compaction followed by successful continuation. Exactly three normal
+  fixture submissions and one summary submission occurred, with no duplicates.
+- Every case recorded five requests on the intended transport, one compaction,
+  one authenticated checkpoint continuation, restored summary content and zero
+  native upstream frames. The WebSocket cases completed their handshake and
+  recorded zero HTTP generation requests, so no HTTP fallback occurred. Reports
+  are under `integration-tests/compatibility/*.context-runtime-*.json`.
+- The fixture uses a 96 KiB ordinary prompt ceiling, a 256 KiB summary reserve
+  ceiling and fixed 64 KiB responses to reach the boundary deterministically.
+  The same explicit `LocalContextBudget` configures runtime and catalog. Reports
+  contain counts and fixed diagnostic fields, never raw task IDs or capability URLs.
+  `runtime_verified` additionally checks Rust-side invariants before reporting pass.
+- Reproduction: set `CXWEB_CONTEXT_PROBE_BACKEND` to one reviewed absolute backend
+  path, then run `cargo test -p cxweb-runtime --lib web_provider::tests::native_context_probe::actual_backend_compacts_through_runtime_http_and_websocket -- --ignored --exact --nocapture`.
+  The test invokes `scripts/probe-context-runtime-client.mjs`, verifies the binary
+  fingerprint before and after execution and declines native tool approvals.
+- An initial invalid fixture omitted the client's requested `medium` effort.
+  Fidelity validation correctly refused it before any submission. That run also
+  showed CLI retries of a generic HTTP 422/409 rejection; HTTP status selection
+  alone does not establish native terminal behavior. General terminal-error wire
+  mapping remains to be reviewed. This failed fixture is not counted as a pass.
+- Validation: both opt-in native runs passed; final `cargo test --workspace`
+  passed 189 tests with three opt-in tests ignored. Clippy with warnings denied,
+  formatting and diff checks passed. Production code and release binaries are
+  unchanged in this step. Authenticated long-history generation, summary quality,
+  native account coexistence, actual App picker and full route qualification remain
+  open. The existing manual browser verification process is still running; no
+  additional browser or ChatGPT desktop application was launched.
+
 ## Native context accounting and bounded recovery (2026-09-20)
 
 - Ran six isolated accounting cases against both fingerprint-pinned actual
@@ -71,8 +110,9 @@ entry was visible, which is the expected evidence while activation remains absen
   The new schema-size case initially
   hit the independent per-tool schema limit; its corrected fixture now verifies
   the encoded context guardrail without weakening either check. Native accounting
-  tests establish HTTP behavior; actual-client WebSocket recovery and authenticated
-  long-history recovery still need qualification. No ChatGPT desktop was launched.
+  tests establish HTTP behavior. Subsequent real-runtime WebSocket verification is
+  recorded above; authenticated long-history recovery remains unqualified.
+  No ChatGPT desktop was launched.
 
 ## Context rejection before browser preparation (2026-09-20)
 
@@ -80,7 +120,9 @@ entry was visible, which is the expected evidence while activation remains absen
   admission, durable turn admission or browser preparation. The same prepared
   prompt and nonce are used for the eventual submission; there is no truncation
   or second encoding with potentially different content.
-- `E_CONTEXT_BUDGET` is a terminal HTTP 422 response instead of a retryable 502.
+- `E_CONTEXT_BUDGET` is a local rejection returned as HTTP 422 instead of 502.
+  Later native experiments above show that a generic 422 can still trigger
+  transport retries; no repeated browser submission is admitted.
   Regression coverage includes oversized history, current instructions, tool
   schemas and compaction input, including inputs that exceed the ceiling only
   after Markdown-safe Unicode escaping. All cases reject without preparing a
