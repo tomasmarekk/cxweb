@@ -3,7 +3,13 @@
 </head><body><div id="fixture-animation">Animation fixture</div>
 <form><button type="button" data-testid="model-switcher-dropdown-button" aria-haspopup="menu" style="width:340px">Fixture text mode</button>
 <button type="button" data-testid="accounts-profile-button" aria-controls="account-menu" aria-expanded="false">Fixture account</button>
-<div id="account-menu" role="menu" hidden><span>fixture@example.invalid</span><div role="menuitemradio" aria-checked="true" data-workspace-id="fixture-workspace">Fixture workspace</div></div>
+<div id="account-menu" role="menu" hidden><button type="button" role="menuitem" id="fixture-settings">Settings</button><div role="menuitemradio" aria-checked="true" data-workspace-id="fixture-workspace">Fixture workspace</div></div>
+<div role="dialog" id="fixture-account-settings" hidden>
+  <button type="button" role="tab" aria-selected="true" aria-controls="fixture-general">General</button>
+  <button type="button" role="tab" aria-selected="false" aria-controls="fixture-account">Account</button>
+  <div role="tabpanel" id="fixture-general">General preferences</div>
+  <div role="tabpanel" id="fixture-account" hidden>Loading</div>
+</div>
 <button data-testid="temporary-chat-button">Temporary chat</button>
 <div id="model-menu" role="group" data-testid="composer-intelligence-picker-content" hidden>
   <button role="menuitemradio" data-testid="model-fixture-text" aria-checked="true">Fixture text mode</button>
@@ -13,6 +19,18 @@
 <div data-turn-id-container="old-assistant"><section data-testid="conversation-turn-old" data-turn-id="old-assistant" data-turn="assistant"><div data-message-author-role="assistant"><div class="markdown">historical message must not be returned</div></div><button data-testid="copy-turn-action-button">Copy</button></section></div>
 <div id="prompt-textarea" contenteditable="true"></div><button type="button" data-testid="send-button">Send</button></form>
 <script>
+document.querySelector('#fixture-settings').onclick = () => {
+  document.querySelector('#account-menu').hidden = true;
+  document.querySelector('[data-testid="accounts-profile-button"]').setAttribute('aria-expanded', 'false');
+  document.querySelector('#fixture-account-settings').hidden = false;
+};
+document.querySelector('[aria-controls="fixture-account"]').onclick = event => {
+  document.querySelector('[aria-controls="fixture-general"]').setAttribute('aria-selected', 'false');
+  event.currentTarget.setAttribute('aria-selected', 'true');
+  document.querySelector('#fixture-general').hidden = true;
+  document.querySelector('#fixture-account').hidden = false;
+  setTimeout(() => { document.querySelector('#fixture-account').textContent = 'Email: fixture@example.invalid'; }, 80);
+};
 document.querySelector('[data-testid="accounts-profile-button"]').onclick = event => {
   const menu = document.querySelector('#account-menu');
   menu.hidden = !menu.hidden;
@@ -38,6 +56,7 @@ document.addEventListener('keydown', event => {
     setTimeout(() => { document.querySelector('#model-menu').hidden = true; }, 80);
   }
   if (event.key === 'Escape') {
+    document.querySelector('#fixture-account-settings').hidden = true;
     document.querySelector('#account-menu').hidden = true;
     document.querySelector('[data-testid="accounts-profile-button"]').setAttribute('aria-expanded', 'false');
   }

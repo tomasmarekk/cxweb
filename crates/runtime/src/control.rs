@@ -435,6 +435,9 @@ impl Control {
                                                                     "E_ACCOUNT_PARSE" => {
                                                                         "E_ACCOUNT_PARSE"
                                                                     }
+                                                                    "E_ACCOUNT_SETTINGS_CLOSE" => {
+                                                                        "E_ACCOUNT_SETTINGS_CLOSE"
+                                                                    }
                                                                     _ => "E_ACCOUNT_SCOPE",
                                                                 }
                                                                 .into(),

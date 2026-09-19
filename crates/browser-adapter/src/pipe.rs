@@ -83,6 +83,22 @@ pub struct QualificationOutcome {
 #[serde(deny_unknown_fields)]
 pub struct ScopeDiagnostic {
     #[serde(default)]
+    pub settings_available: bool,
+    #[serde(default)]
+    pub settings_opened: bool,
+    #[serde(default)]
+    pub settings_controls: Vec<String>,
+    #[serde(default)]
+    pub settings_account_candidates: usize,
+    #[serde(default)]
+    pub settings_account_selected: bool,
+    #[serde(default)]
+    pub settings_panel_present: bool,
+    #[serde(default)]
+    pub settings_fields: Vec<String>,
+    #[serde(default)]
+    pub settings_loading: bool,
+    #[serde(default)]
     pub failure: Option<String>,
     #[serde(default)]
     pub profile_control_tags: Vec<String>,
@@ -648,22 +664,107 @@ impl ManagedBrowser {
                 },
             });
         }
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let result = loop {
-            match self.dom(page, include_str!("dom/account_scope.js"), vec![]) {
-                Ok(value) if !value.is_null() => {
-                    break serde_json::from_value(value)
-                        .map_err(|_| io::Error::other("E_ACCOUNT_PARSE"));
+        let result = (|| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let result: io::Result<ScopeSurface> = loop {
+                match self.dom(page, include_str!("dom/account_scope.js"), vec![]) {
+                    Ok(value) if !value.is_null() => {
+                        break serde_json::from_value(value)
+                            .map_err(|_| io::Error::other("E_ACCOUNT_PARSE"));
+                    }
+                    Err(_) => break Err(io::Error::other("E_ACCOUNT_READ")),
+                    _ if Instant::now() >= deadline => {
+                        break Err(io::Error::other("E_ACCOUNT_SCOPE"));
+                    }
+                    _ => std::thread::sleep(Duration::from_millis(100)),
                 }
-                Err(_) => break Err(io::Error::other("E_ACCOUNT_READ")),
-                _ if Instant::now() >= deadline => break Err(io::Error::other("E_ACCOUNT_SCOPE")),
-                _ => std::thread::sleep(Duration::from_millis(100)),
+            };
+            let mut surface = result?;
+            if surface.account.is_none() && surface.diagnostic.settings_available {
+                let settings_opened =
+                    self.dom(page, include_str!("dom/open_account_settings.js"), vec![])? == true;
+                surface.diagnostic.settings_opened = settings_opened;
+                if settings_opened {
+                    let deadline = Instant::now() + Duration::from_secs(5);
+                    let mut navigated = false;
+                    loop {
+                        if let Ok(value) =
+                            self.dom(page, include_str!("dom/account_settings.js"), vec![])
+                            && !value.is_null()
+                        {
+                            surface.diagnostic.settings_controls = value["controls"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .filter_map(Value::as_str)
+                                .take(16)
+                                .map(str::to_owned)
+                                .collect();
+                            if !navigated
+                                && surface
+                                    .diagnostic
+                                    .settings_controls
+                                    .iter()
+                                    .any(|label| label == "Account")
+                            {
+                                let point = self.dom(
+                                    page,
+                                    include_str!("dom/open_account_tab.js"),
+                                    vec![],
+                                )?;
+                                if point["selected"] == true {
+                                    navigated = true;
+                                } else if point["x"].is_number() && point["y"].is_number() {
+                                    self.click_point(page, &point)?;
+                                    navigated = true;
+                                }
+                            }
+                            surface.diagnostic.settings_account_selected =
+                                value["account_selected"] == true;
+                            surface.diagnostic.settings_panel_present =
+                                value["panel_present"] == true;
+                            surface.diagnostic.settings_fields = value["fields"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .filter_map(Value::as_str)
+                                .take(16)
+                                .map(str::to_owned)
+                                .collect();
+                            surface.diagnostic.settings_loading = value["panel_loading"] == true;
+                            surface.diagnostic.settings_account_candidates =
+                                value["account_candidates"].as_u64().unwrap_or(0) as usize;
+                            if value["account_selected"] == true
+                                && value["account_candidates"].as_u64().unwrap_or(0) > 0
+                            {
+                                surface.account = value["account"]
+                                    .as_str()
+                                    .filter(|account| account.len() <= 320)
+                                    .map(str::to_owned);
+                                break;
+                            }
+                        }
+                        if Instant::now() >= deadline {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                }
             }
-        };
+            Ok(surface)
+        })();
         let closed = self.close_model_menu(page);
-        let surface = result?;
         closed?;
-        Ok(surface)
+        {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while self.dom(page, include_str!("dom/settings_closed.js"), vec![])? != true {
+                if Instant::now() >= deadline {
+                    return Err(io::Error::other("E_ACCOUNT_SETTINGS_CLOSE"));
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+        result
     }
 
     fn qualify_page(
@@ -1066,6 +1167,8 @@ impl ManagedBrowser {
         let scope = self.account_scope(page)?;
         if scope.account.as_deref() != Some("fixture@example.invalid")
             || scope.workspace.as_deref() != Some("fixture-workspace")
+            || !scope.diagnostic.settings_opened
+            || scope.diagnostic.settings_account_candidates != 1
         {
             return Err(io::Error::other("E_SCOPE_FIXTURE"));
         }

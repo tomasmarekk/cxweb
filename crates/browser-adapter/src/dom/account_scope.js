@@ -27,7 +27,8 @@ function () {
       menu_items: menu.querySelectorAll('[role="menuitem"], [role="menuitemradio"]').length,
       selected_items: menu.querySelectorAll(selected).length,
       has_account_id: !!menu.querySelector('[data-account-id]'),
-      has_workspace_id: !!menu.querySelector('[data-workspace-id]')
+      has_workspace_id: !!menu.querySelector('[data-workspace-id]'),
+      settings_available: [...menu.querySelectorAll('[role="menuitem"]')].some(node => node.textContent.replace(/\s+/g, ' ').trim() === 'Settings')
     }
   };
 }

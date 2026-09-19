@@ -90,6 +90,31 @@ entry was visible, which is the expected evidence while activation remains absen
   [extended window styles](https://learn.microsoft.com/en-us/windows/win32/winmsg/extended-window-styles),
   and [window positioning](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowpos).
 
+## Account settings observation (2026-09-19)
+
+- The account menu's Settings action now provides a fallback when the menu itself
+  contains no account email. The adapter opens only the expanded profile menu's
+  Settings item and selects the Account tab with ordinary pointer input. It reads
+  only that selected tab's associated panel, waits for asynchronously loaded
+  content and refuses missing/ambiguous account evidence. It changes no settings.
+- The live background session exposed exactly one email after Account finished
+  loading. Diagnostics contain only counts, known public field/tab labels and
+  state booleans; the email remains an in-memory value, not serialized output.
+- Menu/dialog cleanup is attempted even on failed reading/navigation, and dialog
+  closure is verified. Foreign panels, unselected tabs, multiple dialogs and
+  multiple emails cannot establish an account. The real Chrome fixture now
+  requires a delayed settings-panel email instead of a direct menu email.
+- All 82 browser-adapter/runtime tests passed (one opt-in ignored), all 16 browser
+  JavaScript tests passed, affected-crate Clippy passed, and the off-screen Chrome
+  fixture passed with the delayed account panel and full target cleanup.
+- Workspace identity is still unqualified; the account menu exposes no selected
+  workspace ID. The new account observation is not yet bound to production
+  routing. Actual Codex integration and the remaining PRD gates stay open.
+- Current official references distinguish [account switching](https://help.openai.com/en/articles/20001068)
+  from [workspace selection in the profile menu](https://help.openai.com/en/articles/8542216).
+  They do not specify stable DOM identifiers; missing workspace metadata is not
+  treated as proof of a personal workspace.
+
 ## Composer integrity correction (2026-09-18)
 
 - Added an explicit `browser-control test-tools` operation through the same
