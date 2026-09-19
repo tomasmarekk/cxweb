@@ -311,6 +311,7 @@ fn validate_item(item: &Value) -> Result<(), &'static str> {
             }
         }
         "reasoning" | "compaction" | "item_reference" => return Err("E_NONPORTABLE_CONTEXT"),
+        "compaction_trigger" => return Err("E_COMPACTION_UNQUALIFIED"),
         _ => return Err("E_UNSUPPORTED_INPUT"),
     }
     Ok(())
@@ -319,6 +320,15 @@ fn validate_item(item: &Value) -> Result<(), &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compaction_v2_is_explicitly_unqualified_before_browser_submission() {
+        let request = json!({"model":"webbridge/test","input":[{"type":"compaction_trigger"}]});
+        assert_eq!(
+            CanonicalRequest::decode(request.to_string().as_bytes()).err(),
+            Some("E_COMPACTION_UNQUALIFIED")
+        );
+    }
 
     #[test]
     fn optional_hosted_search_is_disclosed_without_becoming_a_callable_tool() {

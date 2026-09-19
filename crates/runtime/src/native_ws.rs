@@ -135,10 +135,7 @@ fn validate_message(text: &str, route: SocketRoute) -> Result<(), &'static str> 
         if model.starts_with(cxweb_domain::OWNED_MODEL_PREFIX) {
             return Err("E_WEB_WEBSOCKET_UNQUALIFIED");
         }
-        if value["previous_response_id"]
-            .as_str()
-            .is_some_and(|id| id.starts_with("resp_cxweb_") || id.starts_with("resp_web_warmup_"))
-        {
+        if crate::context_boundary::has_owned_reference(&value) {
             return Err("E_NONPORTABLE_CONTEXT");
         }
     } else {

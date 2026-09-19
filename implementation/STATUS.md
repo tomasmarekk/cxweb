@@ -21,6 +21,38 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Actual compaction transport and context boundaries (2026-09-19)
+
+- Both reviewed native backends use remote compaction v2 by default: the ordinary
+  Responses request ends with `compaction_trigger`, and successful SSE must
+  contain exactly one `compaction` output item. An initial diagnostic returning
+  ordinary assistant text failed in both builds. The legacy `/responses/compact`
+  plaintext-output hypothesis is not sufficient for these default clients.
+- The extended isolated harness invokes `thread/compact/start`, waits for native
+  completion, then starts another turn. Both native builds accepted a synthetic
+  opaque item and sent its exact bytes in the following request. This proves the
+  v2 transport contract, not model summarization, encryption, GUI picker behavior
+  or long-running coding acceptance. The fixture has an explicit synthetic-only
+  prefix; it is not represented as an encrypted production checkpoint.
+- Evidence: `cli-0.155.1.compaction-v2-synthetic.json` and
+  `app-backend-0.155.0-alpha.9.2.compaction-v2-synthetic.json`. Reproduce with
+  `node scripts/probe-client.mjs <reviewed backend> --compact`. No browser,
+  desktop window or real native credentials were used.
+- The production request adapter now identifies unqualified v2 compaction
+  explicitly and returns a terminal 422 error before browser submission, matching
+  the legacy compaction refusal. Encrypted, scope-bound checkpoint generation and
+  expansion remain to implement; no native feature flag was disabled for the test.
+- Fixed a model-switch boundary gap: HTTP Responses/compact and Responses WebSocket
+  requests cannot forward owned response references or `wbr1:` compaction data
+  to native inference. This also applies after web disconnect and to compressed
+  HTTP input. Ordinary text mentioning these prefixes, portable tool results and
+  native opaque references retain their existing behavior.
+- Validation: all 105 runtime tests passed, the new adapter compaction refusal
+  regression passed, and both actual backend transport probes passed. Clippy with
+  warnings denied, formatting, JavaScript syntax and diff checks passed.
+- Reviewed source: [v2 request construction](https://github.com/openai/codex/blob/3d2ee51ca2d5db578f328aa75e20aa22c0197c9a/codex-rs/core/src/compact_remote_v2_attempt.rs),
+  [v2 output/history handling](https://github.com/openai/codex/blob/3d2ee51ca2d5db578f328aa75e20aa22c0197c9a/codex-rs/core/src/compact_remote_v2.rs).
+
 ## Windows configuration access validation (2026-09-19)
 
 - Configuration snapshots now validate the selected file and immediate parent

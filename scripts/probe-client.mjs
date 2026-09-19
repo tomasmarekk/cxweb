@@ -11,9 +11,10 @@ import { approveFixtureRead, approveFixturePatch, fixtureReadCommand } from './p
 
 const executable = process.argv[2];
 const modes = process.argv.slice(3);
-if (!executable || modes.length > 1 || modes.some(mode => !['--live', '--live-read', '--live-patch', '--live-websocket-patch', '--live-search-limit', '--capture-tools'].includes(mode))) {
-  throw new Error('Usage: node scripts/probe-client.mjs <absolute codex executable> [--live | --live-read | --live-patch | --live-websocket-patch | --live-search-limit | --capture-tools]');
+if (!executable || modes.length > 1 || modes.some(mode => !['--live', '--live-read', '--live-patch', '--live-websocket-patch', '--live-search-limit', '--capture-tools', '--compact'].includes(mode))) {
+  throw new Error('Usage: node scripts/probe-client.mjs <absolute codex executable> [--live | --live-read | --live-patch | --live-websocket-patch | --live-search-limit | --capture-tools | --compact]');
 }
+const compactProbe = modes.includes('--compact');
 const searchLimitProbe = modes.includes('--live-search-limit');
 const liveWebsocket = modes.includes('--live-websocket-patch');
 const patchProbe = process.argv.includes('--live-patch') || liveWebsocket;
@@ -175,6 +176,34 @@ try {
   assert.equal(completed?.params?.turn?.status, 'completed', JSON.stringify(completed?.params ?? notifications.slice(-5)));
   assert.ok(messages.some(m => live ? m.text === expected : m.text.includes(expected)), 'client receives exact gateway text');
   evidence.events.push('thread/start selected owned model', 'turn/start completed through loopback', live ? 'expected browser assistant text received' : 'expected synthetic assistant text received');
+  if (compactProbe) {
+    stage = 'v2 compaction transport';
+    const beforeCompact = notifications.length;
+    await rpc('thread/compact/start', { threadId: thread.thread.id });
+    let compacted;
+    for (let i = 0; i < 600; i++) {
+      compacted = notifications.slice(beforeCompact).find(n => n.method === 'item/completed' && n.params?.item?.type === 'contextCompaction');
+      if (compacted || notifications.slice(beforeCompact).some(n => n.method === 'turn/completed' && n.params?.turn?.status === 'failed')) break;
+      await delay(50);
+    }
+    evidence.compactionNotifications = notifications.slice(beforeCompact).map(n => ({
+      method: n.method, itemType: n.params?.item?.type, turnStatus: n.params?.turn?.status,
+      code: JSON.stringify(n.params?.turn?.error ?? n.params?.error ?? null).match(/\bE_[A-Z_]+\b/)?.[0],
+      missingCompactionItem: n.method === 'error' ? String(n.params?.message ?? n.params?.error?.message ?? '').includes('expected exactly one compaction output item') : undefined,
+    }));
+    assert.ok(compacted, 'native backend completes the explicit compact operation');
+    const beforeResume = notifications.length;
+    const resumed = await rpc('turn/start', { threadId: thread.thread.id, input: [{ type: 'text', text: 'Continue this synthetic diagnostic.', text_elements: [] }] });
+    for (let i = 0; i < 600; i++) {
+      if (notifications.slice(beforeResume).some(n => n.method === 'turn/completed' && n.params?.turn?.id === resumed.turn.id)) break;
+      await delay(50);
+    }
+    const continued = notifications.slice(beforeResume);
+    assert.equal(continued.find(n => n.method === 'turn/completed' && n.params?.turn?.id === resumed.turn.id)?.params?.turn?.status, 'completed');
+    assert.ok(continued.some(n => n.method === 'item/completed' && n.params?.item?.type === 'agentMessage' && n.params.item.text === 'cxweb diagnostic checkpoint retained'), 'next native request contains the exact synthetic compaction item');
+    evidence.compaction = { output: 'exactly one compaction item over Responses SSE', identityVerified: true, nativeCompleted: true, retainedInNextRequest: true, modelGeneratedSummary: false, encryption: 'NOT TESTED; public synthetic transport fixture only' };
+    evidence.events.push('v2 compaction item accepted and retained in next request');
+  }
   if (!live) {
     const identity = JSON.parse(await readFile(join(work, 'identity.json'), 'utf8'));
     assert.equal(identity.verified_native_identity, true, 'client supplies unambiguous thread/session/turn identity');

@@ -162,6 +162,32 @@ async fn terminal(socket: &mut WebSocketStream<MaybeTlsStream<tokio::net::TcpStr
 }
 
 #[tokio::test]
+async fn owned_compaction_cannot_escape_over_a_native_websocket_frame() {
+    for disconnected in [false, true] {
+        let fixture = Fixture::start(false).await;
+        if disconnected {
+            fixture
+                .gateway
+                .disconnect_web(Duration::from_secs(1))
+                .await
+                .unwrap();
+        }
+        let mut socket = fixture.connect().await;
+        let request = json!({"type":"response.create","model":"native-fixture","input":[{"type":"compaction","encrypted_content":"wbr1:fixture"}]});
+        socket
+            .send(Message::Text(request.to_string().into()))
+            .await
+            .unwrap();
+        assert_eq!(
+            terminal(&mut socket).await["error"]["code"],
+            "E_NONPORTABLE_CONTEXT"
+        );
+        assert!(fixture.native.lock().unwrap().is_empty());
+        assert_eq!(fixture.provider.calls.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[tokio::test]
 async fn one_socket_preserves_native_bytes_and_dispatches_owned_warmup_and_continuation() {
     let fixture = Fixture::start(false).await;
     let mut socket = fixture.connect().await;

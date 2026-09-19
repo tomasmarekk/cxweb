@@ -5,6 +5,7 @@ pub mod catalog_proxy;
 mod catalog_snapshot;
 #[cfg(windows)]
 pub mod config_journal;
+mod context_boundary;
 #[cfg(windows)]
 pub mod control;
 #[cfg(windows)]
@@ -195,7 +196,30 @@ async fn probe(
                         use std::io::Write;
                         let _ = file.write_all(request["tools"].to_string().as_bytes());
                     }
-                    let events = diagnostic_events();
+                    let retained = request["input"].as_array().is_some_and(|items| {
+                        items.iter().any(|item| {
+                            item["type"] == "compaction"
+                                && item["encrypted_content"] == DIAGNOSTIC_CHECKPOINT
+                        })
+                    });
+                    let compact = request["input"].as_array().is_some_and(|items| {
+                        items
+                            .last()
+                            .is_some_and(|item| item == &json!({"type":"compaction_trigger"}))
+                    });
+                    let events = if compact {
+                        if web_provider::WebIdentity::from_headers(&headers).is_none() {
+                            return error(StatusCode::BAD_REQUEST, "E_REQUEST_IDENTITY");
+                        }
+                        record(&state, "diagnostic_compaction_v2");
+                        diagnostic_compaction_events()
+                    } else {
+                        diagnostic_events_for(if retained {
+                            "cxweb diagnostic checkpoint retained"
+                        } else {
+                            "cxweb diagnostic round-trip succeeded"
+                        })
+                    };
                     let wire: String = events
                         .iter()
                         .enumerate()
@@ -242,7 +266,23 @@ fn record(state: &ProbeState, event: &'static str) {
 }
 
 pub fn diagnostic_events() -> Vec<Value> {
-    let text = "cxweb diagnostic round-trip succeeded";
+    diagnostic_events_for("cxweb diagnostic round-trip succeeded")
+}
+
+// Transport fixture only: no user history, encryption claim or production token.
+const DIAGNOSTIC_CHECKPOINT: &str = "synthetic-cxweb-probe-only:checkpoint";
+
+fn diagnostic_compaction_events() -> Vec<Value> {
+    let item = json!({"type":"compaction","id":"cmp_cxweb_diagnostic","encrypted_content":DIAGNOSTIC_CHECKPOINT});
+    vec![
+        json!({"type":"response.created","response":{"id":"resp_cxweb_diagnostic_compact","object":"response","status":"in_progress","output":[]}}),
+        json!({"type":"response.output_item.added","output_index":0,"item":{"type":"compaction","id":"cmp_cxweb_diagnostic","encrypted_content":""}}),
+        json!({"type":"response.output_item.done","output_index":0,"item":item}),
+        json!({"type":"response.completed","response":{"id":"resp_cxweb_diagnostic_compact","object":"response","status":"completed","output":[item]}}),
+    ]
+}
+
+fn diagnostic_events_for(text: &str) -> Vec<Value> {
     let item = json!({"id":"msg_diagnostic", "type":"message", "role":"assistant", "status":"completed", "content":[{"type":"output_text","text":text,"annotations":[]}]});
     vec![
         json!({"type":"response.created", "response":{"id":"resp_diagnostic","object":"response","status":"in_progress","output":[]}}),

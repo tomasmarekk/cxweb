@@ -377,6 +377,9 @@ async fn handle(
                 )
                 .await;
         }
+        if generation && crate::context_boundary::has_owned_reference(&payload) {
+            return crate::web_provider::web_failure("E_NONPORTABLE_CONTEXT");
+        }
     }
     gateway
         .native
@@ -390,6 +393,7 @@ mod tests {
     use super::*;
     use axum::{body::Body, http::Request};
     use http_body_util::BodyExt;
+    use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tower::ServiceExt;
 
@@ -1042,6 +1046,69 @@ mod tests {
                 .await
                 .unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn owned_context_never_crosses_to_native_after_model_switch_or_disconnect() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let spy = Arc::new(Spy {
+            calls: AtomicUsize::new(0),
+        });
+        let gateway = Gateway::new(
+            12345,
+            NativeTransport::new(format!("http://{}", listener.local_addr().unwrap())).unwrap(),
+            spy.clone(),
+        );
+        for disconnected in [false, true] {
+            if disconnected {
+                gateway
+                    .disconnect_web(Duration::from_secs(1))
+                    .await
+                    .unwrap();
+            }
+            for path in ["responses", "responses/compact"] {
+                for payload in [
+                    json!({"model":"native","previous_response_id":"resp_cxweb_fixture"}),
+                    json!({"model":"native","input":[{"type":"compaction","encrypted_content":"wbr1:fixture"}]}),
+                    json!({"model":"native","input":[{"type":"item_reference","id":"cmp_cxweb_fixture"}]}),
+                ] {
+                    for compressed in [false, true] {
+                        let text = payload.to_string();
+                        let bytes = if compressed {
+                            zstd::stream::encode_all(text.as_bytes(), 1).unwrap()
+                        } else {
+                            text.into_bytes()
+                        };
+                        let mut request = Request::builder()
+                            .method("POST")
+                            .uri(format!("{}/{path}", gateway.base_url()))
+                            .header("host", "127.0.0.1:12345");
+                        if compressed {
+                            request = request.header("content-encoding", "zstd");
+                        }
+                        let response = gateway
+                            .clone()
+                            .router()
+                            .oneshot(request.body(Body::from(bytes)).unwrap())
+                            .await
+                            .unwrap();
+                        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+                        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+                        assert!(
+                            std::str::from_utf8(&bytes)
+                                .unwrap()
+                                .contains("E_NONPORTABLE_CONTEXT")
+                        );
+                    }
+                }
+            }
+        }
+        assert_eq!(spy.calls.load(Ordering::SeqCst), 0);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), listener.accept())
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
