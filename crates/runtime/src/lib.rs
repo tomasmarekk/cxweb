@@ -10,6 +10,7 @@ mod compaction;
 #[cfg(windows)]
 pub mod config_journal;
 mod context_boundary;
+mod context_budget;
 #[cfg(windows)]
 pub mod control;
 #[cfg(windows)]

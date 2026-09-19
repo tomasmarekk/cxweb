@@ -14,6 +14,7 @@ impl CatalogSnapshot {
         executable: &BTreeSet<String>,
         generation: u64,
         qualified: Vec<(CatalogCodec, Vec<CatalogRoute>)>,
+        context_budget: Option<cxweb_codex_adapter::context_budget::LocalContextBudget>,
     ) -> Result<Self, &'static str> {
         if generation == 0 || qualified.is_empty() {
             return Err("E_CATALOG_SNAPSHOT");
@@ -46,7 +47,10 @@ impl CatalogSnapshot {
                 {
                     return Err("E_CATALOG_SNAPSHOT");
                 }
-                entries.push(codec.encode(&route)?);
+                entries.push(match context_budget {
+                    Some(budget) => codec.encode_with_context_budget(&route, budget)?,
+                    None => codec.encode(&route)?,
+                });
             }
             catalogs.insert(
                 codec,
@@ -95,6 +99,7 @@ mod tests {
             &routes(),
             generation,
             vec![(CatalogCodec::Cli01551, vec![route()])],
+            None,
         )
         .unwrap()
     }
@@ -146,14 +151,21 @@ mod tests {
             (1, routes(), vec![]),
         ] {
             assert!(
-                CatalogSnapshot::new(&fixture_scope(), &executable, generation, qualified).is_err()
+                CatalogSnapshot::new(&fixture_scope(), &executable, generation, qualified, None)
+                    .is_err()
             );
         }
         let mut invalid = route();
         invalid.effort = "unknown".into();
         assert!(
-            CatalogSnapshot::new(&fixture_scope(), &routes(), 1, vec![(codec, vec![invalid])])
-                .is_err()
+            CatalogSnapshot::new(
+                &fixture_scope(),
+                &routes(),
+                1,
+                vec![(codec, vec![invalid])],
+                None
+            )
+            .is_err()
         );
         let mut other = route();
         other.effort = "medium".into();
@@ -165,7 +177,8 @@ mod tests {
                 vec![
                     (codec, vec![route()]),
                     (CatalogCodec::App01550Alpha92, vec![other]),
-                ]
+                ],
+                None,
             )
             .is_err()
         );

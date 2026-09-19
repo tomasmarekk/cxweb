@@ -112,6 +112,7 @@ pub struct CoordinatorProvider {
     scope: Arc<ProviderScope>,
     routes: Arc<BTreeSet<String>>,
     catalog: Option<Arc<crate::catalog_snapshot::CatalogSnapshot>>,
+    context_budget: Option<cxweb_codex_adapter::context_budget::LocalContextBudget>,
     #[cfg(windows)]
     checkpoints: Option<(
         Arc<crate::checkpoint::Codec>,
@@ -150,6 +151,7 @@ impl CoordinatorProvider {
             scope: Arc::new(scope),
             routes: Arc::new(routes),
             catalog: None,
+            context_budget: None,
             #[cfg(windows)]
             checkpoints: None,
         })
@@ -167,6 +169,20 @@ impl CoordinatorProvider {
             return Err("E_COMPACTION_UNQUALIFIED");
         }
         self.checkpoints = Some((key, codec));
+        Ok(self)
+    }
+
+    /// Couple native recovery metadata and execution to one explicit local
+    /// budget, after enabling its reviewed checkpoint codec and before publication.
+    #[cfg(windows)]
+    pub fn with_context_budget(
+        mut self,
+        budget: cxweb_codex_adapter::context_budget::LocalContextBudget,
+    ) -> Result<Self, &'static str> {
+        if self.checkpoints.is_none() || self.catalog.is_some() || self.context_budget.is_some() {
+            return Err("E_CONTEXT_BUDGET_CONFIG");
+        }
+        self.context_budget = Some(budget);
         Ok(self)
     }
 
@@ -225,6 +241,7 @@ impl CoordinatorProvider {
             &self.routes,
             generation,
             qualified,
+            self.context_budget,
         )?));
         Ok(self)
     }
@@ -244,6 +261,20 @@ impl CoordinatorProvider {
         };
         if !self.routes.contains(&decoded.model) {
             return Err("E_MODEL_UNAVAILABLE");
+        }
+        #[cfg(windows)]
+        if let Some(budget) = self.context_budget {
+            if checkpoint.is_some() {
+                decoded
+                    .browser_prompt("00000000000000000000000000000000", budget.summary_bytes())?;
+            } else if crate::context_budget::needs_compaction(&payload, &decoded, budget)? {
+                // Only the reviewed SSE contract has native recovery evidence.
+                // JSON callers and unqualified codecs keep the explicit local error.
+                if !decoded.stream {
+                    return Err("E_CONTEXT_BUDGET");
+                }
+                return Ok(crate::context_budget::failure_response());
+            }
         }
         let stream = decoded.stream;
         let hosted_search_unavailable = decoded.hosted_search_unavailable();
@@ -472,12 +503,48 @@ mod tests {
         let key = Arc::new(
             crate::checkpoint::Codec::load_or_create(&key_path, "fixture-installation").unwrap(),
         );
+        let unqualified = provider.clone();
+        assert!(
+            unqualified
+                .clone()
+                .with_context_budget(
+                    cxweb_codex_adapter::context_budget::LocalContextBudget::DIAGNOSTIC
+                )
+                .is_err()
+        );
         let provider = provider
             .with_checkpoints(
                 key,
                 cxweb_codex_adapter::catalog_codec::CatalogCodec::Cli01551,
             )
+            .unwrap()
+            .with_context_budget(
+                cxweb_codex_adapter::context_budget::LocalContextBudget::DIAGNOSTIC,
+            )
             .unwrap();
+        let budget = cxweb_codex_adapter::context_budget::LocalContextBudget::DIAGNOSTIC;
+        assert!(provider.clone().with_context_budget(budget).is_err());
+        let codec = cxweb_codex_adapter::catalog_codec::CatalogCodec::Cli01551;
+        let published = provider
+            .clone()
+            .with_catalog(
+                1,
+                vec![(
+                    codec,
+                    vec![cxweb_codex_adapter::catalog_codec::CatalogRoute {
+                        id: "webbridge/test".into(),
+                        observed_label: "Fixture text".into(),
+                        effort: "medium".into(),
+                        coding: false,
+                    }],
+                )],
+            )
+            .unwrap();
+        assert_eq!(
+            published.catalog(codec).unwrap().entries[0]["context_window"],
+            budget.estimated_tokens()
+        );
+        assert!(published.with_context_budget(budget).is_err());
         let make_request = |payload, turn: &str, context: &str, task: &str| {
             let (mut parts, _) =
                 request("http://127.0.0.1:12345", turn, context, false).into_parts();
@@ -498,6 +565,46 @@ mod tests {
             }
         };
         let pending = json!({"type":"custom_tool_call","name":"apply_patch","call_id":"pending","input":"literal\n🦀"});
+        let large_history = json!({"model":"webbridge/test","stream":true,"input":[{"role":"user","content":"Preserve fixture task"},{"role":"assistant","content":"a".repeat(400_000)}]});
+        for _ in 0..2 {
+            let failure = provider
+                .execute(make_request(large_history.clone(), "budget", "old", "task"))
+                .await
+                .unwrap();
+            assert_eq!(failure.status(), StatusCode::OK);
+            assert_eq!(failure.headers()["content-type"], "text/event-stream");
+            let body = failure.into_body().collect().await.unwrap().to_bytes();
+            let text = std::str::from_utf8(&body).unwrap();
+            let event: Value = serde_json::from_str(
+                text.lines()
+                    .find_map(|line| line.strip_prefix("data: "))
+                    .unwrap(),
+            )
+            .unwrap();
+            assert!(crate::context_budget::is_context_failure(&[event]));
+            assert!(browser.sessions.lock().unwrap().is_empty());
+            assert_eq!(browser.sends.load(Ordering::SeqCst), 0);
+        }
+        let mut nonstream = large_history.clone();
+        nonstream["stream"] = json!(false);
+        assert_eq!(
+            provider
+                .execute(make_request(nonstream, "budget-json", "old", "task"))
+                .await
+                .err(),
+            Some("E_CONTEXT_BUDGET")
+        );
+        // Unqualified providers do not gain a compaction recovery capability.
+        let mut too_large = large_history.clone();
+        too_large["input"][1]["content"] = json!("a".repeat(550_000));
+        assert_eq!(
+            unqualified
+                .execute(make_request(too_large, "unqualified", "old", "task"))
+                .await
+                .err(),
+            Some("E_CONTEXT_BUDGET")
+        );
+        assert!(browser.sessions.lock().unwrap().is_empty());
         let oversized = json!({"model":"webbridge/test","input":[{"role":"user","content":"*".repeat(100_000)},{"type":"compaction_trigger"}]});
         assert_eq!(
             provider
@@ -507,7 +614,7 @@ mod tests {
             Some("E_CONTEXT_BUDGET")
         );
         assert!(browser.sessions.lock().unwrap().is_empty());
-        let compact = json!({"model":"webbridge/test","input":[{"role":"user","content":"Read only"},pending,{"type":"compaction_trigger"}]});
+        let compact = json!({"model":"webbridge/test","input":[{"role":"user","content":"Read only"},{"role":"assistant","content":"a".repeat(400_000)},pending,{"type":"compaction_trigger"}]});
         let first = provider
             .execute(make_request(compact.clone(), "compact", "old", "task"))
             .await

@@ -1,0 +1,218 @@
+{
+  "schema": "cxweb.native-context-budget-probe.v1",
+  "client": "0.155.1",
+  "executable_sha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+  "synthetic": true,
+  "production_usage_changed": false,
+  "browser_used": false,
+  "synthetic_control_limits": {
+    "context_window": 12000,
+    "auto_compact_token_limit": 3000
+  },
+  "local_budget_limits": {
+    "context_window": 98304,
+    "max_context_window": 98304,
+    "auto_compact_token_limit": 88473,
+    "source": "Unmodified cxweb diagnostic compaction catalog; local estimate, not provider capacity"
+  },
+  "cases": [
+    {
+      "mode": "missing_usage",
+      "default_catalog_limits": false,
+      "local_budget_catalog": false,
+      "result": "PASS accounting behavior observed",
+      "turns": [
+        "completed",
+        "completed",
+        "completed",
+        "completed"
+      ],
+      "context_error_recognized": false,
+      "responses": 4,
+      "compactions": 0,
+      "context_errors": 0,
+      "checkpoint_continuations": 0,
+      "upgrade_probes": 1,
+      "rejected_requests": 0,
+      "rejection_reasons": {
+        "method": 0,
+        "path": 0,
+        "authorization": 0
+      },
+      "unauthenticated_requests": 4,
+      "input_bytes": [
+        7169,
+        40494,
+        73820,
+        107146
+      ],
+      "synthetic_response_bytes": 32768
+    },
+    {
+      "mode": "synthetic_usage_control",
+      "default_catalog_limits": false,
+      "local_budget_catalog": false,
+      "result": "PASS accounting behavior observed",
+      "turns": [
+        "completed",
+        "completed",
+        "completed",
+        "completed"
+      ],
+      "context_error_recognized": false,
+      "responses": 4,
+      "compactions": 3,
+      "context_errors": 0,
+      "checkpoint_continuations": 3,
+      "upgrade_probes": 1,
+      "rejected_requests": 0,
+      "rejection_reasons": {
+        "method": 0,
+        "path": 0,
+        "authorization": 0
+      },
+      "unauthenticated_requests": 7,
+      "input_bytes": [
+        7200,
+        40231,
+        7628,
+        40659,
+        7953,
+        40984,
+        8277
+      ],
+      "synthetic_response_bytes": 32768
+    },
+    {
+      "mode": "http_context_error_control",
+      "default_catalog_limits": false,
+      "local_budget_catalog": false,
+      "result": "PASS accounting behavior observed",
+      "turns": [
+        "completed",
+        "failed",
+        "completed",
+        "completed"
+      ],
+      "context_error_recognized": false,
+      "responses": 4,
+      "compactions": 0,
+      "context_errors": 1,
+      "checkpoint_continuations": 0,
+      "upgrade_probes": 1,
+      "rejected_requests": 0,
+      "rejection_reasons": {
+        "method": 0,
+        "path": 0,
+        "authorization": 0
+      },
+      "unauthenticated_requests": 4,
+      "input_bytes": [
+        7209,
+        40535,
+        40860,
+        74186
+      ],
+      "synthetic_response_bytes": 32768
+    },
+    {
+      "mode": "sse_context_error_control",
+      "default_catalog_limits": false,
+      "local_budget_catalog": false,
+      "result": "PASS accounting behavior observed",
+      "turns": [
+        "completed",
+        "failed",
+        "completed",
+        "completed"
+      ],
+      "context_error_recognized": true,
+      "responses": 4,
+      "compactions": 1,
+      "context_errors": 1,
+      "checkpoint_continuations": 2,
+      "upgrade_probes": 1,
+      "rejected_requests": 0,
+      "rejection_reasons": {
+        "method": 0,
+        "path": 0,
+        "authorization": 0
+      },
+      "unauthenticated_requests": 5,
+      "input_bytes": [
+        7205,
+        40531,
+        40561,
+        7959,
+        41285
+      ],
+      "synthetic_response_bytes": 32768
+    },
+    {
+      "mode": "sse_context_error_default_catalog",
+      "default_catalog_limits": true,
+      "local_budget_catalog": false,
+      "result": "PASS accounting behavior observed",
+      "turns": [
+        "completed",
+        "failed",
+        "completed",
+        "completed"
+      ],
+      "context_error_recognized": true,
+      "responses": 4,
+      "compactions": 0,
+      "context_errors": 1,
+      "checkpoint_continuations": 0,
+      "upgrade_probes": 1,
+      "rejected_requests": 0,
+      "rejection_reasons": {
+        "method": 0,
+        "path": 0,
+        "authorization": 0
+      },
+      "unauthenticated_requests": 4,
+      "input_bytes": [
+        8358,
+        41683,
+        42008,
+        75334
+      ],
+      "synthetic_response_bytes": 32768
+    },
+    {
+      "mode": "sse_context_error_local_budget",
+      "default_catalog_limits": false,
+      "local_budget_catalog": true,
+      "result": "PASS accounting behavior observed",
+      "turns": [
+        "completed",
+        "failed",
+        "completed",
+        "completed"
+      ],
+      "context_error_recognized": true,
+      "responses": 4,
+      "compactions": 1,
+      "context_errors": 1,
+      "checkpoint_continuations": 2,
+      "upgrade_probes": 1,
+      "rejected_requests": 0,
+      "rejection_reasons": {
+        "method": 0,
+        "path": 0,
+        "authorization": 0
+      },
+      "unauthenticated_requests": 5,
+      "input_bytes": [
+        8349,
+        41675,
+        41705,
+        9103,
+        42429
+      ],
+      "synthetic_response_bytes": 32768
+    }
+  ],
+  "executable_unchanged": true
+}

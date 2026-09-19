@@ -78,6 +78,8 @@ enum Command {
         client_build: Option<String>,
         #[arg(long)]
         coding: bool,
+        #[arg(long)]
+        compaction: bool,
     },
 }
 
@@ -280,19 +282,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::ProbeCatalog {
             client_build,
             coding,
+            compaction,
         } => {
             let model = if let Some(build) = client_build {
                 let codec = cxweb_codex_adapter::catalog_codec::CatalogCodec::for_build(&build)
                     .ok_or("E_CATALOG_CLIENT_BUILD")?;
-                codec.encode(&cxweb_codex_adapter::catalog_codec::CatalogRoute {
+                let route = cxweb_codex_adapter::catalog_codec::CatalogRoute {
                     id: "webbridge/diagnostic".into(),
                     observed_label: "Diagnostic".into(),
                     effort: "medium".into(),
                     coding,
-                })?
+                };
+                if compaction {
+                    codec.encode_with_context_budget(
+                        &route,
+                        cxweb_codex_adapter::context_budget::LocalContextBudget::DIAGNOSTIC,
+                    )?
+                } else {
+                    codec.encode(&route)?
+                }
             } else {
-                if coding {
-                    return Err("--coding requires --client-build".into());
+                if coding || compaction {
+                    return Err("--coding and --compaction require --client-build".into());
                 }
                 cxweb_codex_adapter::catalog::synthetic_model()
             };

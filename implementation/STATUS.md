@@ -21,6 +21,59 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Native context accounting and bounded recovery (2026-09-20)
+
+- Ran six isolated accounting cases against both fingerprint-pinned actual
+  backends: CLI 0.155.1 and App backend 0.155.0-alpha.9.2. Without usage, history
+  exceeded 100 kB without native automatic compaction. A synthetic usage control
+  caused three compactions. An HTTP context error did not mark native context
+  full; a Responses `response.failed` event with `context_length_exceeded` did.
+  With explicit catalog limits, the latter failed the current turn and caused
+  one compaction before the next turn, followed by checkpoint continuation.
+  It is not an in-place automatic retry. An additional negative control found
+  that omitting catalog limits prevents automatic compaction even when the error
+  is recognized. Both clients now pass the positive case with the unmodified
+  diagnostic compaction catalog emitted by cxweb.
+- Reproducible harness: `scripts/probe-context-budget.mjs`; sanitized reports:
+  `integration-tests/compatibility/*.context-accounting-synthetic.json`. All six
+  cases passed on each backend. These use disposable homes, loopback fixtures,
+  synthetic content and no browser. The actual clients omitted Authorization;
+  the fixture records that fact and rejects any unexpected credential. Synthetic
+  control token counts and opaque fixture checkpoints are never product values.
+- Providers with an explicitly enabled checkpoint codec and local budget reserve
+  128 KiB in the diagnostic configuration between the
+  ordinary 384 KiB encoded prompt guardrail and the 512 KiB summary ceiling.
+  These are initial local engineering limits, not verified web token capacity.
+  Every byte of instructions, tool definitions and escaped history counts. Before
+  signalling recovery, the complete tool-disabled summary request must fit and
+  native-retained messages plus unresolved calls must fit the ordinary limit.
+  The latter is only a lower bound: the eventual summary still undergoes the
+  complete normal guardrail. No sizing projection is submitted or stored as history.
+- The immutable catalog and runtime share one `LocalContextBudget`. Its native
+  context metadata is explicitly labelled as a four-bytes-per-token local sizing
+  estimate (98,304 estimated tokens for the diagnostic configuration), with a
+  90% compaction threshold. No usage/billing data is manufactured. Budgets require
+  the checkpoint codec, cannot be changed after publication and must stay within
+  the global byte ceiling. Only opt-in compaction diagnostics enable this path;
+  default unqualified catalogs still omit capacity metadata.
+- A recoverable oversized SSE request returns the reviewed native failed event
+  without browser preparation, submission or a fake usage field. JSON callers,
+  unqualified providers and inputs that cannot fit a safe summary keep explicit
+  local errors. Compaction requests never recurse into recovery. Production
+  activation remains disabled; route-specific capacity qualification is still open.
+- WebSocket delivery accepts only the exact local empty-output context failure,
+  clears its delta-history cache, and keeps the socket available for a fresh
+  transcript. A real local-socket regression verifies subsequent web completion
+  and byte-preserving native passthrough. Altered failure payloads are refused.
+- Validation: the final workspace test run passed 189 tests with two opt-in tests
+  ignored, including all 116 runtime tests. Workspace Clippy with warnings denied,
+  formatting/diff checks, and release CLI/daemon/desktop builds passed.
+  The new schema-size case initially
+  hit the independent per-tool schema limit; its corrected fixture now verifies
+  the encoded context guardrail without weakening either check. Native accounting
+  tests establish HTTP behavior; actual-client WebSocket recovery and authenticated
+  long-history recovery still need qualification. No ChatGPT desktop was launched.
+
 ## Context rejection before browser preparation (2026-09-20)
 
 - The coordinator now encodes and checks the complete prompt before scheduler

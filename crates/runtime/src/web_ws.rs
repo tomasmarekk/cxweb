@@ -32,7 +32,7 @@ pub(crate) struct Prepared {
 
 pub(crate) struct Delivery {
     pub events: Vec<Value>,
-    completed: Completed,
+    completed: Option<Completed>,
 }
 
 impl Connection {
@@ -195,6 +195,12 @@ impl Connection {
                         .map_err(|_| error(502, "E_WEB_DELIVERY"))?,
                 );
             }
+            if crate::context_budget::is_context_failure(&events) {
+                return Ok(Delivery {
+                    events,
+                    completed: None,
+                });
+            }
             let last = events
                 .last()
                 .filter(|v| v["type"] == "response.completed")
@@ -215,28 +221,32 @@ impl Connection {
                 .map_err(|code| error(502, code))?;
             Ok(Delivery {
                 events,
-                completed: Completed {
+                completed: Some(Completed {
                     id,
                     identity: prepared.identity,
                     payload: prepared.payload,
                     output,
-                },
+                }),
             })
         }
     }
 
     pub fn complete(&mut self, delivery: Delivery) {
+        let Some(completed) = delivery.completed else {
+            // A failed response is not a base for a future previous_response_id.
+            self.last = None;
+            return;
+        };
         // Compaction replaces native history and changes context-window identity.
         // Require its next complete transcript; never append to the trigger input.
-        self.last = if delivery
-            .completed
+        self.last = if completed
             .output
             .iter()
             .any(|item| item["type"] == "compaction")
         {
             None
         } else {
-            Some(delivery.completed)
+            Some(completed)
         };
     }
 }
@@ -318,6 +328,9 @@ mod tests {
         }
         fn respond(&self, request: WebRequest) -> WebFuture {
             self.calls.fetch_add(1, Ordering::SeqCst);
+            if request.payload["instructions"] == "fixture-context-limit" {
+                return Box::pin(async { crate::context_budget::failure_response() });
+            }
             let compact = request.payload["input"].as_array().is_some_and(|input| {
                 input
                     .last()
@@ -372,6 +385,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn context_failure_is_delivered_and_clears_previous_response_history() {
+        let (mut connection, _) = fixture();
+        let first = connection
+            .deliver(connection.prepare(frame("first")).unwrap())
+            .await
+            .unwrap();
+        let previous = first.completed.as_ref().unwrap().id.clone();
+        connection.complete(first);
+        let mut request = frame("too-large");
+        request["instructions"] = json!("fixture-context-limit");
+        let failed = connection
+            .deliver(connection.prepare(request).unwrap())
+            .await
+            .unwrap();
+        assert!(failed.completed.is_none());
+        assert!(crate::context_budget::is_context_failure(&failed.events));
+        let failed_id = failed.events[0]["response"]["id"].clone();
+        connection.complete(failed);
+        for id in [json!(previous), failed_id] {
+            let mut delta = frame("next");
+            delta["previous_response_id"] = id;
+            assert_eq!(
+                connection.prepare(delta).err(),
+                Some("E_NONPORTABLE_CONTEXT")
+            );
+        }
+        let mut compact = frame("compact");
+        compact["input"] = json!([{"type":"compaction_trigger"}]);
+        let compact = connection
+            .deliver(connection.prepare(compact).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            compact.events.last().unwrap()["response"]["output"][0]["type"],
+            "compaction"
+        );
+        connection.complete(compact);
+        let continued = connection
+            .deliver(connection.prepare(frame("continued")).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            continued.events.last().unwrap()["type"],
+            "response.completed"
+        );
+    }
+
+    #[tokio::test]
     async fn compaction_output_clears_delta_history_and_accepts_a_fresh_context() {
         let (mut connection, provider) = fixture();
         let mut request = frame("compact");
@@ -380,7 +441,7 @@ mod tests {
             .deliver(connection.prepare(request).unwrap())
             .await
             .unwrap();
-        let output = delivery.completed.output.clone();
+        let output = delivery.completed.as_ref().unwrap().output.clone();
         assert_eq!(output.len(), 1);
         assert_eq!(output[0]["type"], "compaction");
         let response = &delivery.events.last().unwrap()["response"];
@@ -417,7 +478,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
-        let id = warmup.completed.id.clone();
+        let id = warmup.completed.as_ref().unwrap().id.clone();
         connection.complete(warmup);
         let user = json!({"type":"message","role":"user","content":[{"type":"input_text","text":"fixture input"}],"internal_chat_message_metadata_passthrough":{"turn_id":"preserved"}});
         let mut request = frame("turn-one");
@@ -426,7 +487,7 @@ mod tests {
         let prepared = connection.prepare(request).unwrap();
         assert!(!prepared.payload.to_string().contains("PRIVATE_"));
         let reply = connection.deliver(prepared).await.unwrap();
-        let id = reply.completed.id.clone();
+        let id = reply.completed.as_ref().unwrap().id.clone();
         connection.complete(reply);
         let mut next = frame("turn-two");
         next["previous_response_id"] = json!(id);
@@ -449,7 +510,7 @@ mod tests {
             .deliver(connection.prepare(frame("first")).unwrap())
             .await
             .unwrap();
-        let id = reply.completed.id.clone();
+        let id = reply.completed.as_ref().unwrap().id.clone();
         connection.complete(reply);
         for variant in 0..7 {
             let mut request = frame("second");

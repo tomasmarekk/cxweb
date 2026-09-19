@@ -56,7 +56,7 @@ impl BrowserRequest {
         // Count the complete escaped prompt, including instructions and tool
         // schemas, before admission or any browser operation. This is a local
         // byte ceiling, not an estimate of the provider's token capacity.
-        let prompt = request.browser_prompt(&nonce, 512 * 1024)?;
+        let prompt = request.browser_prompt(&nonce, crate::context_budget::HARD_PROMPT_BYTES)?;
         Ok(Self {
             request,
             nonce,

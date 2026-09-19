@@ -40,6 +40,9 @@ impl WebProvider for Provider {
         let release = self.release.clone();
         self.started.notify_one();
         Box::pin(async move {
+            if request.payload["instructions"] == "fixture-context-limit" {
+                return crate::context_budget::failure_response();
+            }
             if waiting {
                 request.cancellation.cancelled().await;
                 cancelled.notify_one();
@@ -152,13 +155,43 @@ async fn terminal(socket: &mut WebSocketStream<MaybeTlsStream<tokio::net::TcpStr
             let value: Value =
                 serde_json::from_str(&socket.next().await.unwrap().unwrap().into_text().unwrap())
                     .unwrap();
-            if matches!(value["type"].as_str(), Some("response.completed" | "error")) {
+            if matches!(
+                value["type"].as_str(),
+                Some("response.completed" | "response.failed" | "error")
+            ) {
                 return value;
             }
         }
     })
     .await
     .unwrap()
+}
+
+#[tokio::test]
+async fn context_failure_preserves_socket_and_native_passthrough() {
+    let fixture = Fixture::start(false).await;
+    let mut socket = fixture.connect().await;
+    let mut request = frame("budget");
+    request["instructions"] = json!("fixture-context-limit");
+    socket
+        .send(Message::Text(request.to_string().into()))
+        .await
+        .unwrap();
+    let failed = terminal(&mut socket).await;
+    assert!(crate::context_budget::is_context_failure(&[failed]));
+    socket
+        .send(Message::Text(frame("next").to_string().into()))
+        .await
+        .unwrap();
+    assert_eq!(terminal(&mut socket).await["type"], "response.completed");
+    let native = r#"{"type":"response.create", "model":"native-fixture","input":"native fixture"}"#;
+    socket.send(Message::Text(native.into())).await.unwrap();
+    assert_eq!(
+        terminal(&mut socket).await["response"]["id"],
+        "native-response"
+    );
+    assert_eq!(*fixture.native.lock().unwrap(), vec![native]);
+    assert_eq!(fixture.provider.calls.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]

@@ -2,6 +2,7 @@ pub mod catalog;
 pub mod catalog_codec;
 pub mod compaction;
 pub mod config;
+pub mod context_budget;
 pub mod envelope;
 mod output_format;
 mod patch_grammar;

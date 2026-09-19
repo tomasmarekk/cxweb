@@ -42,6 +42,26 @@ impl CatalogCodec {
         }
     }
 
+    /// The same budget must govern execution. Activation still requires live
+    /// qualification; a diagnostic estimate must not certify provider capacity.
+    pub fn encode_with_context_budget(
+        self,
+        route: &CatalogRoute,
+        budget: crate::context_budget::LocalContextBudget,
+    ) -> Result<Value, &'static str> {
+        let mut entry = self.encode(route)?;
+        entry["context_window"] = json!(budget.estimated_tokens());
+        entry["max_context_window"] = json!(budget.estimated_tokens());
+        entry["auto_compact_token_limit"] = json!(budget.estimated_tokens() * 9 / 10);
+        entry["description"] = json!(format!(
+            "{}. Local estimated context budget: {} tokens; encoded input ceiling: {} bytes. Not a ChatGPT capacity claim.",
+            entry["description"].as_str().ok_or("E_CATALOG_ROUTE")?,
+            budget.estimated_tokens(),
+            budget.normal_bytes(),
+        ));
+        Ok(entry)
+    }
+
     /// The activation owner must separately qualify the route and these exact
     /// capabilities. Construct a row from observations, never a native template.
     pub fn encode(self, route: &CatalogRoute) -> Result<Value, &'static str> {
@@ -116,6 +136,43 @@ mod tests {
             observed_label: "Observed model · Extra High".into(),
             effort: "xhigh".into(),
             coding: false,
+        }
+    }
+
+    #[test]
+    fn local_budget_metadata_is_explicit_and_does_not_claim_provider_usage() {
+        use crate::context_budget::{LocalContextBudget, MAX_PROMPT_BYTES};
+        for codec in [CatalogCodec::Cli01551, CatalogCodec::App01550Alpha92] {
+            let budget = LocalContextBudget::new(128 * 1024, 256 * 1024).unwrap();
+            let entry = codec.encode_with_context_budget(&route(), budget).unwrap();
+            assert_eq!(entry["context_window"], 32768);
+            assert_eq!(entry["max_context_window"], 32768);
+            assert_eq!(entry["auto_compact_token_limit"], 32768 * 9 / 10);
+            assert!(
+                entry["description"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Local estimated context budget")
+            );
+            assert!(entry.get("usage").is_none());
+            assert!(
+                codec
+                    .encode(&route())
+                    .unwrap()
+                    .get("context_window")
+                    .is_none()
+            );
+        }
+        for (normal, summary) in [
+            (0, 8192),
+            (8192, 8192),
+            (8192, 4096),
+            (8192, MAX_PROMPT_BYTES + 1),
+        ] {
+            assert_eq!(
+                LocalContextBudget::new(normal, summary).err(),
+                Some("E_CONTEXT_BUDGET_CONFIG")
+            );
         }
     }
 

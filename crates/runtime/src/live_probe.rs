@@ -256,7 +256,8 @@ pub async fn serve(
         let mut provider = CoordinatorProvider::new(coordinator, ProviderScope {
             installation, account: scope.account, workspace: scope.workspace, epoch: 0,
         }, vec![ROUTE.into()])?;
-        if let Some(key) = key { provider = provider.with_checkpoints(key, codec)?; }
+        let budget = cxweb_codex_adapter::context_budget::LocalContextBudget::DIAGNOSTIC;
+        if let Some(key) = key { provider = provider.with_checkpoints(key, codec)?.with_context_budget(budget)?; }
         let native_listener = TcpListener::bind("127.0.0.1:0").await.map_err(|_| "E_PROBE_LISTENER")?;
         let native_address = native_listener.local_addr().map_err(|_| "E_PROBE_LISTENER")?;
         let native = NativeTransport::new(format!("http://{native_address}"))?;
@@ -311,9 +312,10 @@ pub async fn serve(
         let gateway = Gateway::new(listener.local_addr().map_err(|_| "E_PROBE_LISTENER")?.port(), native, Arc::new(ProbeProvider { provider, failures: failures.clone(), search_requests: search_requests.clone(), output_formats: output_formats.clone(), websocket_requests: websocket_requests.clone(), warmups: warmups.clone(), compaction_requests: compaction_requests.clone(), checkpoint_continuations: checkpoint_continuations.clone(), checkpoint_plaintext_history: checkpoint_plaintext_history.clone() }));
         // Exercise the exact reviewed encoder in isolation; this diagnostic
         // catalog does not publish a production qualification snapshot.
-        let model = codec.encode(&cxweb_codex_adapter::catalog_codec::CatalogRoute {
+        let catalog_route = cxweb_codex_adapter::catalog_codec::CatalogRoute {
             id: ROUTE.into(), observed_label: label.clone(), effort, coding,
-        })?;
+        };
+        let model = if compaction { codec.encode_with_context_budget(&catalog_route, budget)? } else { codec.encode(&catalog_route)? };
         let mut descriptor = std::fs::OpenOptions::new().write(true).create_new(true).open(output).map_err(|_| "E_PROBE_OUTPUT")?;
         descriptor.write_all(json!({"base_url":gateway.base_url(),"model":ROUTE,"catalog":{"models":[model]},"catalog_codec":codec.id(),"live":true}).to_string().as_bytes()).map_err(|_| "E_PROBE_OUTPUT")?;
         descriptor.sync_all().map_err(|_| "E_PROBE_OUTPUT")?;
