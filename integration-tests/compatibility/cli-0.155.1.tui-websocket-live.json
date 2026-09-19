@@ -1,0 +1,76 @@
+{
+  "schema": "cxweb.tui-probe.v1",
+  "client": "codex-cli 0.155.1",
+  "executableSha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+  "authentication": "saved cxweb browser session; synthetic native key restricted to loopback",
+  "actualPicker": {
+    "observed": true,
+    "row": "webbridge/live-probe (current)",
+    "description": "ChatGPT Web \u00b7 Latest \u00b7 Extra High. Authenticated diagnostic; hosted search unavailable",
+    "selectedEffort": "xhigh"
+  },
+  "catalogStrategy": "isolated static diagnostic catalog",
+  "synthetic": false,
+  "clientExitCode": 0,
+  "exactAssistantResponse": true,
+  "result": "PASS: actual CLI picker, two visible exact fixed replies and two validated structured auxiliary generations",
+  "runtimeExitCode": 0,
+  "browserClosed": true,
+  "runtimeFailures": [],
+  "outputFormats": [
+    {
+      "kind": "absent",
+      "matches_native_title_schema": false,
+      "strict": null
+    },
+    {
+      "kind": "json_schema",
+      "matches_native_title_schema": true,
+      "strict": true
+    },
+    {
+      "kind": "absent",
+      "matches_native_title_schema": false,
+      "strict": null
+    },
+    {
+      "kind": "json_schema",
+      "matches_native_title_schema": true,
+      "strict": true
+    }
+  ],
+  "outputShape": {
+    "field_count": 4,
+    "json_valid": true,
+    "kind_final": true,
+    "nonce_hex": true,
+    "object": true,
+    "protocol_valid": true,
+    "starts_object": true,
+    "text_object": false,
+    "text_string": true,
+    "title_string": false,
+    "unescaped_nested_text": false,
+    "unicode_quote_escape": true
+  },
+  "answerSurface": {
+    "answer_candidates": 1,
+    "intermediate_blocks": 0,
+    "answer_fenced": 0,
+    "answer_generating": 0
+  },
+  "optionalWebSearchRequests": 2,
+  "websocketEnabled": true,
+  "websocketUpgrades": 6,
+  "nativeWebsocketFrames": 0,
+  "lastMessageMatchedInFull": true,
+  "executableUnchanged": true,
+  "date": "2026-09-19",
+  "productionRoutingInstalled": false,
+  "nativeUpstream": "local WebSocket rejection stub",
+  "visibleExactReplies": 2,
+  "browserGenerationsByState": {
+    "completed": 4
+  },
+  "transportCounter": "Per-request transport counters were added after this run; see the later App backend report."
+}

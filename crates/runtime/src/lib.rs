@@ -29,6 +29,9 @@ mod request_body;
 pub mod scheduler;
 pub mod turn;
 pub mod web_provider;
+mod web_ws;
+#[cfg(test)]
+mod web_ws_tests;
 use axum::{
     Router,
     body::Bytes,

@@ -1,0 +1,52 @@
+{
+  "schema": "cxweb.client-probe.v1",
+  "client": "codex-cli 0.155.1",
+  "synthetic": false,
+  "actualPicker": "NOT RUN",
+  "authentication": "saved cxweb browser session; synthetic native key restricted to loopback",
+  "events": [
+    "model/list accepted owned model",
+    "thread/start selected owned model",
+    "turn/start completed through loopback",
+    "expected browser assistant text received"
+  ],
+  "routeLayout": "subscription backend-api/codex",
+  "builtinWebSearch": "native default preserved; hosted search explicitly unavailable on this web route",
+  "executableSha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+  "model": {
+    "id": "webbridge/live-probe",
+    "model": "webbridge/live-probe",
+    "displayName": "ChatGPT Web \u00c2\u00b7 Latest \u00c2\u00b7 Extra High",
+    "hidden": false,
+    "defaultReasoningEffort": "xhigh"
+  },
+  "gatewayError": null,
+  "nativeTools": {
+    "fixture": "random marker not supplied in the prompt",
+    "commandCount": 1,
+    "completed": 1,
+    "resultContainsMarker": true,
+    "approvalRequests": 1,
+    "exactReadApprovals": 1,
+    "harnessExecutedTools": false,
+    "patchCount": 1,
+    "patchesCompleted": 1,
+    "exactPatchApprovals": 1,
+    "fileMatchesMarker": true
+  },
+  "result": "PASS native function and custom tools through authenticated browser",
+  "executableUnchanged": true,
+  "date": "2026-09-19",
+  "mode": "app-server stdio; disposable CODEX_HOME; Responses WebSocket enabled",
+  "nativeUpstream": "local WebSocket rejection stub",
+  "productionRoutingInstalled": false,
+  "browserClosed": true,
+  "runtimeFailures": [],
+  "websocketUpgrades": 2,
+  "nativeWebsocketFrames": 0,
+  "optionalWebSearchRequests": 3,
+  "browserGenerationsByState": {
+    "completed": 3
+  },
+  "transportCounter": "Per-request transport counters were added after this run; see the later App backend report."
+}

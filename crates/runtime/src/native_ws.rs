@@ -1,4 +1,4 @@
-//! Bounded native WebSocket relay. No browser driver or tool execution.
+//! Bounded native relay with per-frame owned Responses dispatch. No tool execution.
 use crate::native::{end_to_end_headers, unavailable};
 use axum::{
     body::Body,
@@ -42,6 +42,7 @@ pub(crate) async fn upgrade(
     upgrade: WebSocketUpgrade,
     query: Option<&str>,
     headers: HeaderMap,
+    web: Option<crate::gateway::Gateway>,
 ) -> Response<Body> {
     let Ok(permit) = slots.try_acquire_owned() else {
         return unavailable("E_NATIVE_BUSY");
@@ -101,12 +102,13 @@ pub(crate) async fn upgrade(
         }
         _ => return unavailable("E_NATIVE_WEBSOCKET"),
     };
+    let web = web.map(|gateway| crate::web_ws::Connection::new(gateway, &headers));
     let mut response = upgrade
         .max_message_size(LIMIT)
         .max_frame_size(LIMIT)
         .on_upgrade(move |socket| async move {
             let _permit = permit;
-            relay(socket, upstream, route).await;
+            relay(socket, upstream, route, web).await;
         });
     for (name, value) in &end_to_end_headers(handshake.headers()) {
         if !name.as_str().starts_with("sec-websocket-") && name != "content-length" {
@@ -132,6 +134,12 @@ fn validate_message(text: &str, route: SocketRoute) -> Result<(), &'static str> 
             .ok_or("E_NATIVE_FRAME")?;
         if model.starts_with(cxweb_domain::OWNED_MODEL_PREFIX) {
             return Err("E_WEB_WEBSOCKET_UNQUALIFIED");
+        }
+        if value["previous_response_id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("resp_cxweb_") || id.starts_with("resp_web_warmup_"))
+        {
+            return Err("E_NONPORTABLE_CONTEXT");
         }
     } else {
         // Preserve native event types and audio payloads verbatim. Inspect only
@@ -160,20 +168,44 @@ async fn relay(
     mut local: WebSocket,
     mut upstream: WebSocketStream<MaybeTlsStream<TcpStream>>,
     route: SocketRoute,
+    mut web: Option<crate::web_ws::Connection>,
 ) {
+    let mut native_pending = 0usize;
     loop {
-        let outcome = tokio::time::timeout(Duration::from_secs(300), async {
+        // Owned work can consume the coordinator's 600-second deadline plus
+        // cleanup. Realtime keeps its existing native idle bound.
+        let seconds = if route == SocketRoute::Responses {
+            660
+        } else {
+            300
+        };
+        let outcome = tokio::time::timeout(Duration::from_secs(seconds), async {
             tokio::select! {
                 incoming = local.next() => {
                     let Some(Ok(message)) = incoming else { return false; };
                     let message = match message {
                         LocalMessage::Text(text) => {
+                            if route == SocketRoute::Responses
+                                && let Ok(value) = strict_json::parse(text.as_bytes(), LIMIT)
+                                && value["model"].as_str().is_some_and(|m| m.starts_with(cxweb_domain::OWNED_MODEL_PREFIX))
+                                && let Some(web) = web.as_mut()
+                            {
+                                if native_pending != 0 {
+                                    let _ = local.send(LocalMessage::Text(crate::web_ws::error(409, "E_WEBSOCKET_BUSY").to_string().into())).await;
+                                    return false;
+                                }
+                                return serve_owned(&mut local, &mut upstream, web, value).await;
+                            }
                             // Validate model fields on every message, including
                             // reused connections. Client binary frames remain unqualified.
                             if let Err(code) = validate_message(&text, route) {
-                                let error = serde_json::json!({"type":"error","error":{"code":code,"message":code}}).to_string();
+                                let error = crate::web_ws::error(422, code).to_string();
                                 let _ = local.send(LocalMessage::Text(error.into())).await;
                                 return false;
+                            }
+                            if route == SocketRoute::Responses {
+                                native_pending = native_pending.saturating_add(1);
+                                if let Some(web) = web.as_mut() { web.clear(); }
                             }
                             Message::Text(text.to_string().into())
                         }
@@ -191,7 +223,13 @@ async fn relay(
                 incoming = upstream.next() => {
                     let Some(Ok(message)) = incoming else { return false; };
                     let message = match message {
-                        Message::Text(text) => LocalMessage::Text(text.to_string().into()),
+                        Message::Text(text) => {
+                            if route == SocketRoute::Responses
+                                && let Ok(value) = strict_json::parse(text.as_bytes(), LIMIT)
+                                && matches!(value["type"].as_str(), Some("response.completed" | "response.failed" | "response.incomplete" | "error"))
+                            { native_pending = native_pending.saturating_sub(1); }
+                            LocalMessage::Text(text.to_string().into())
+                        },
                         Message::Binary(data) => LocalMessage::Binary(data),
                         Message::Ping(data) => LocalMessage::Ping(data),
                         Message::Pong(data) => LocalMessage::Pong(data),
@@ -208,6 +246,77 @@ async fn relay(
         }).await;
         if outcome != Ok(true) {
             break;
+        }
+    }
+}
+
+async fn serve_owned(
+    local: &mut WebSocket,
+    upstream: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
+    web: &mut crate::web_ws::Connection,
+    value: serde_json::Value,
+) -> bool {
+    let prepared = match web.prepare(value) {
+        Ok(value) => value,
+        Err(code) => {
+            let _ = local
+                .send(LocalMessage::Text(
+                    crate::web_ws::error(422, code).to_string().into(),
+                ))
+                .await;
+            return false;
+        }
+    };
+    let delivery = web.deliver(prepared);
+    tokio::pin!(delivery);
+    loop {
+        tokio::select! {
+            result = &mut delivery => {
+                match result {
+                    Ok(delivery) => {
+                        for event in &delivery.events {
+                            if local.send(LocalMessage::Text(event.to_string().into())).await.is_err() { return false; }
+                        }
+                        web.complete(delivery);
+                        return true;
+                    }
+                    Err(error) => {
+                        let _ = local.send(LocalMessage::Text(error.to_string().into())).await;
+                        return false;
+                    }
+                }
+            }
+            incoming = local.next() => {
+                match incoming {
+                    Some(Ok(LocalMessage::Ping(data))) => {
+                        if local.send(LocalMessage::Pong(data)).await.is_err() { return false; }
+                    }
+                    Some(Ok(LocalMessage::Pong(_))) => (),
+                    Some(Ok(LocalMessage::Text(_))) => {
+                        let _ = local.send(LocalMessage::Text(crate::web_ws::error(409, "E_WEBSOCKET_BUSY").to_string().into())).await;
+                        return false;
+                    }
+                    _ => return false,
+                }
+            }
+            incoming = upstream.next() => {
+                match incoming {
+                    Some(Ok(Message::Ping(data))) => {
+                        if upstream.send(Message::Pong(data)).await.is_err() { return false; }
+                    }
+                    Some(Ok(Message::Pong(_))) => (),
+                    Some(Ok(Message::Text(text))) if strict_json::parse(text.as_bytes(), LIMIT)
+                        .is_ok_and(|value| value["type"] == "codex.rate_limits") => {
+                        // Account-wide native quota notifications are independent
+                        // of the response. Preserve them without assigning usage
+                        // to the browser generation or entering browser code.
+                        if local.send(LocalMessage::Text(text.to_string().into())).await.is_err() { return false; }
+                    }
+                    // An idle native peer must not inject events into a web turn.
+                    // Dropping delivery cancels and drains the admitted worker.
+                    _ => return false,
+                }
+            }
         }
     }
 }
@@ -455,12 +564,7 @@ mod tests {
             .unwrap()
             .unwrap()
             .unwrap();
-        assert!(
-            error
-                .into_text()
-                .unwrap()
-                .contains("E_WEB_WEBSOCKET_UNQUALIFIED")
-        );
+        assert!(error.into_text().unwrap().contains("E_WEBSOCKET_BUSY"));
         assert_eq!(received.load(Ordering::SeqCst), 2);
         task.abort();
         upstream_task.abort();

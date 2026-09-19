@@ -21,6 +21,61 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Owned Responses WebSocket routing (2026-09-19)
+
+- Added owned Responses dispatch to the existing native WebSocket relay. Native
+  upstream negotiation, handshake status/headers and native message bytes remain
+  preserved. Every owned frame goes through the same admission, durable ledger,
+  coordinator and browser validation as HTTP; no owned frame reaches native
+  inference. Realtime remains separate. Native account quota events can pass
+  during owned work; native response events cannot become an owned response.
+- A `generate:false` warmup validates identity, schema and the qualified route
+  and returns an empty local completion without calling the browser. Per-frame
+  session/thread correlation must match the handshake; turn/context identity
+  comes from reviewed frame metadata, not the first handshake's turn metadata.
+  Native authorization and other headers never enter the web provider.
+- Connection-local continuation accepts only the latest completed local response
+  with matching session/context/model/options. It rebuilds full history from the
+  previous request, locally validated output and exact new input. Foreign IDs,
+  changed scope/options, oversized history and cross-backend continuation are
+  rejected. A native request clears the local continuation cache.
+- Only our own output is projected into the native ResponseItem representation:
+  message/function status and output-text annotations are wire-only fields;
+  custom-call status, item/call IDs, namespace and literal arguments remain.
+  Incoming history is not rewritten. A coordinator regression test confirms a
+  reconstructed delta and the equivalent full HTTP retry share the same durable
+  result and do not submit another browser message.
+- Client close, overlapping create and unexpected native response events cancel
+  the owned delivery. The admitted worker retains its drain lease through cleanup.
+  Errors include native-compatible HTTP status in the WebSocket error envelope.
+  Output remains buffered validated delivery, not live browser token streaming.
+- Actual CLI 0.155.1 and App backend 0.155.0-alpha.9.2 both passed native
+  `exec_command` read, exact `apply_patch` creation and final response through the
+  authenticated browser with WebSocket enabled. Each completed three browser
+  generations, with zero provider failures and confirmed browser shutdown.
+  The App backend's per-request counters explicitly recorded all three requests
+  over WebSocket, two upgrades, zero warmups and zero native inference frames.
+- Actual CLI UI also passed its English picker, two visible exact fixed replies
+  and two strict structured auxiliary responses. Four browser generations
+  completed, six sockets upgraded, no native inference frames escaped, and both
+  processes exited cleanly. This run preceded per-request transport counters;
+  it is not claimed as a measured continuation-frame count.
+- Reports: `cli-0.155.1.websocket-tools.json`,
+  `app-backend-0.155.0-alpha.9.2.websocket-tools.json` and
+  `cli-0.155.1.tui-websocket-live.json` under `integration-tests/compatibility`.
+  Live probes use a disposable native home, synthetic loopback-only native key,
+  static diagnostic catalog and local native rejection peer. They do not certify
+  real subscription/native coexistence or the actual desktop App picker.
+- Source for output projection and per-frame metadata behavior: the reviewed
+  [native ResponseItem definitions](https://github.com/openai/codex/blob/3d2ee51ca2d5db578f328aa75e20aa22c0197c9a/codex-rs/protocol/src/models.rs),
+  plus the actual native wire observation recorded below. No competitor code
+  was copied. Production activation and broader PRD acceptance remain open.
+- Validation: all 96 runtime tests passed; runtime/CLI Clippy with warnings denied,
+  formatting, JavaScript syntax and diff checks passed. The new tests cover real
+  loopback mixed routing, warmup, continuation, identity/scope rejection, socket
+  close, overlap, cleanup drain, native quota events and durable HTTP retry.
+  Release CLI, daemon and desktop builds succeeded.
+
 ## Native WebSocket wire observation (2026-09-19)
 
 - `probe --websocket-output` and `probe-tui.mjs --websocket` add an explicitly

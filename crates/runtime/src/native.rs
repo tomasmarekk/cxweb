@@ -54,13 +54,23 @@ impl NativeTransport {
         upgrade: axum::extract::WebSocketUpgrade,
         query: Option<&str>,
         headers: HeaderMap,
+        web: Option<crate::gateway::Gateway>,
     ) -> Response<Body> {
         let base = if route == crate::native_ws::SocketRoute::Responses {
             &self.base
         } else {
             &self.realtime_base
         };
-        crate::native_ws::upgrade(base, route, self.slots.clone(), upgrade, query, headers).await
+        crate::native_ws::upgrade(
+            base,
+            route,
+            self.slots.clone(),
+            upgrade,
+            query,
+            headers,
+            web,
+        )
+        .await
     }
     /// Subscription HTTP/Responses plus the client's standalone realtime API
     /// route. General API-key inference, residency overrides and existing

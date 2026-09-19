@@ -11,11 +11,12 @@ import { approveFixtureRead, approveFixturePatch, fixtureReadCommand } from './p
 
 const executable = process.argv[2];
 const modes = process.argv.slice(3);
-if (!executable || modes.length > 1 || modes.some(mode => !['--live', '--live-read', '--live-patch', '--live-search-limit', '--capture-tools'].includes(mode))) {
-  throw new Error('Usage: node scripts/probe-client.mjs <absolute codex executable> [--live | --live-read | --live-patch | --live-search-limit | --capture-tools]');
+if (!executable || modes.length > 1 || modes.some(mode => !['--live', '--live-read', '--live-patch', '--live-websocket-patch', '--live-search-limit', '--capture-tools'].includes(mode))) {
+  throw new Error('Usage: node scripts/probe-client.mjs <absolute codex executable> [--live | --live-read | --live-patch | --live-websocket-patch | --live-search-limit | --capture-tools]');
 }
 const searchLimitProbe = modes.includes('--live-search-limit');
-const patchProbe = process.argv.includes('--live-patch');
+const liveWebsocket = modes.includes('--live-websocket-patch');
+const patchProbe = process.argv.includes('--live-patch') || liveWebsocket;
 const captureTools = process.argv.includes('--capture-tools');
 const readProbe = process.argv.includes('--live-read') || patchProbe;
 const live = process.argv.includes('--live') || readProbe || searchLimitProbe;
@@ -34,7 +35,7 @@ if (readProbe) for (const name of ['pwsh.exe', 'powershell.exe']) {
 }
 const bridge = resolve('target/debug/cxweb.exe');
 const descriptor = live ? join(work, 'runtime', 'connection.json') : join(work, 'probe.json');
-const server = spawn(bridge, live ? ['live-probe', '--output', descriptor] : ['probe', '--output', descriptor, '--tools-output', join(work, 'tools.json'), '--identity-output', join(work, 'identity.json')], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+const server = spawn(bridge, live ? ['live-probe', '--output', descriptor, ...(liveWebsocket ? ['--websocket'] : [])] : ['probe', '--output', descriptor, '--tools-output', join(work, 'tools.json'), '--identity-output', join(work, 'identity.json')], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
 let serverOutput = '', serverError = '';
 server.stdout.on('data', data => { if (serverOutput.length < 16000) serverOutput += data; });
 server.stderr.on('data', data => { if (serverError.length < 16000) serverError += data; });
@@ -198,6 +199,13 @@ try {
     else {
       try {
         evidence.runtime = JSON.parse(serverOutput);
+        assert.deepEqual(evidence.runtime.failures, [], 'no rejected browser requests');
+        if (liveWebsocket) {
+          assert.ok(evidence.runtime.websocket_upgrades > 0);
+          assert.equal(evidence.runtime.native_websocket_frames, 0);
+          assert.equal(evidence.runtime.websocket_requests, evidence.runtime.output_formats.length);
+          assert.ok(evidence.runtime.websocket_requests > 0);
+        }
         assert.ok(evidence.runtime.optional_web_search_requests > 0, 'native client supplied optional hosted search');
       } catch {
         evidence.runtimeError = serverError.match(/\bE_[A-Z_]+\b/)?.[0] ?? 'E_PROBE_RUNTIME';

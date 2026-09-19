@@ -46,12 +46,15 @@ fn digest(parts: &[&[u8]]) -> String {
     format!("{:x}", hash.finalize())
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct WebIdentity {
     native_session: String,
     turn: String,
 }
 impl WebIdentity {
+    pub(crate) fn same_session(&self, other: &Self) -> bool {
+        self.native_session == other.native_session
+    }
     /// Read only reviewed correlation fields. Native authorization, account
     /// headers, routing tokens and the rest of turn metadata never leave here.
     pub(crate) fn from_headers(headers: &HeaderMap) -> Option<Self> {
@@ -200,6 +203,15 @@ impl CoordinatorProvider {
     }
 }
 impl WebProvider for CoordinatorProvider {
+    fn validate_warmup(&self, request: &WebRequest) -> Result<(), &'static str> {
+        request.identity.as_ref().ok_or("E_REQUEST_IDENTITY")?;
+        let bytes = serde_json::to_vec(&request.payload).map_err(|_| "E_INVALID_REQUEST")?;
+        let decoded = CanonicalRequest::decode(&bytes)?;
+        if !self.routes.contains(&decoded.model) {
+            return Err("E_MODEL_UNAVAILABLE");
+        }
+        Ok(())
+    }
     fn respond(&self, request: WebRequest) -> WebFuture {
         let provider = self.clone();
         Box::pin(async move { provider.execute(request).await.unwrap_or_else(web_failure) })
@@ -463,6 +475,49 @@ mod tests {
         assert!(browser.sessions.lock().unwrap().is_empty());
         assert_eq!(browser.sends.load(Ordering::SeqCst), 0);
     }
+    #[tokio::test]
+    async fn websocket_delta_then_full_http_retry_replays_the_same_durable_generation() {
+        let (gateway, browser) = fixture(false);
+        let base = gateway.base_url();
+        let (parts, _) = request(&base, "first", "context", true).into_parts();
+        let mut connection = crate::web_ws::Connection::new(gateway.clone(), &parts.headers);
+        let user = json!({"type":"message","role":"user","content":[{"type":"input_text","text":"fixture task"}]});
+        let frame = |turn: &str, input: Value| json!({"type":"response.create","model":"webbridge/test","stream":true,"input":input,"client_metadata":{"session_id":"RAW_SESSION","thread_id":"RAW_THREAD","turn_id":turn,"x-codex-turn-metadata":json!({"turn_id":turn,"context_window_id":"context"}).to_string()}});
+        let first = connection
+            .deliver(connection.prepare(frame("first", json!([user]))).unwrap())
+            .await
+            .unwrap();
+        let completed = first.events.last().unwrap()["response"].clone();
+        connection.complete(first);
+        let mut second_frame = frame("second", json!([user]));
+        second_frame["previous_response_id"] = completed["id"].clone();
+        let second = connection
+            .deliver(connection.prepare(second_frame).unwrap())
+            .await
+            .unwrap();
+        let response_id = second.events.last().unwrap()["response"]["id"].clone();
+        connection.complete(second);
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 2);
+        // This is the reviewed native ResponseItem serialization after receiving
+        // our output, independently constructed from its native wire fields.
+        let assistant = &completed["output"][0];
+        let history = json!([user, {"type":"message","id":assistant["id"],"role":"assistant","content":[{"type":"output_text","text":"fixture answer"}]}, user]);
+        let (parts, _) = request(&base, "second", "context", false).into_parts();
+        let retry = gateway
+            .router()
+            .oneshot(Request::from_parts(
+                parts,
+                Body::from(json!({"model":"webbridge/test","input":history}).to_string()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(retry.status(), StatusCode::OK);
+        let response: Value =
+            serde_json::from_slice(&retry.into_body().collect().await.unwrap().to_bytes()).unwrap();
+        assert_eq!(response["id"], response_id);
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 2);
+    }
+
     #[tokio::test]
     async fn disconnect_reaches_the_bound_coordinator_and_waits_for_browser_stop() {
         let (gateway, browser) = fixture(true);

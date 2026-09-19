@@ -9,10 +9,11 @@ import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 
 const executable = process.argv[2];
-const live = process.argv[3] === '--live';
+const liveWebsocket = process.argv[3] === '--live-websocket';
+const live = process.argv[3] === '--live' || liveWebsocket;
 const websocket = process.argv[3] === '--websocket';
 if (!executable || !isAbsolute(executable) || process.argv.length !== (live || websocket ? 4 : 3)) {
-  throw new Error('Usage: node scripts/probe-tui.mjs <absolute codex executable> [--live | --websocket]');
+  throw new Error('Usage: node scripts/probe-tui.mjs <absolute codex executable> [--live | --websocket | --live-websocket]');
 }
 const root = resolve('.local/probes');
 await mkdir(root, { recursive: true });
@@ -23,7 +24,7 @@ const bridge = resolve('target/debug/cxweb.exe');
 const descriptor = live ? join(work, 'runtime', 'connection.json') : join(work, 'connection.json');
 const identityPath = join(work, 'identity.json');
 const websocketPath = join(work, 'websocket.json');
-const server = spawn(bridge, live ? ['live-probe', '--output', descriptor] : ['probe', '--output', descriptor, '--identity-output', identityPath, ...(websocket ? ['--websocket-output', websocketPath] : [])], {
+const server = spawn(bridge, live ? ['live-probe', '--output', descriptor, ...(liveWebsocket ? ['--websocket'] : [])] : ['probe', '--output', descriptor, '--identity-output', identityPath, ...(websocket ? ['--websocket-output', websocketPath] : [])], {
   windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
 });
 let serverOutput = '';
@@ -108,6 +109,17 @@ try {
         evidence.outputShape = report.diagnostic.output_shape;
         evidence.answerSurface = Object.fromEntries(['answer_candidates', 'intermediate_blocks', 'answer_fenced', 'answer_generating'].map(key => [key, report.diagnostic.attribution[key]]));
         evidence.optionalWebSearchRequests = report.optional_web_search_requests;
+        evidence.websocketEnabled = report.websocket_enabled;
+        evidence.websocketUpgrades = report.websocket_upgrades;
+        evidence.nativeWebsocketFrames = report.native_websocket_frames;
+        evidence.websocketRequests = report.websocket_requests;
+        evidence.websocketWarmups = report.websocket_warmups;
+        if (liveWebsocket) {
+          assert.ok(report.websocket_upgrades > 0);
+          assert.equal(report.native_websocket_frames, 0);
+          assert.equal(report.websocket_requests, report.output_formats.length);
+          assert.ok(report.websocket_requests > 0);
+        }
         assert.equal(report.browser_closed, true);
         evidence.lastMessageMatchedInFull = report.diagnostic.attribution.text_content_matches === 1;
         if (report.failures.length !== 0) {

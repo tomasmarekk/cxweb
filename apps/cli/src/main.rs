@@ -14,6 +14,8 @@ enum Command {
     LiveProbe {
         #[arg(long)]
         output: PathBuf,
+        #[arg(long)]
+        websocket: bool,
     },
     /// Invoke a fixed operation through the same private runtime as the desktop.
     BrowserControl {
@@ -73,10 +75,10 @@ enum BrowserAction {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match Args::parse().command {
-        Command::LiveProbe { output } => {
+        Command::LiveProbe { output, websocket } => {
             #[cfg(windows)]
             {
-                let report = cxweb_runtime::live_probe::serve(&output, async {
+                let report = cxweb_runtime::live_probe::serve(&output, websocket, async {
                     use tokio::io::AsyncReadExt;
                     let mut stdin = tokio::io::stdin();
                     let mut byte = [0];
@@ -86,7 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             #[cfg(not(windows))]
             {
-                let _ = output;
+                let _ = (output, websocket);
                 return Err("live browser qualification requires Windows".into());
             }
         }

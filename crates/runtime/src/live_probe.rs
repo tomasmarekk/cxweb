@@ -32,9 +32,18 @@ struct ProbeProvider {
     failures: Arc<Mutex<Vec<&'static str>>>,
     search_requests: Arc<AtomicUsize>,
     output_formats: Arc<Mutex<Vec<Value>>>,
+    websocket_requests: Arc<AtomicUsize>,
+    warmups: Arc<AtomicUsize>,
 }
 impl crate::gateway::WebProvider for ProbeProvider {
+    fn validate_warmup(&self, request: &crate::gateway::WebRequest) -> Result<(), &'static str> {
+        self.warmups.fetch_add(1, Ordering::Relaxed);
+        self.provider.validate_warmup(request)
+    }
     fn respond(&self, request: crate::gateway::WebRequest) -> crate::gateway::WebFuture {
+        if request.transport == crate::gateway::WebTransport::WebSocket {
+            self.websocket_requests.fetch_add(1, Ordering::Relaxed);
+        }
         if let Ok(mut formats) = self.output_formats.lock()
             && formats.len() < 32
         {
@@ -84,6 +93,7 @@ fn output_format_observation(payload: &Value) -> Value {
 
 pub async fn serve(
     output: &Path,
+    websocket: bool,
     stop: impl Future<Output = ()> + Send + 'static,
 ) -> Result<Value, &'static str> {
     if !output.is_absolute() || output.exists() {
@@ -204,10 +214,40 @@ pub async fn serve(
         let native = NativeTransport::new(format!("http://{native_address}"))?;
         let native_stop = CancellationToken::new();
         let _native_guard = native_stop.clone().drop_guard();
-        tokio::spawn(axum::serve(native_listener, axum::Router::new().route("/responses", axum::routing::get(|| async {
-            // This isolated stub has no native WebSocket upstream. Ask the
-            // unmodified client to negotiate HTTP rather than retrying 503s.
-            axum::http::StatusCode::UPGRADE_REQUIRED
+        let socket_upgrades = Arc::new(AtomicUsize::new(0));
+        let socket_frames = Arc::new(AtomicUsize::new(0));
+        let upgrades = socket_upgrades.clone();
+        let frames = socket_frames.clone();
+        let peer_stop = native_stop.clone();
+        tokio::spawn(axum::serve(native_listener, axum::Router::new().route("/responses", axum::routing::get(move |upgrade: axum::extract::WebSocketUpgrade| {
+            let upgrades = upgrades.clone();
+            let frames = frames.clone();
+            let stop = peer_stop.clone();
+            async move {
+                use axum::response::IntoResponse;
+                if !websocket { return axum::http::StatusCode::UPGRADE_REQUIRED.into_response(); }
+                upgrades.fetch_add(1, Ordering::Relaxed);
+                upgrade.on_upgrade(move |mut socket| async move {
+                    use futures_util::StreamExt;
+                    loop {
+                        tokio::select! {
+                            () = stop.cancelled() => break,
+                            message = socket.next() => match message {
+                                Some(Ok(axum::extract::ws::Message::Text(_))) => {
+                                    frames.fetch_add(1, Ordering::Relaxed);
+                                    let error = crate::web_ws::error(503, "E_NATIVE_REJECTED_IN_PROBE");
+                                    let _ = socket.send(axum::extract::ws::Message::Text(error.to_string().into())).await;
+                                }
+                                Some(Ok(axum::extract::ws::Message::Ping(bytes))) => {
+                                    if socket.send(axum::extract::ws::Message::Pong(bytes)).await.is_err() { break; }
+                                }
+                                Some(Ok(axum::extract::ws::Message::Pong(_))) => (),
+                                _ => break,
+                            }
+                        }
+                    }
+                })
+            }
         })).fallback(|| async {
             axum::http::StatusCode::SERVICE_UNAVAILABLE
         })).with_graceful_shutdown(native_stop.cancelled_owned()).into_future());
@@ -215,7 +255,9 @@ pub async fn serve(
         let failures = Arc::new(Mutex::new(Vec::new()));
         let search_requests = Arc::new(AtomicUsize::new(0));
         let output_formats = Arc::new(Mutex::new(Vec::new()));
-        let gateway = Gateway::new(listener.local_addr().map_err(|_| "E_PROBE_LISTENER")?.port(), native, Arc::new(ProbeProvider { provider, failures: failures.clone(), search_requests: search_requests.clone(), output_formats: output_formats.clone() }));
+        let websocket_requests = Arc::new(AtomicUsize::new(0));
+        let warmups = Arc::new(AtomicUsize::new(0));
+        let gateway = Gateway::new(listener.local_addr().map_err(|_| "E_PROBE_LISTENER")?.port(), native, Arc::new(ProbeProvider { provider, failures: failures.clone(), search_requests: search_requests.clone(), output_formats: output_formats.clone(), websocket_requests: websocket_requests.clone(), warmups: warmups.clone() }));
         let mut model = cxweb_codex_adapter::catalog::synthetic_model();
         model["slug"] = json!(ROUTE);
         model["display_name"] = json!(format!("ChatGPT Web · {label}"));
@@ -237,7 +279,7 @@ pub async fn serve(
             }
         }
         let diagnostic = driver.diagnostic().await?;
-        Ok(json!({"live":true,"route":ROUTE,"browser_label":label,"native_upstream":"local rejection stub","routing_installed":false,"diagnostic":diagnostic,"optional_web_search_requests":search_requests.load(Ordering::Relaxed),"output_formats":output_formats.lock().map_err(|_| "E_PROBE_STATE")?.clone(),"failures":failures.lock().map_err(|_| "E_PROBE_STATE")?.clone()}))
+        Ok(json!({"live":true,"route":ROUTE,"browser_label":label,"native_upstream":"local rejection stub","routing_installed":false,"diagnostic":diagnostic,"optional_web_search_requests":search_requests.load(Ordering::Relaxed),"output_formats":output_formats.lock().map_err(|_| "E_PROBE_STATE")?.clone(),"failures":failures.lock().map_err(|_| "E_PROBE_STATE")?.clone(),"websocket_enabled":websocket,"websocket_upgrades":socket_upgrades.load(Ordering::Relaxed),"native_websocket_frames":socket_frames.load(Ordering::Relaxed),"websocket_requests":websocket_requests.load(Ordering::Relaxed),"websocket_warmups":warmups.load(Ordering::Relaxed)}))
     }.await;
     let closed = driver.shutdown().await;
     closed?;
