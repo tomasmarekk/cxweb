@@ -5,6 +5,8 @@ let phase = 'disconnected';
 let pending = false;
 let signInRequired = false;
 let discoveryPending = false;
+let preflightPending = false;
+let targetRevision = 0;
 function showError(code) {
   const messages = {
     E_ALREADY_RUNNING: 'cxweb is already running. Use the existing app window.',
@@ -183,12 +185,16 @@ $('background').addEventListener('click', async () => {
   await runAction('background');
 });
 $('native-discover').addEventListener('click', async () => {
-  if (discoveryPending) return;
+  if (discoveryPending || preflightPending) return;
   discoveryPending = true; $('native-discover').disabled = true;
   const results = $('native-targets');
   results.hidden = false; results.textContent = 'Inspecting local executable files…';
   try {
     const report = await invoke('native_discover');
+    const choice = $('native-choice');
+    const placeholder = document.createElement('option');
+    placeholder.value = ''; placeholder.textContent = 'Choose an installation or enter a path below';
+    choice.replaceChildren(placeholder);
     results.replaceChildren();
     const description = document.createElement('p');
     description.textContent = report.candidates.length
@@ -201,6 +207,10 @@ $('native-discover').addEventListener('click', async () => {
       const sources = candidate.sources.map(source => ({path_executable:'PATH', npm_installation:'npm installation', desktop_backend_cache:'App backend cache'})[source] || 'Other location').join(', ');
       item.textContent = `${candidate.reviewed_build ? `Reviewed backend ${candidate.reviewed_build}` : 'Unreviewed backend'} (${sources}): ${candidate.executable}`;
       list.append(item);
+      const option = document.createElement('option');
+      option.value = candidate.executable; option.textContent = item.textContent;
+      option.disabled = !candidate.reviewed_build;
+      choice.append(option);
     }
     results.append(list);
     if (report.diagnostics.length) {
@@ -215,6 +225,86 @@ $('native-discover').addEventListener('click', async () => {
     results.textContent = 'Codex installations could not be inspected. Your connection has not been changed.';
   } finally {
     discoveryPending = false; $('native-discover').disabled = false;
+  }
+});
+function targetChanged() {
+  targetRevision += 1;
+  $('native-preflight-result').hidden = true;
+  $('native-preflight-result').replaceChildren();
+}
+for (const id of ['native-client', 'native-home', 'native-cwd']) $(id).addEventListener('input', targetChanged);
+$('native-choice').addEventListener('change', () => {
+  if ($('native-choice').value) $('native-client').value = $('native-choice').value;
+  targetChanged();
+});
+$('native-preflight-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (preflightPending || discoveryPending) return;
+  const target = { client: $('native-client').value.trim(), home: $('native-home').value.trim(), cwd: $('native-cwd').value.trim() };
+  const results = $('native-preflight-result');
+  results.hidden = false; results.replaceChildren();
+  if (!target.client || !target.home || !target.cwd) {
+    results.textContent = 'Enter all three absolute paths before checking the target.';
+    return;
+  }
+  const revision = targetRevision;
+  preflightPending = true;
+  const controls = ['native-choice', 'native-client', 'native-home', 'native-cwd', 'native-preflight', 'native-discover'];
+  for (const id of controls) $(id).disabled = true;
+  results.textContent = 'Inspecting the selected Codex configuration…';
+  try {
+    const report = await invoke('native_preflight', target);
+    if (revision !== targetRevision) return;
+    results.replaceChildren();
+    const summary = document.createElement('p');
+    summary.textContent = report.assessment.configuration_compatible
+      ? 'No configuration conflict was found for this target. Integration is not active.'
+      : 'This target has configuration or authentication requirements to resolve. Integration is not active.';
+    results.append(summary);
+    const details = document.createElement('p');
+    const auth = {subscription:'ChatGPT subscription', api_key:'API key', bedrock:'Amazon Bedrock', signed_out:'Signed out', unknown:'Unknown'}[report.assessment.auth_mode] || 'Unknown';
+    details.textContent = `Backend: ${report.client_build}. Native account mode: ${auth}. Active configuration layers: ${report.assessment.active_layers.join(', ') || 'none'}.`;
+    results.append(details);
+    const list = document.createElement('ul');
+    const descriptions = {
+      subscription_auth_required:'This integration requires native Codex subscription sign-in.',
+      environment_auth:'An environment variable overrides native authentication.',
+      environment_route:'An environment variable overrides native routing.',
+      openai_base_url:'An existing OpenAI route is configured.',
+      chatgpt_base_url:'An existing ChatGPT route is configured.',
+      model_catalog_json:'An existing model catalog is configured.',
+      model_provider:'A different model provider is selected.',
+      reserved_provider_override:'The built-in OpenAI provider is overridden.',
+      profile:'A profile is selected.', profiles:'Configured profiles need separate target qualification.',
+      selected_profile:'A selected profile needs separate target qualification.',
+      managed_routing:'Managed routing or residency requirements need separate qualification.',
+      unknown_config_layer:'An unknown configuration layer is active.',
+      ambiguous_user_config:'The effective user configuration could not be uniquely identified.'
+    };
+    for (const conflict of report.assessment.conflicts) {
+      const item = document.createElement('li'); item.textContent = descriptions[conflict] || `Configuration conflict: ${conflict}`; list.append(item);
+    }
+    results.append(list);
+    const remaining = document.createElement('p');
+    remaining.textContent = `Still required: ${report.remaining_checks.join('; ')}. This inspection covers the selected paths and this app's environment, without profile or command-line overrides. It does not certify an already-running Codex window.`;
+    results.append(remaining);
+  } catch (error) {
+    if (revision !== targetRevision) return;
+    const messages = {
+      E_PREFLIGHT_TARGET:'Use existing absolute paths for the executable, Codex home and working directory.',
+      E_PREFLIGHT_TARGET_IDENTITY:'A selected path is unsupported, inaccessible or contains a file link. Select the original local path.',
+      E_PREFLIGHT_CLIENT_UNQUALIFIED:'This executable version has not been qualified. It was not started.',
+      E_PREFLIGHT_CONFIG_PERMISSIONS:'The selected configuration or its directory has unsupported permissions. No permissions were changed.',
+      E_PREFLIGHT_CONFIG_PARSE:'The selected configuration could not be parsed.',
+      E_PREFLIGHT_CONFIG_CHANGED:'The configuration changed during inspection. Check the target again after the edit finishes.',
+      E_PREFLIGHT_TARGET_CHANGED:'A selected path changed during inspection.',
+      E_PREFLIGHT_HOME_MISMATCH:'The backend reported a different configuration from the selected home.',
+      E_PREFLIGHT_TIMEOUT:'The backend did not finish its status checks in time. No automatic retry was made.'
+    };
+    results.textContent = messages[error] || 'The selected target could not be verified. No integration was installed or test retried.';
+  } finally {
+    preflightPending = false;
+    for (const id of controls) $(id).disabled = false;
   }
 });
 if (invoke) check(false, false); else showError('E_DESKTOP_IPC');

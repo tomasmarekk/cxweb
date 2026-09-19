@@ -8,6 +8,7 @@ fn main() {
             "qualify_tools",
             "background",
             "native_discover",
+            "native_preflight",
         ]),
     ))
     .expect("Tauri build configuration");

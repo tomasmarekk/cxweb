@@ -15,6 +15,17 @@ mod desktop {
     }
 
     #[tauri::command]
+    async fn native_preflight(
+        client: std::path::PathBuf,
+        home: std::path::PathBuf,
+        cwd: std::path::PathBuf,
+    ) -> Result<cxweb_runtime::native_preflight::Report, String> {
+        cxweb_runtime::native_preflight::inspect(&client, &home, &cwd)
+            .await
+            .map_err(str::to_owned)
+    }
+
+    #[tauri::command]
     async fn connect(state: tauri::State<'_, AppState>) -> Result<ControlStatus, String> {
         state
             .control
@@ -109,7 +120,8 @@ mod desktop {
                 qualify_text,
                 qualify_tools,
                 background,
-                native_discover
+                native_discover,
+                native_preflight
             ])
             .run(tauri::generate_context!())
             .expect("cxweb desktop runtime");

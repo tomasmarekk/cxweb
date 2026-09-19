@@ -8,6 +8,7 @@ const flush = () => new Promise(resolve => setImmediate(resolve));
 function panel(respond) {
   const element = () => ({
     children: [],
+    value: '',
     replaceChildren(...nodes) { this.children = nodes; },
     append(...nodes) { this.children.push(...nodes); },
     classList: { toggle() {} },
@@ -30,7 +31,7 @@ function panel(respond) {
     document,
     window: { __TAURI__: { core: { invoke(command, params) {
       calls.push(command);
-      requests.push({ command, refresh: params?.refresh });
+      requests.push({ command, refresh: params?.refresh, params });
       return respond(command, params);
     } } } },
     setTimeout(action) { const token = {}; timers.set(token, action); return token; },
@@ -293,7 +294,7 @@ test('all UI command names are registered and allowed only for the main local wi
   assert.equal(capability.remote, undefined);
   const rust = await readFile(new URL('../src-tauri/src/main.rs', import.meta.url), 'utf8');
   const build = await readFile(new URL('../src-tauri/build.rs', import.meta.url), 'utf8');
-  for (const command of ['connect', 'status', 'qualify', 'qualify_text', 'qualify_tools', 'background', 'native_discover']) {
+  for (const command of ['connect', 'status', 'qualify', 'qualify_text', 'qualify_tools', 'background', 'native_discover', 'native_preflight']) {
     assert.ok(capability.permissions.includes(`allow-${command.replaceAll('_', '-')}`));
     assert.ok(build.includes(`"${command}"`));
     assert.match(rust, new RegExp(`async fn ${command}\\(`));
@@ -347,5 +348,106 @@ test('empty or failed discovery does not reconnect, retry or change native confi
     const results = ui.nodes.get('native-targets');
     if (fail) assert.match(results.textContent, /could not be inspected/);
     else assert.match(results.children[0].textContent, /custom installation may need an explicit path/);
+  }
+});
+
+const selectedTarget = { client: 'C:\\fixture\\codex.exe', home: 'C:\\fixture\\home', cwd: 'C:\\fixture\\workspace' };
+function fillTarget(ui) {
+  for (const [id, key] of [['native-client', 'client'], ['native-home', 'home'], ['native-cwd', 'cwd']]) {
+    ui.nodes.get(id).value = selectedTarget[key];
+    ui.nodes.get(id).input();
+  }
+}
+const submitTarget = ui => ui.nodes.get('native-preflight-form').submit({ preventDefault() {} });
+function preflightReport(compatible = false) {
+  return {
+    client_build: '0.155.1', activation_eligible: false,
+    assessment: { configuration_compatible: compatible, auth_mode: compatible ? 'subscription' : 'signed_out', active_layers: ['user'], conflicts: compatible ? [] : ['subscription_auth_required'] },
+    remaining_checks: ['actual client picker and native coexistence'],
+  };
+}
+
+test('selected target inspection requires all paths and an explicit submit', async () => {
+  const ui = panel(async command => command === 'native_preflight' ? preflightReport() : { phase: 'awaiting_qualification' });
+  await flush();
+  await submitTarget(ui);
+  assert.deepEqual(ui.calls, ['status']);
+  assert.match(ui.nodes.get('native-preflight-result').textContent, /all three absolute paths/);
+  fillTarget(ui);
+  assert.deepEqual(ui.calls, ['status']);
+  await submitTarget(ui);
+  assert.deepEqual(ui.calls, ['status', 'native_preflight']);
+  assert.deepEqual({ ...ui.requests.at(-1).params }, selectedTarget);
+  const results = ui.nodes.get('native-preflight-result');
+  assert.match(results.children[0].textContent, /requirements to resolve/);
+  assert.match(results.children[1].textContent, /Native account mode: Signed out/);
+  assert.match(results.children[2].children[0].textContent, /requires native Codex subscription sign-in/);
+  assert.equal(ui.nodes.get('heading').textContent, 'Session awaiting verification');
+});
+
+test('compatible selected configuration never claims active integration or picker success', async () => {
+  const ui = panel(async command => command === 'native_preflight' ? preflightReport(true) : { phase: 'text_qualified' });
+  await flush();
+  fillTarget(ui); await submitTarget(ui);
+  const results = ui.nodes.get('native-preflight-result');
+  assert.match(results.children[0].textContent, /No configuration conflict/);
+  assert.match(results.children[0].textContent, /Integration is not active/);
+  assert.match(results.children[3].textContent, /actual client picker and native coexistence/);
+  assert.match(results.children[3].textContent, /does not certify an already-running Codex window/);
+  assert.equal(ui.nodes.get('codex').textContent, 'Awaiting integration');
+  ui.nodes.get('native-home').value = 'C:\\other-home';
+  ui.nodes.get('native-home').input();
+  assert.equal(results.hidden, true);
+  assert.equal(results.children.length, 0);
+});
+
+test('pending preflight rejects duplicate submits and suppresses a result for an edited target', async () => {
+  let finish;
+  const ui = panel(async command => command === 'native_preflight'
+    ? new Promise(resolve => { finish = resolve; }) : { phase: 'disconnected' });
+  await flush(); fillTarget(ui);
+  const pending = submitTarget(ui);
+  await submitTarget(ui);
+  await ui.nodes.get('native-discover').click();
+  assert.deepEqual(ui.calls, ['status', 'native_preflight']);
+  for (const id of ['native-client', 'native-home', 'native-cwd', 'native-choice', 'native-preflight', 'native-discover']) assert.equal(ui.nodes.get(id).disabled, true);
+  ui.nodes.get('native-cwd').value = 'C:\\changed';
+  ui.nodes.get('native-cwd').input();
+  finish(preflightReport(true)); await pending;
+  assert.equal(ui.nodes.get('native-preflight-result').hidden, true);
+  assert.equal(ui.nodes.get('native-preflight-result').children.length, 0);
+  assert.equal(ui.nodes.get('native-preflight').disabled, false);
+});
+
+test('discovered candidates require selection and unreviewed candidates cannot be selected', async () => {
+  const ui = panel(async command => command === 'native_discover' ? { candidates: [
+    { executable: selectedTarget.client, reviewed_build: '0.155.1', sources: ['npm_installation'] },
+    { executable: 'C:\\unknown\\codex.exe', reviewed_build: null, sources: ['path_executable'] },
+  ], diagnostics: [] } : { phase: 'disconnected' });
+  await flush(); await ui.nodes.get('native-discover').click();
+  const choice = ui.nodes.get('native-choice');
+  assert.equal(ui.nodes.get('native-client').value, '');
+  assert.equal(choice.children[0].value, '');
+  assert.equal(choice.children[1].disabled, false);
+  assert.equal(choice.children[2].disabled, true);
+  choice.value = selectedTarget.client; choice.change();
+  assert.equal(ui.nodes.get('native-client').value, selectedTarget.client);
+  assert.deepEqual(ui.calls, ['status', 'native_discover']);
+});
+
+test('preflight failures stay local, are not retried and do not export arbitrary errors', async () => {
+  for (const error of ['E_PREFLIGHT_CLIENT_UNQUALIFIED', 'PRIVATE_BACKEND_ERROR']) {
+    const ui = panel(async command => {
+      if (command === 'native_preflight') throw error;
+      return { phase: 'awaiting_qualification' };
+    });
+    await flush(); fillTarget(ui); await submitTarget(ui);
+    assert.deepEqual(ui.calls, ['status', 'native_preflight']);
+    const text = ui.nodes.get('native-preflight-result').textContent;
+    assert.ok(!text.includes('PRIVATE_'));
+    if (error === 'E_PREFLIGHT_CLIENT_UNQUALIFIED') assert.match(text, /It was not started/);
+    else assert.match(text, /could not be verified/);
+    assert.equal(ui.nodes.get('native-preflight').disabled, false);
+    assert.equal(ui.nodes.get('heading').textContent, 'Session awaiting verification');
   }
 });

@@ -8,5 +8,8 @@
 .model-results p { margin:0; }
 .secondary { border:1px solid var(--line); border-radius:8px; background:var(--panel); color:inherit; width:100%; min-height:43px; padding:11px 14px; font-weight:600; }
 #qualification, #tool-qualification, #background-control { margin-top:16px; }
+.native-form { margin-top:20px; } .native-form h2 { font-size:16px; } .native-form label { display:block; margin:12px 0 5px; }
+.native-form input, .native-form select { width:100%; min-height:36px; padding:7px 9px; border:1px solid var(--line); border-radius:6px; background:var(--panel); color:inherit; font:inherit; }
+.native-form p { margin-top:12px; } #native-preflight-result { margin-top:14px; }
 @media(prefers-color-scheme:dark) { :root { background:#18191f; color:#ebedf5; --muted:#a0a5b5; --line:#30323d; --accent:#7774ed; --panel:#202129; } #error { background:#382521; color:#ffb5aa; } }
 @media(max-width:380px) { main { padding:22px 18px; } header { align-items:flex-start; } .badge { max-width:115px; } }

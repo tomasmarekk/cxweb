@@ -66,7 +66,10 @@ pub(crate) async fn fingerprint(path: &Path) -> Result<String, &'static str> {
         return Err("E_PREFLIGHT_EXECUTABLE");
     }
     let mut hash = Sha256::new();
-    let mut buffer = [0u8; 64 * 1024];
+    // This future is also created from Tauri's Windows event callback. Keeping
+    // a 64 KiB array inside it multiplies stack copies through command dispatch
+    // and can exhaust the smaller GUI callback stack before polling begins.
+    let mut buffer = vec![0u8; 64 * 1024];
     let mut total = 0usize;
     loop {
         let count = file
@@ -274,6 +277,13 @@ pub async fn inspect(client: &Path, home: &Path, cwd: &Path) -> Result<Report, &
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_inspection_futures_fit_gui_command_dispatch_stacks() {
+        let path = Path::new(r"C:\fixture");
+        assert!(std::mem::size_of_val(&fingerprint(path)) < 4096);
+        assert!(std::mem::size_of_val(&inspect(path, path, path)) < 16 * 1024);
+        assert!(std::mem::size_of_val(&crate::native_discovery::discover()) < 16 * 1024);
+    }
     #[tokio::test]
     async fn inspection_denies_server_actions_and_never_echoes_native_errors() {
         for response in [

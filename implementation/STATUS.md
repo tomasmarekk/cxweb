@@ -21,6 +21,43 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Desktop target selection and actual preflight UI (2026-09-20)
+
+- Desktop details now include explicit executable, CODEX_HOME and working-directory
+  selection. Discovered reviewed binaries populate the selector; unknown builds
+  cannot be selected from it. Manual paths still pass the same pinned executable,
+  path identity, configuration access and native RPC checks as the CLI. No guessed
+  home or configuration path is silently applied.
+- The Tauri command returns the existing sanitized report. The UI displays native
+  authentication mode, configuration conflicts and remaining qualification checks.
+  Compatible configuration still does not imply active integration or a verified
+  picker. An edited path invalidates the previous report; in-flight results for a
+  changed target are discarded. Duplicate submission and concurrent discovery are
+  excluded while inspection is pending. Failures never expose raw backend text.
+- Actual release-window testing found a native discovery crash (Windows Application
+  event 1000, exception 0xc00000fd). The fingerprint future held a 64 KiB inline
+  buffer, which amplified stack usage through GUI command dispatch. The chunk now
+  resides on the heap. A regression bounds the fingerprint, discovery and preflight
+  futures so the original allocation fails the test. Chunk size and read limits
+  are unchanged. The exception means stack exhaustion, documented by
+  [Microsoft](https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/debugging-a-stack-overflow).
+- After rebuilding, Windows Computer Use successfully ran native discovery in the
+  actual cxweb Tauri window, entered a protected disposable signed-out home/workspace,
+  inspected CLI 0.155.1, selected App backend 0.155.0-alpha.9.2 from the dropdown and
+  inspected it. Both reported Signed out and the subscription requirement without
+  activation. The first result disappeared on selection change. Result layout was
+  visually inspected, the fixture configuration remained absent and the test window
+  was closed afterward. Portable evidence: `integration-tests/compatibility/desktop-native-preflight-ui.json`.
+- The existing manual-login probe remained live and held the browser profile, so
+  the separate browser runtime status correctly stayed unavailable during this
+  independent native-target test. No blocked Chrome surface was accessed, no
+  ChatGPT desktop was launched and no real native login/configuration was changed.
+- Validation: 26 Node desktop UI tests passed; all 195 workspace Rust tests passed
+  with four opt-in tests ignored. Workspace Clippy with warnings denied, formatting
+  and diff checks passed. Release desktop and CLI builds succeeded. Full browser,
+  actual Codex App picker, native subscription coexistence and production activation
+  remain unqualified.
+
 ## Read-only native executable discovery (2026-09-20)
 
 - Added `cxweb native-discover` and Find Codex installations in desktop details.

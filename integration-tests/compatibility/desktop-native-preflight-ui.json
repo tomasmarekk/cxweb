@@ -1,0 +1,28 @@
+{
+  "schema": "cxweb.desktop-native-preflight-ui.v1",
+  "date": "2026-09-20",
+  "result": "PASS",
+  "method": "Windows Computer Use against the actual cxweb release window and Tauri handlers",
+  "desktop_executable_sha256": "9a2266c1e536982865f2bae9cd2d85b30712e94d7b8bd5162afa2542774533c7",
+  "fixture": "Previously protected disposable signed-out home and workspace; no real native account",
+  "discovery": {
+    "observed_builds": ["0.155.0-alpha.9.2", "0.155.1"],
+    "command_completed_without_exit": true,
+    "unknown_location_diagnostic_visible": true
+  },
+  "selected_target_checks": [
+    {"backend": "0.155.1", "selection": "Explicit executable path", "auth_mode": "signed_out", "subscription_requirement_visible": true, "integration_active": false},
+    {"backend": "0.155.0-alpha.9.2", "selection": "Discovered dropdown entry", "auth_mode": "signed_out", "subscription_requirement_visible": true, "integration_active": false}
+  ],
+  "previous_result_removed_on_selection_change": true,
+  "remaining_qualification_checks_visible": true,
+  "result_layout_inspected": true,
+  "fixture_config_still_absent_after_checks": true,
+  "cxweb_test_window_closed_after_verification": true,
+  "initial_failure": {"operation": "Native discovery through Tauri", "windows_application_event": 1000, "exception": "0xc00000fd", "resolution": "Move fingerprint chunk buffer out of the async future's inline storage"},
+  "limits": [
+    "The browser runtime could not attach because the existing manual-login probe still owned its profile; this unrelated status remained visible.",
+    "No login, model generation, native subscription coexistence or actual Codex App picker was tested.",
+    "Screenshots and accessibility observations were inspected in the tool session; this portable record omits local user paths and window identifiers."
+  ]
+}

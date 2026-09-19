@@ -33,6 +33,21 @@
     <p id="runtime">The browser has not started yet.</p><p id="diagnostic"></p>
     <button id="native-discover" class="secondary">Find Codex installations</button>
     <div id="native-targets" class="selectable" aria-live="polite" hidden></div>
+    <form id="native-preflight-form" class="native-form">
+      <h2>Check a Codex target</h2>
+      <p>Select the executable and directories for the client you intend to connect. The app and terminals can use different Codex homes.</p>
+      <label for="native-choice">Discovered executable</label>
+      <select id="native-choice"><option value="">Choose an installation or enter a path below</option></select>
+      <label for="native-client">Codex executable path</label>
+      <input id="native-client" type="text" autocomplete="off" spellcheck="false" placeholder="C:\path\to\codex.exe" required>
+      <label for="native-home">Codex home directory (CODEX_HOME)</label>
+      <input id="native-home" type="text" autocomplete="off" spellcheck="false" placeholder="C:\Users\you\.codex" required>
+      <label for="native-cwd">Working directory</label>
+      <input id="native-cwd" type="text" autocomplete="off" spellcheck="false" placeholder="C:\path\to\project" required>
+      <p>This starts only a reviewed Codex backend for configuration and account-status checks. It sends no model request and leaves your login and configuration unchanged. Codex may update its own logs or cache.</p>
+      <button id="native-preflight" class="secondary" type="submit">Check selected target</button>
+    </form>
+    <div id="native-preflight-result" class="selectable" aria-live="polite" hidden></div>
   </div></details>
   <p id="error" role="alert" hidden></p>
 </main></body></html>
