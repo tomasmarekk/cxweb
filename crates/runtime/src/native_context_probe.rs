@@ -6,6 +6,7 @@ struct ObservedProvider {
     compactions: AtomicUsize,
     continuations: AtomicUsize,
     failures: Arc<Mutex<Vec<&'static str>>>,
+    repair_fixture: Option<Arc<Browser>>,
 }
 impl WebProvider for ObservedProvider {
     fn validate_warmup(&self, request: &WebRequest) -> Result<(), &'static str> {
@@ -35,11 +36,16 @@ impl WebProvider for ObservedProvider {
         }
         let provider = self.inner.clone();
         let failures = self.failures.clone();
+        let repair_fixture = self.repair_fixture.clone();
         Box::pin(async move {
             match provider.execute(request).await {
                 Ok(response) => response,
                 Err(code) => {
                     failures.lock().unwrap().push(code);
+                    if let Some(browser) = repair_fixture {
+                        browser.mismatched_effort.store(false, Ordering::SeqCst);
+                        browser.uncertain_submission.store(false, Ordering::SeqCst);
+                    }
                     web_failure(code)
                 }
             }
@@ -50,12 +56,25 @@ impl WebProvider for ObservedProvider {
 #[tokio::test]
 #[ignore = "requires CXWEB_CONTEXT_PROBE_BACKEND pointing to a reviewed executable; uses synthetic content only"]
 async fn actual_backend_compacts_through_runtime_http_and_websocket() {
+    run_actual_backend_probe(None).await;
+}
+
+#[tokio::test]
+#[ignore = "requires CXWEB_CONTEXT_PROBE_BACKEND pointing to a reviewed executable; uses synthetic content only"]
+async fn actual_backend_stops_retrying_terminal_refusals() {
+    for code in ["E_MODEL_FIDELITY", "E_SUBMISSION_UNCERTAIN"] {
+        run_actual_backend_probe(Some(code)).await;
+    }
+}
+
+async fn run_actual_backend_probe(expected_error: Option<&'static str>) {
     use cxweb_codex_adapter::{
         catalog_codec::{CatalogCodec, CatalogRoute},
         context_budget::LocalContextBudget,
     };
     use futures_util::StreamExt;
     use std::{future::IntoFuture, path::PathBuf, time::Duration};
+    let terminal_refusal = expected_error.is_some();
     let executable = PathBuf::from(
         std::env::var_os("CXWEB_CONTEXT_PROBE_BACKEND").expect("select a reviewed backend"),
     );
@@ -86,6 +105,13 @@ async fn actual_backend_compacts_through_runtime_http_and_websocket() {
         cxweb_platform::state::protected_directory(&directory).unwrap();
         let (provider, browser) = provider_fixture(false);
         browser.answer_bytes.store(64 * 1024, Ordering::SeqCst);
+        browser
+            .mismatched_effort
+            .store(expected_error == Some("E_MODEL_FIDELITY"), Ordering::SeqCst);
+        browser.uncertain_submission.store(
+            expected_error == Some("E_SUBMISSION_UNCERTAIN"),
+            Ordering::SeqCst,
+        );
         let key = Arc::new(
             crate::checkpoint::Codec::load_or_create(
                 &directory.join("key.dpapi"),
@@ -105,6 +131,7 @@ async fn actual_backend_compacts_through_runtime_http_and_websocket() {
             compactions: AtomicUsize::new(0),
             continuations: AtomicUsize::new(0),
             failures: Arc::default(),
+            repair_fixture: terminal_refusal.then(|| browser.clone()),
         });
         let native_frames = Arc::new(AtomicUsize::new(0));
         let observed_frames = native_frames.clone();
@@ -174,7 +201,7 @@ async fn actual_backend_compacts_through_runtime_http_and_websocket() {
         let descriptor = directory.join("descriptor.json");
         std::fs::write(
             &descriptor,
-            json!({"base_url":gateway.base_url(),"catalog":{"models":[catalog]}}).to_string(),
+            json!({"base_url":gateway.base_url(),"catalog":{"models":[catalog]},"terminal_refusal":terminal_refusal,"expected_error":expected_error}).to_string(),
         )
         .unwrap();
         servers.spawn(axum::serve(listener, gateway.clone().router()).into_future());
@@ -199,23 +226,43 @@ async fn actual_backend_compacts_through_runtime_http_and_websocket() {
         let summary_restored = browser.prompt.lock().unwrap()["history"]
             .to_string()
             .contains("Preserve fixture goal");
-        report["schema"] = json!("cxweb.native-runtime-context-probe.v1");
+        report["schema"] = json!(if terminal_refusal {
+            "cxweb.native-terminal-refusal-probe.v1"
+        } else {
+            "cxweb.native-runtime-context-probe.v1"
+        });
         report["client"] = json!(build);
         report["transport"] = json!(if websocket { "websocket" } else { "http" });
         report["fixture_limits"] = json!({"normal_prompt_bytes":budget.normal_bytes(),"summary_prompt_bytes":budget.summary_bytes(),"estimated_context_tokens":budget.estimated_tokens(),"browser_answer_bytes":64 * 1024});
         report["runtime"] = json!({"http_requests":provider.http.load(Ordering::SeqCst),"websocket_requests":provider.websocket.load(Ordering::SeqCst),"compactions":provider.compactions.load(Ordering::SeqCst),"encrypted_continuations":provider.continuations.load(Ordering::SeqCst),"browser_stub_submissions":browser.sends.load(Ordering::SeqCst),"native_upstream_frames":native_frames.load(Ordering::SeqCst),"summary_restored":summary_restored,"errors":*provider.failures.lock().unwrap()});
+        let expected_requests = if terminal_refusal { 2 } else { 5 };
+        let outcome_verified = if terminal_refusal {
+            provider.compactions.load(Ordering::SeqCst) == 0
+                && provider.continuations.load(Ordering::SeqCst) == 0
+                && browser.sends.load(Ordering::SeqCst)
+                    == if expected_error == Some("E_SUBMISSION_UNCERTAIN") {
+                        2
+                    } else {
+                        1
+                    }
+                && *provider.failures.lock().unwrap() == [expected_error.unwrap()]
+        } else {
+            provider.compactions.load(Ordering::SeqCst) == 1
+                && provider.continuations.load(Ordering::SeqCst) >= 1
+                && browser.sends.load(Ordering::SeqCst) == 4
+                && summary_restored
+                && provider.failures.lock().unwrap().is_empty()
+        };
         let runtime_verified = status.success()
-            && provider.compactions.load(Ordering::SeqCst) == 1
-            && provider.continuations.load(Ordering::SeqCst) >= 1
-            && browser.sends.load(Ordering::SeqCst) == 4
+            && outcome_verified
             && native_frames.load(Ordering::SeqCst) == 0
-            && summary_restored
-            && provider.failures.lock().unwrap().is_empty()
-            && provider.http.load(Ordering::SeqCst) == if websocket { 0 } else { 5 }
-            && provider.websocket.load(Ordering::SeqCst) == if websocket { 5 } else { 0 };
+            && provider.http.load(Ordering::SeqCst)
+                == if websocket { 0 } else { expected_requests }
+            && provider.websocket.load(Ordering::SeqCst)
+                == if websocket { expected_requests } else { 0 };
         report["runtime_verified"] = json!(runtime_verified);
         if !runtime_verified {
-            report["result"] = json!("FAIL runtime context recovery");
+            report["result"] = json!("FAIL runtime verification");
         }
         std::fs::write(&report_path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
         gateway

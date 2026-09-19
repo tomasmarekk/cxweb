@@ -11,33 +11,15 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, sync::Arc};
 
-/// Terminal validation/admission errors must not look like retryable upstream
-/// outages. Retrying an uncertain or rejected turn cannot create another send.
+/// Reviewed clients recognize HTTP 400 as terminal; generic 422/409 refusals
+/// were retried. Only known pre-admission queue failures permit an automatic
+/// retry. Unknown web failures may follow submission and must fail closed.
 pub(crate) fn web_failure(code: &'static str) -> Response {
     use axum::http::StatusCode;
     let mut response = unavailable(code);
     *response.status_mut() = match code {
-        "E_REQUEST_IDENTITY" => StatusCode::BAD_REQUEST,
-        "E_MODEL_UNAVAILABLE" => StatusCode::NOT_FOUND,
-        "E_REQUEST_ALREADY_ADMITTED" | "E_REPLAY_UNAVAILABLE" | "E_SUBMISSION_UNCERTAIN" => {
-            StatusCode::CONFLICT
-        }
-        "E_SESSION_SCOPE"
-        | "E_MODEL_FIDELITY"
-        | "E_USER_MESSAGE_MISMATCH"
-        | "E_TURN_ATTRIBUTION"
-        | "E_TURN_AMBIGUOUS"
-        | "E_OUTPUT_SCHEMA"
-        | "E_COMPACTION_UNQUALIFIED"
-        | "E_CONTEXT_BUDGET"
-        | "E_INVALID_TOOL_ENVELOPE" => StatusCode::UNPROCESSABLE_ENTITY,
-        _ if code.starts_with("E_UNSUPPORTED_") || code == "E_NONPORTABLE_CONTEXT" => {
-            StatusCode::UNPROCESSABLE_ENTITY
-        }
-        _ if code.starts_with("E_CHECKPOINT_") || code == "E_COMPACTION_TRIGGER" => {
-            StatusCode::UNPROCESSABLE_ENTITY
-        }
-        _ => StatusCode::BAD_GATEWAY,
+        "E_QUEUE_FULL" | "E_QUEUE_TIMEOUT" => StatusCode::SERVICE_UNAVAILABLE,
+        _ => StatusCode::BAD_REQUEST,
     };
     response
 }
@@ -385,6 +367,8 @@ mod tests {
         prompt: Mutex<Value>,
         compact: std::sync::atomic::AtomicBool,
         answer_bytes: AtomicUsize,
+        mismatched_effort: std::sync::atomic::AtomicBool,
+        uncertain_submission: std::sync::atomic::AtomicBool,
     }
     impl BrowserDriver for Browser {
         fn verify_completion(&self, _: String) -> BrowserFuture<()> {
@@ -392,12 +376,17 @@ mod tests {
         }
         fn prepare(&self, session: SessionKey) -> BrowserFuture<Prepared> {
             self.sessions.lock().unwrap().push(session.clone());
+            let effort = if self.mismatched_effort.load(Ordering::SeqCst) {
+                "high"
+            } else {
+                "medium"
+            };
             Box::pin(async move {
                 Ok(Prepared {
                     handle: "fixture-target".into(),
                     verified_route: session.route.clone(),
                     verified_session: session,
-                    verified_effort: Some("medium".into()),
+                    verified_effort: Some(effort.into()),
                     baseline: Baseline {
                         ids: vec![],
                         selected_model: "Fixture text".into(),
@@ -429,7 +418,14 @@ mod tests {
                 .next()
                 .unwrap()
                 .to_owned();
-            Box::pin(async { Ok(()) })
+            let uncertain = self.uncertain_submission.load(Ordering::SeqCst);
+            Box::pin(async move {
+                if uncertain {
+                    Err("E_PIPE_TIMEOUT")
+                } else {
+                    Ok(())
+                }
+            })
         }
         fn observe(&self, _: String) -> BrowserFuture<Observation> {
             self.observing.notify_one();
@@ -481,6 +477,8 @@ mod tests {
             prompt: Mutex::new(Value::Null),
             compact: std::sync::atomic::AtomicBool::new(false),
             answer_bytes: AtomicUsize::new(0),
+            mismatched_effort: std::sync::atomic::AtomicBool::new(false),
+            uncertain_submission: std::sync::atomic::AtomicBool::new(false),
         });
         let coordinator = Coordinator::new(Ledger::in_memory(), browser.clone());
         let provider = CoordinatorProvider::new(
@@ -770,6 +768,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn terminal_errors_preserve_codes_and_only_queue_refusals_allow_retries() {
+        for code in [
+            "E_MODEL_FIDELITY",
+            "E_SUBMISSION_UNCERTAIN",
+            "E_CONTEXT_BUDGET",
+            "E_REPLAY_UNAVAILABLE",
+            "E_REQUEST_ALREADY_ADMITTED",
+            "E_GENERATION_TIMEOUT",
+            "E_WEB_DISCONNECTED",
+            "E_FUTURE_UNKNOWN_FAILURE",
+        ] {
+            let response = web_failure(code);
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            let parsed: Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(parsed, json!({"error":{"code":code,"message":code}}));
+        }
+        for code in ["E_QUEUE_FULL", "E_QUEUE_TIMEOUT"] {
+            assert_eq!(web_failure(code).status(), StatusCode::SERVICE_UNAVAILABLE);
+        }
+    }
+
+    #[tokio::test]
     async fn oversized_full_context_is_terminal_before_browser_preparation() {
         let (gateway, browser) = fixture(false);
         let base = gateway.base_url();
@@ -794,7 +815,7 @@ mod tests {
                     .oneshot(Request::from_parts(parts, Body::from(payload.to_string())))
                     .await
                     .unwrap();
-                assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+                assert_eq!(response.status(), StatusCode::BAD_REQUEST);
                 let bytes = response.into_body().collect().await.unwrap().to_bytes();
                 let body: Value = serde_json::from_slice(&bytes).unwrap();
                 assert_eq!(body["error"]["code"], "E_CONTEXT_BUDGET");
@@ -809,7 +830,7 @@ mod tests {
         let base = gateway.base_url();
         let router = gateway.router();
         for (choice, expected) in [
-            ("required", StatusCode::UNPROCESSABLE_ENTITY),
+            ("required", StatusCode::BAD_REQUEST),
             ("auto", StatusCode::OK),
         ] {
             let (parts, _) = request(&base, choice, "context", false).into_parts();
@@ -915,11 +936,7 @@ mod tests {
             }
             assert_eq!(
                 router.clone().oneshot(req).await.unwrap().status(),
-                if variant == 3 {
-                    StatusCode::NOT_FOUND
-                } else {
-                    StatusCode::BAD_REQUEST
-                }
+                StatusCode::BAD_REQUEST
             );
         }
         assert!(browser.sessions.lock().unwrap().is_empty());
@@ -980,7 +997,7 @@ mod tests {
             .await
             .unwrap();
         let response = task.await.unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert_eq!(browser.stops.load(Ordering::SeqCst), 1);
         assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
     }

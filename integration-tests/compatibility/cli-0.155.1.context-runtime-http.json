@@ -3,12 +3,14 @@
   "context_errors": 1,
   "executable_sha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
   "executable_unchanged": true,
+  "expected_local_error": null,
   "fixture_limits": {
     "browser_answer_bytes": 65536,
     "estimated_context_tokens": 24576,
     "normal_prompt_bytes": 98304,
     "summary_prompt_bytes": 262144
   },
+  "local_error_visible": false,
   "real_browser": false,
   "result": "PASS actual native client through cxweb runtime",
   "runtime": {

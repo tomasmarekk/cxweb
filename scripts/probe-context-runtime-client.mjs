@@ -16,6 +16,9 @@ assert.ok([
   'bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226',
 ].includes(fingerprint), 'only a reviewed native backend may run');
 const descriptor = JSON.parse(await readFile(descriptorPath, 'utf8'));
+const terminalRefusal = descriptor.terminal_refusal === true;
+const expectedError = descriptor.expected_error ?? null;
+assert.ok(!terminalRefusal || ['E_MODEL_FIDELITY', 'E_SUBMISSION_UNCERTAIN'].includes(expectedError));
 assert.equal(new URL(descriptor.base_url).hostname, '127.0.0.1');
 const root = dirname(descriptorPath);
 const home = join(root, 'home'); const cwd = join(root, 'workspace');
@@ -46,12 +49,12 @@ const rpc = (method, params) => new Promise((resolve, reject) => {
   pending.set(key, { resolve, reject, timer });
   client.stdin.write(JSON.stringify({ id: key, method, params }) + '\n');
 });
-const report = { synthetic: true, real_browser: false, executable_sha256: fingerprint, turns: [], context_errors: 0, result: 'INCOMPLETE' };
+const report = { synthetic: true, real_browser: false, executable_sha256: fingerprint, expected_local_error: expectedError, turns: [], context_errors: 0, local_error_visible: false, result: 'INCOMPLETE' };
 try {
   await rpc('initialize', { clientInfo: { name: 'cxweb_runtime_context_probe', version: '0.1.0' }, capabilities: { experimentalApi: true } });
   client.stdin.write(JSON.stringify({ method: 'initialized', params: {} }) + '\n');
   const thread = await rpc('thread/start', { cwd, model: 'webbridge/test', ephemeral: true });
-  for (let index = 0; index < 4; index++) {
+  for (let index = 0; index < (terminalRefusal ? 2 : 4); index++) {
     const turn = await rpc('turn/start', { threadId: thread.thread.id, input: [{ type: 'text', text: `Synthetic runtime context turn ${index}.`, text_elements: [] }] });
     let completed;
     for (let poll = 0; poll < 600; poll++) {
@@ -62,10 +65,17 @@ try {
     assert.ok(completed, 'native turn reaches a terminal notification');
     report.turns.push(completed.params.turn.status);
     if (completed.params.turn.error?.codexErrorInfo === 'contextWindowExceeded') report.context_errors++;
+    if (expectedError && completed.params.turn.error?.message?.includes(expectedError)) report.local_error_visible = true;
   }
-  assert.equal(report.context_errors, 1, 'one native context failure');
-  assert.equal(report.turns.filter(status => status === 'completed').length, 3, 'three completed turns');
-  assert.equal(report.turns.at(-1), 'completed', 'native continuation completes after compaction');
+  if (terminalRefusal) {
+    assert.deepEqual(report.turns, ['failed', 'completed'], 'terminal refusal then a new successful turn');
+    assert.equal(report.context_errors, 0, 'a terminal local failure does not pretend context is full');
+    assert.equal(report.local_error_visible, true, 'native failure preserves the specific local error');
+  } else {
+    assert.equal(report.context_errors, 1, 'one native context failure');
+    assert.equal(report.turns.filter(status => status === 'completed').length, 3, 'three completed turns');
+    assert.equal(report.turns.at(-1), 'completed', 'native continuation completes after compaction');
+  }
   assert.ok(!notifications.some(n => n.method === 'item/started' && ['commandExecution', 'fileChange'].includes(n.params?.item?.type)), 'no native tools executed');
   report.result = 'PASS actual native client through cxweb runtime';
 } catch (error) {

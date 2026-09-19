@@ -21,6 +21,41 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Terminal web failures without native retry loops (2026-09-20)
+
+- Actual native tests confirmed that the prior HTTP 422/409 mapping retried a
+  refused turn and replaced its useful cause with `E_REQUEST_ALREADY_ADMITTED`.
+  Web generation failures now use the reviewed HTTP 400 contract while preserving
+  the exact local error code and message. The WebSocket adapter carries that status
+  through its existing error frame. Native upstream responses remain byte-preserved.
+- Only `E_QUEUE_FULL` and `E_QUEUE_TIMEOUT` return a retryable 503: both originate
+  in the scheduler before ledger admission and browser preparation. All other web
+  failures handled by this mapper, including unknown failures that may follow
+  submission, are terminal.
+  Recoverable context exhaustion retains its separate reviewed `response.failed`
+  event and automatic compaction behavior. No quota or policy error is fabricated.
+- Unqualified/disconnected web routes, cancellation before dispatch, worker panic,
+  unsupported owned capabilities and nonportable owned context use the same terminal
+  mapping. Native transport outage handling and native service error bodies are
+  unchanged. Cleanup uncertainty still prevents a successful disconnect report.
+- Expanded the opt-in actual-backend test with a pre-submit model/effort mismatch
+  and a submit operation whose outcome is uncertain. Both CLI 0.155.1 and App
+  backend 0.155.0-alpha.9.2 passed both cases over HTTP and WebSocket: exactly one
+  failed request, its original local error visible to Codex, then one successful
+  fresh user turn. There were no automatic repetitions or native upstream frames.
+  The uncertain case counts its original attempted submission plus the explicitly
+  new turn; it does not claim the first attempted operation never happened.
+- Reports: `integration-tests/compatibility/*.terminal-model-*.json` and
+  `*.terminal-uncertain-*.json`. Reproduction uses `CXWEB_CONTEXT_PROBE_BACKEND`
+  and `cargo test -p cxweb-runtime --lib web_provider::tests::native_context_probe::actual_backend_stops_retrying_terminal_refusals -- --ignored --exact --nocapture`.
+  Both native context-recovery runs also passed again and their four reports were
+  refreshed. Every native run uses isolated homes, a synthetic browser and no tools.
+- Validation: `cargo test --workspace` passed 190 tests with four opt-in tests
+  ignored; all actual-backend opt-in tests above were run separately. Workspace
+  Clippy with warnings denied, formatting and diff checks passed. Release CLI,
+  daemon and desktop builds succeeded. Live browser qualification and actual App
+  picker integration remain open; this does not activate production routing.
+
 ## Actual native context recovery through the runtime (2026-09-20)
 
 - Added an opt-in integration test that runs each fingerprint-pinned native
@@ -50,8 +85,9 @@ entry was visible, which is the expected evidence while activation remains absen
 - An initial invalid fixture omitted the client's requested `medium` effort.
   Fidelity validation correctly refused it before any submission. That run also
   showed CLI retries of a generic HTTP 422/409 rejection; HTTP status selection
-  alone does not establish native terminal behavior. General terminal-error wire
-  mapping remains to be reviewed. This failed fixture is not counted as a pass.
+  alone does not establish native terminal behavior. The subsequent mapping fix
+  and actual-client verification are recorded above. This failed fixture is not
+  counted as a pass.
 - Validation: both opt-in native runs passed; final `cargo test --workspace`
   passed 189 tests with three opt-in tests ignored. Clippy with warnings denied,
   formatting and diff checks passed. Production code and release binaries are
@@ -121,8 +157,9 @@ entry was visible, which is the expected evidence while activation remains absen
   prompt and nonce are used for the eventual submission; there is no truncation
   or second encoding with potentially different content.
 - `E_CONTEXT_BUDGET` is a local rejection returned as HTTP 422 instead of 502.
-  Later native experiments above show that a generic 422 can still trigger
-  transport retries; no repeated browser submission is admitted.
+  Later native experiments showed that a generic 422 can still trigger transport
+  retries. The current mapping uses terminal HTTP 400 as recorded above; no
+  repeated browser submission is admitted.
   Regression coverage includes oversized history, current instructions, tool
   schemas and compaction input, including inputs that exceed the ceiling only
   after Markdown-safe Unicode escaping. All cases reject without preparing a

@@ -57,7 +57,7 @@ pub trait WebProvider: Send + Sync {
 pub struct UnqualifiedProvider;
 impl WebProvider for UnqualifiedProvider {
     fn respond(&self, _: WebRequest) -> WebFuture {
-        Box::pin(async { unavailable("E_COMPATIBILITY_UNQUALIFIED") })
+        Box::pin(async { crate::web_provider::web_failure("E_COMPATIBILITY_UNQUALIFIED") })
     }
 }
 
@@ -136,7 +136,7 @@ impl Gateway {
         transport: WebTransport,
     ) -> Response {
         let Some(lease) = self.admission.acquire() else {
-            return unavailable("E_WEB_DISCONNECTED");
+            return crate::web_provider::web_failure("E_WEB_DISCONNECTED");
         };
         let cancellation = self.admission.cancel.child_token();
         let _cancel_on_disconnect = cancellation.clone().drop_guard();
@@ -144,7 +144,7 @@ impl Gateway {
         let worker = tokio::spawn(async move {
             let _lease = lease;
             if cancellation.is_cancelled() {
-                return unavailable("E_CANCELLED");
+                return crate::web_provider::web_failure("E_CANCELLED");
             }
             let request = WebRequest {
                 payload,
@@ -161,7 +161,9 @@ impl Gateway {
             }
             web.respond(request).await
         });
-        worker.await.unwrap_or_else(|_| unavailable("E_WEB_WORKER"))
+        worker
+            .await
+            .unwrap_or_else(|_| crate::web_provider::web_failure("E_WEB_WORKER"))
     }
     pub fn new(port: u16, native: NativeTransport, web: Arc<dyn WebProvider>) -> Self {
         Self {
@@ -337,7 +339,9 @@ async fn handle(
                     }
                     match model.as_str() {
                         Some(model) if model.starts_with(cxweb_domain::OWNED_MODEL_PREFIX) => {
-                            return unavailable("E_WEB_CAPABILITY_UNSUPPORTED");
+                            return crate::web_provider::web_failure(
+                                "E_WEB_CAPABILITY_UNSUPPORTED",
+                            );
                         }
                         Some(_) => (),
                         None => return StatusCode::BAD_REQUEST.into_response(),
@@ -359,7 +363,7 @@ async fn handle(
             // Native-only capabilities must never turn an owned web model into
             // an authenticated native inference request or a browser tool call.
             if !generation {
-                return unavailable("E_WEB_CAPABILITY_UNSUPPORTED");
+                return crate::web_provider::web_failure("E_WEB_CAPABILITY_UNSUPPORTED");
             }
             if inspected.len() > 8 * 1024 * 1024 {
                 return StatusCode::PAYLOAD_TOO_LARGE.into_response();
@@ -527,7 +531,7 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
             let error = response.into_body().collect().await.unwrap().to_bytes();
             assert!(
                 std::str::from_utf8(&error)
@@ -656,7 +660,7 @@ mod tests {
             (
                 "application/json",
                 r#"{"sdp":"v=0","session":{"model":"webbridge/test"}}"#,
-                StatusCode::BAD_GATEWAY,
+                StatusCode::BAD_REQUEST,
             ),
             (
                 "application/json",
@@ -942,7 +946,7 @@ mod tests {
             .oneshot(owned_request(&gateway.base_url()))
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert_eq!(
             gateway.disconnect_web(Duration::from_secs(1)).await,
             Err("E_WEB_CLEANUP_UNCONFIRMED")
@@ -1092,7 +1096,7 @@ mod tests {
                             .oneshot(request.body(Body::from(bytes)).unwrap())
                             .await
                             .unwrap();
-                        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+                        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
                         let bytes = response.into_body().collect().await.unwrap().to_bytes();
                         assert!(
                             std::str::from_utf8(&bytes)
@@ -1169,7 +1173,7 @@ mod tests {
                         body
                     );
                 } else {
-                    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+                    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
                     let bytes = response.into_body().collect().await.unwrap().to_bytes();
                     assert!(
                         std::str::from_utf8(&bytes)

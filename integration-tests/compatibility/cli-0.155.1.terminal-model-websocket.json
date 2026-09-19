@@ -1,35 +1,35 @@
 {
-  "client": "0.155.0-alpha.9.2",
-  "context_errors": 1,
-  "executable_sha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+  "client": "0.155.1",
+  "context_errors": 0,
+  "executable_sha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
   "executable_unchanged": true,
-  "expected_local_error": null,
+  "expected_local_error": "E_MODEL_FIDELITY",
   "fixture_limits": {
     "browser_answer_bytes": 65536,
     "estimated_context_tokens": 24576,
     "normal_prompt_bytes": 98304,
     "summary_prompt_bytes": 262144
   },
-  "local_error_visible": false,
+  "local_error_visible": true,
   "real_browser": false,
   "result": "PASS actual native client through cxweb runtime",
   "runtime": {
-    "browser_stub_submissions": 4,
-    "compactions": 1,
-    "encrypted_continuations": 1,
-    "errors": [],
+    "browser_stub_submissions": 1,
+    "compactions": 0,
+    "encrypted_continuations": 0,
+    "errors": [
+      "E_MODEL_FIDELITY"
+    ],
     "http_requests": 0,
     "native_upstream_frames": 0,
-    "summary_restored": true,
-    "websocket_requests": 5
+    "summary_restored": false,
+    "websocket_requests": 2
   },
   "runtime_verified": true,
-  "schema": "cxweb.native-runtime-context-probe.v1",
+  "schema": "cxweb.native-terminal-refusal-probe.v1",
   "synthetic": true,
   "transport": "websocket",
   "turns": [
-    "completed",
-    "completed",
     "failed",
     "completed"
   ]
