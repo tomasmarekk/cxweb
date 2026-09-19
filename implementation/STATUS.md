@@ -42,6 +42,34 @@ entry was visible, which is the expected evidence while activation remains absen
   [Playwright Chromium input events](https://github.com/microsoft/playwright/blob/main/packages/playwright-core/src/server/chromium/crInput.ts),
   [Chromium hidden target contract](https://github.com/ChromeDevTools/devtools-protocol/blob/master/pdl/domains/Target.pdl).
 
+## Background browser lifecycle (2026-09-19)
+
+- Closing the login window is detected by exact target identity. The runtime
+  waits for target destruction and graceful browser exit before reusing its
+  dedicated profile. A private `browser-control background` diagnostic can also
+  start the saved profile without opening a visible window. No browser profile
+  or credential material is copied, and no native Codex settings are changed.
+- Background execution uses ordinary Chrome headless mode. Native hidden targets
+  in a headed browser were rejected for generation: their model menu retained a
+  running exit animation after its trigger closed. Synthetic fixtures alone had
+  missed this live failure. Reduced-motion and scheduler-flag experiments did
+  not resolve it and are absent from the final launch configuration.
+- A real cold headless start succeeded over the private pipe, but ChatGPT then
+  required an additional verification step. Background authenticated generation
+  is therefore **NOT QUALIFIED**. No test message was sent in this investigation.
+  The panel distinguishes background loading, expired sign-in and verification
+  challenges. It does not retry or treat a retained composer as authentication
+  evidence while a challenge is present. No challenge automation or browser
+  identity spoofing is implemented.
+- Scope observation now requires an expanded account entry point, so an unrelated
+  model menu cannot accidentally be read as the account menu. Account/workspace
+  identity, actual App/CLI integration and production activation remain open.
+- All 119 workspace tests passed (two opt-in tests ignored); all 25 JavaScript
+  tests passed. Workspace Clippy with warnings denied passed. The real Chrome
+  synthetic background fixture and the opt-in local HTTP/English-language test
+  passed. These local fixtures do not establish provider acceptance of headless
+  operation or release readiness.
+
 ## Composer integrity correction (2026-09-18)
 
 - Added an explicit `browser-control test-tools` operation through the same
@@ -51,7 +79,7 @@ entry was visible, which is the expected evidence while activation remains absen
   `tool_protocol_qualified` result; it does not enable Codex routing.
 - The authenticated tool protocol test passed: both expected requests validated,
   user content matched, an assistant response was attributed, generation had
-  ended and the expected/observed control labels both read `Velmi vysoká`.
+  ended and the expected/observed control labels matched the localized extra-high effort label.
   This proves the two envelope formats can traverse the current web surface.
   It does not prove native tool execution, result delivery or actual pickers.
 - The runtime suite passed 69 tests, workspace Clippy passed, and all three
@@ -67,7 +95,7 @@ entry was visible, which is the expected evidence while activation remains absen
 - A live attempt initially returned `E_MODEL_FIDELITY`. Bounded qualification
   diagnostics now report only model labels and attribution booleans, never the
   request, response, raw turn IDs or account data. A subsequent explicitly run
-  test passed with both labels `Velmi vysoká`, matched user content, an attributed
+  test passed with matching localized extra-high effort labels, matched user content, an attributed
   completed assistant response and the required nonce-bound final envelope.
   This is authenticated text transport evidence, not tool execution or picker
   certification. A following fresh status observation correctly invalidated the
@@ -186,7 +214,7 @@ candidate discovery or a visible login alone.
 Authenticated model discovery subsequently passed on the user's cxweb profile.
 The current ChatGPT composer exposes a structural reasoning-effort slider rather
 than a conventional model list: five positions were observed, with position four
-selected and the visible localized label `Intenzita přemýšlení`. The adapter maps
+selected and a visible localized thinking-effort label. The adapter maps
 these positions to opaque `webbridge/` candidate IDs; it does not infer a hidden
 server model name. A separate owned tab at
 `https://chatgpt.com/?temporary-chat=true` passed exact URL, single visible composer

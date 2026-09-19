@@ -14,11 +14,22 @@ pub struct ManagedPage {
     target: String,
     session: String,
     fixture: bool,
+    hidden: bool,
+}
+
+impl ManagedPage {
+    pub fn is_hidden(&self) -> bool {
+        self.hidden
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LoginObservation {
+    #[serde(default)]
+    pub verification_required: bool,
+    #[serde(default)]
+    pub document_ready: bool,
     #[serde(default)]
     pub browser_language: Option<String>,
     #[serde(default)]
@@ -49,6 +60,10 @@ pub struct ModelSurface {
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelSurfaceDiagnostic {
+    #[serde(default)]
+    pub menu_states: Vec<String>,
+    #[serde(default)]
+    pub interaction_state: std::collections::BTreeMap<String, bool>,
     #[serde(default)]
     pub composer_controls: Vec<String>,
     pub switcher_expanded: Option<bool>,
@@ -107,6 +122,9 @@ pub struct ManagedBrowser {
     next_id: u64,
     failed_qualification: Option<ManagedPage>,
     qualification_diagnostic: Option<QualificationDiagnostic>,
+    model_diagnostic: Option<ModelSurfaceDiagnostic>,
+    login_keeper: Option<ManagedPage>,
+    headless: bool,
 }
 
 impl ManagedBrowser {
@@ -133,6 +151,9 @@ impl ManagedBrowser {
             next_id: 0,
             failed_qualification: None,
             qualification_diagnostic: None,
+            model_diagnostic: None,
+            login_keeper: None,
+            headless: !visible,
         })
     }
 
@@ -145,6 +166,11 @@ impl ManagedBrowser {
     }
 
     pub fn open_login(&mut self) -> io::Result<ManagedPage> {
+        if self.headless {
+            return Err(io::Error::other("E_VISIBLE_LOGIN_REQUIRED"));
+        }
+        // Keep the managed browser alive when the user closes its last visible
+        // login window. The empty target neither reads nor automates sign-in.
         let value = self.call(
             "Target.createTarget",
             json!({"url":"https://chatgpt.com/", "newWindow":true}),
@@ -153,7 +179,95 @@ impl ManagedBrowser {
         let target = value["targetId"]
             .as_str()
             .ok_or_else(|| io::Error::other("missing target identity"))?;
-        self.attach(target.to_owned(), false)
+        let page = self.attach(target.to_owned(), false, false)?;
+        if self.login_keeper.is_none() {
+            match self.open_hidden_page("about:blank", false) {
+                Ok(keeper) => self.login_keeper = Some(keeper),
+                Err(error) => {
+                    let _ = self.close_page(page);
+                    return Err(error);
+                }
+            }
+        }
+        Ok(page)
+    }
+
+    fn open_hidden_page(&mut self, url: &'static str, fixture: bool) -> io::Result<ManagedPage> {
+        let result = self
+            .call(
+                "Target.createTarget",
+                json!({
+                    "url":"about:blank","hidden":!self.headless,"background":true
+                }),
+                None,
+            )
+            .map_err(|_| io::Error::other("E_HIDDEN_TARGET"))?;
+        let target = result["targetId"]
+            .as_str()
+            .ok_or_else(|| io::Error::other("E_BROWSER_TARGET"))?
+            .to_owned();
+        match self.attach(target.clone(), fixture, true) {
+            Ok(page) => {
+                if url != "about:blank" {
+                    let navigated =
+                        self.call("Page.navigate", json!({"url":url}), Some(&page.session));
+                    if !navigated.is_ok_and(|result| result.get("errorText").is_none()) {
+                        let _ = self.close_page(page);
+                        return Err(io::Error::other("E_BACKGROUND_NAVIGATION"));
+                    }
+                }
+                Ok(page)
+            }
+            Err(error) => {
+                let _ = self.call("Target.closeTarget", json!({"targetId":target}), None);
+                Err(io::Error::other(
+                    if error.to_string() == "E_HIDDEN_VIEWPORT" {
+                        "E_HIDDEN_VIEWPORT"
+                    } else {
+                        "E_HIDDEN_ATTACH"
+                    },
+                ))
+            }
+        }
+    }
+
+    pub fn page_exists(&mut self, page: &ManagedPage) -> io::Result<bool> {
+        let result = self.call("Target.getTargets", json!({}), None)?;
+        let targets = result["targetInfos"]
+            .as_array()
+            .ok_or_else(|| io::Error::other("E_BROWSER_TARGETS"))?;
+        Ok(targets
+            .iter()
+            .any(|target| target["targetId"] == page.target))
+    }
+
+    pub fn close_login_window(&mut self, page: &ManagedPage) -> io::Result<()> {
+        if page.hidden {
+            return Ok(());
+        }
+        let observation = self.login_observation(page)?;
+        if !observation.official_page
+            || !observation.composer
+            || !observation.account_surface
+            || observation.login_action
+            || observation.verification_required
+        {
+            return Err(io::Error::other("E_LOGIN_REQUIRED"));
+        }
+        let baseline = self.baseline(page)?;
+        if !baseline.composer_empty || baseline.generating {
+            return Err(io::Error::other("E_BROWSER_BUSY"));
+        }
+        self.close_page_checked(page)
+    }
+
+    /// Resume the saved session after the user closes the sign-in window.
+    /// Authentication is observed only on the official ChatGPT page; a login
+    /// challenge is never handled automatically in the background.
+    pub fn open_background_session(&mut self) -> io::Result<ManagedPage> {
+        // Loading is observed by later status operations. A slow navigation
+        // must not destroy a live target or repeatedly create replacement tabs.
+        self.open_hidden_page("https://chatgpt.com/", false)
     }
 
     pub fn probe_startup_page(&mut self) -> io::Result<Value> {
@@ -170,7 +284,7 @@ impl ManagedBrowser {
         }
         Ok(json!({"page_count":page_count,"startup_window_suppressed":true}))
     }
-    fn attach(&mut self, target: String, fixture: bool) -> io::Result<ManagedPage> {
+    fn attach(&mut self, target: String, fixture: bool, hidden: bool) -> io::Result<ManagedPage> {
         let result = self.call(
             "Target.attachToTarget",
             json!({"targetId":target,"flatten":true}),
@@ -180,10 +294,31 @@ impl ManagedBrowser {
             .as_str()
             .ok_or_else(|| io::Error::other("missing page session"))?
             .to_owned();
+        if hidden {
+            // A target without a native window starts with a zero-size viewport.
+            // Size only its render surface; retain the real browser identity.
+            self.call(
+                "Emulation.setDeviceMetricsOverride",
+                json!({
+                    "width":1280,"height":900,"deviceScaleFactor":1,"mobile":false
+                }),
+                Some(&session),
+            )
+            .map_err(|_| io::Error::other("E_HIDDEN_VIEWPORT"))?;
+            // Hidden targets have no OS focus owner. Give their render surface
+            // focus for normal DOM editing and keyboard menu interactions.
+            self.call(
+                "Emulation.setFocusEmulationEnabled",
+                json!({"enabled":true}),
+                Some(&session),
+            )
+            .map_err(|_| io::Error::other("E_HIDDEN_VIEWPORT"))?;
+        }
         Ok(ManagedPage {
             target,
             session,
             fixture,
+            hidden,
         })
     }
 
@@ -248,6 +383,8 @@ impl ManagedBrowser {
             .is_some_and(|url| url.starts_with("https://chatgpt.com/"))
         {
             return Ok(LoginObservation {
+                verification_required: false,
+                document_ready: false,
                 browser_language: None,
                 page_language: None,
                 official_page: false,
@@ -264,12 +401,14 @@ impl ManagedBrowser {
     /// Opens the ordinary model menu, observes its currently rendered choices,
     /// then closes it. This is non-generative and never reads cookies or auth data.
     pub fn discover_models(&mut self, page: &ManagedPage) -> io::Result<ModelSurface> {
+        self.model_diagnostic = None;
         if !page.fixture {
             let login = self.login_observation(page)?;
             if !login.official_page
                 || !login.composer
                 || !login.account_surface
                 || login.login_action
+                || login.verification_required
             {
                 return Err(io::Error::other("E_LOGIN_REQUIRED"));
             }
@@ -440,8 +579,12 @@ impl ManagedBrowser {
         self.qualification_diagnostic.clone()
     }
 
+    pub fn model_diagnostic(&self) -> Option<ModelSurfaceDiagnostic> {
+        self.model_diagnostic.clone()
+    }
+
     pub fn account_scope(&mut self, page: &ManagedPage) -> io::Result<ScopeSurface> {
-        self.call("Page.bringToFront", json!({}), Some(&page.session))?;
+        self.prepare_page(page)?;
         let opened = self
             .dom(page, include_str!("dom/open_account.js"), vec![])
             .map_err(|_| io::Error::other("E_ACCOUNT_OPEN"))?;
@@ -560,22 +703,7 @@ impl ManagedBrowser {
     }
 
     pub fn open_temporary_chat(&mut self) -> io::Result<ManagedPage> {
-        let value = self.call(
-            "Target.createTarget",
-            json!({"url":"https://chatgpt.com/?temporary-chat=true","newWindow":false}),
-            None,
-        )?;
-        let target = value["targetId"]
-            .as_str()
-            .ok_or_else(|| io::Error::other("missing target identity"))?
-            .to_owned();
-        let page = match self.attach(target.clone(), false) {
-            Ok(page) => page,
-            Err(error) => {
-                let _ = self.call("Target.closeTarget", json!({"targetId":target}), None);
-                return Err(error);
-            }
-        };
+        let page = self.open_hidden_page("https://chatgpt.com/?temporary-chat=true", false)?;
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
             if self
@@ -593,7 +721,7 @@ impl ManagedBrowser {
     }
 
     fn click_model_switcher(&mut self, page: &ManagedPage) -> io::Result<()> {
-        self.call("Page.bringToFront", json!({}), Some(&page.session))?;
+        self.prepare_page(page)?;
         let deadline = Instant::now() + Duration::from_secs(5);
         let point = loop {
             if let Ok(point) = self.dom(page, include_str!("dom/open_models.js"), vec![]) {
@@ -607,10 +735,29 @@ impl ManagedBrowser {
         if point["expanded"] == true {
             return Ok(());
         }
+        let (x, y) = Self::point_coordinates(&point)?;
+        self.call(
+            "Input.dispatchMouseEvent",
+            json!({"type":"mouseMoved","x":x,"y":y,"button":"none","buttons":0}),
+            Some(&page.session),
+        )?;
+        // Hover can change the label and width. Re-observe the actual hit
+        // target before pressing; never click a stale pre-hover coordinate.
+        let point = self.dom(page, include_str!("dom/open_models.js"), vec![])?;
+        if point["expanded"] == true {
+            return Ok(());
+        }
         self.click_point(page, &point)
     }
 
-    fn click_point(&mut self, page: &ManagedPage, point: &Value) -> io::Result<()> {
+    fn prepare_page(&mut self, page: &ManagedPage) -> io::Result<()> {
+        if !page.hidden {
+            self.call("Page.bringToFront", json!({}), Some(&page.session))?;
+        }
+        Ok(())
+    }
+
+    fn point_coordinates(point: &Value) -> io::Result<(f64, f64)> {
         let (Some(x), Some(y)) = (point["x"].as_f64(), point["y"].as_f64()) else {
             return Err(io::Error::other("E_MODEL_MENU"));
         };
@@ -621,6 +768,11 @@ impl ManagedBrowser {
         {
             return Err(io::Error::other("E_MODEL_MENU"));
         }
+        Ok((x, y))
+    }
+
+    fn click_point(&mut self, page: &ManagedPage, point: &Value) -> io::Result<()> {
+        let (x, y) = Self::point_coordinates(point)?;
         for (event_type, button, buttons) in [
             ("mouseMoved", "none", 0),
             ("mousePressed", "left", 1),
@@ -657,6 +809,10 @@ impl ManagedBrowser {
                 return Ok(());
             }
             if Instant::now() >= deadline {
+                if let Ok(value) = self.dom(page, include_str!("dom/model_surface.js"), vec![]) {
+                    self.model_diagnostic =
+                        serde_json::from_value(value["diagnostic"].clone()).ok();
+                }
                 return Err(io::Error::other("E_MODEL_CLOSE"));
             }
             std::thread::sleep(Duration::from_millis(50));
@@ -737,35 +893,50 @@ impl ManagedBrowser {
 
     /// Keep the page lease until closure is confirmed, so cleanup can be retried.
     pub fn close_page_checked(&mut self, page: &ManagedPage) -> io::Result<()> {
-        let result = self.call("Target.closeTarget", json!({"targetId":page.target}), None);
-        if result.is_ok_and(|result| result["success"] == true) {
-            return Ok(());
-        }
+        let _ = self.call("Target.closeTarget", json!({"targetId":page.target}), None);
         // A user may already have closed the owned tab. Confirm absence rather
-        // than claiming cleanup from an error or dropping the lease blindly.
-        let targets = self.call("Target.getTargets", json!({}), None)?;
-        let targets = targets["targetInfos"]
-            .as_array()
-            .ok_or_else(|| io::Error::other("E_BROWSER_RELEASE"))?;
-        if targets
-            .iter()
-            .any(|target| target["targetId"] == page.target)
-        {
-            return Err(io::Error::other("E_BROWSER_RELEASE"));
+        // than claiming cleanup from an error or the deprecated `success`
+        // acknowledgement, which can arrive before target destruction.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if !self.page_exists(page)? {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(io::Error::other("E_BROWSER_RELEASE"));
+            }
+            std::thread::sleep(Duration::from_millis(50));
         }
-        Ok(())
     }
 
     /// Development qualification only. Uses bundled synthetic markup in a fresh
     /// blank target. It cannot qualify selectors against a real account.
     pub fn probe_dom(&mut self) -> io::Result<Value> {
-        let result = self.call("Target.createTarget", json!({"url":"about:blank"}), None)?;
+        let mut result = self.probe_dom_mode(true)?;
+        self.probe_dom_mode(false)?;
+        self.probe_startup_page()?;
+        result["background_page_fixture"] = json!("PASS");
+        result["headless"] = json!(self.headless);
+        result["owned_targets_released"] = json!(true);
+        Ok(result)
+    }
+
+    fn probe_dom_mode(&mut self, hidden: bool) -> io::Result<Value> {
+        let result = self.call(
+            "Target.createTarget",
+            json!({"url":"about:blank", "hidden":hidden && !self.headless, "background":hidden}),
+            None,
+        )?;
         let target = result["targetId"]
             .as_str()
             .ok_or_else(|| io::Error::other("missing fixture target"))?
             .to_owned();
-        let page = self.attach(target, true)?;
+        let page = self.attach(target, true, hidden)?;
         let result = self.run_dom_fixture(&page);
+        let result = result.map_err(|error| {
+            let metrics = self.dom(&page, "function () { return { width:innerWidth, height:innerHeight, focused:document.hasFocus(), visible:document.visibilityState === 'visible' }; }", vec![]).unwrap_or(Value::Null);
+            io::Error::other(format!("E_DOM_FIXTURE hidden={hidden} metrics={metrics}: {error}"))
+        });
         let closed = self.close_page(page);
         let result = result?;
         closed?;
@@ -905,7 +1076,10 @@ impl ManagedBrowser {
     }
 
     pub fn close(&mut self) -> io::Result<()> {
-        self.call("Browser.close", json!({}), None).map(|_| ())
+        // Browser.close may terminate the pipe before its reply is delivered.
+        // Process exit, not a CDP acknowledgement, releases the profile lock.
+        let _ = self.call("Browser.close", json!({}), None);
+        self.process.wait_for_exit()
     }
 
     // Private primitive; callers cannot supply arbitrary JS through application IPC.
@@ -1052,7 +1226,11 @@ mod tests {
             .call("Target.createTarget", json!({"url":origin}), None)
             .unwrap();
         let page = browser
-            .attach(target["targetId"].as_str().unwrap().to_owned(), false)
+            .attach(
+                target["targetId"].as_str().unwrap().to_owned(),
+                false,
+                false,
+            )
             .unwrap();
         let deadline = Instant::now() + Duration::from_secs(25);
         let mut loaded = false;

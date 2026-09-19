@@ -117,6 +117,9 @@ impl RemoteControl {
     pub async fn qualify_tools(&self) -> Result<ControlStatus, &'static str> {
         self.perform(LoginAction::QualifyTools).await
     }
+    pub async fn background(&self) -> Result<ControlStatus, &'static str> {
+        self.perform(LoginAction::Background).await
+    }
     pub async fn status(&self, refresh: bool) -> Result<ControlStatus, &'static str> {
         if refresh {
             return self.perform(LoginAction::Refresh).await;
@@ -215,7 +218,7 @@ mod tests {
                 LoginAction::Connect => {
                     self.connects.fetch_add(1, Ordering::SeqCst);
                 }
-                LoginAction::Refresh => {
+                LoginAction::Refresh | LoginAction::Background => {
                     self.refreshes.fetch_add(1, Ordering::SeqCst);
                 }
                 LoginAction::Qualify => {
@@ -230,9 +233,10 @@ mod tests {
             Box::pin(async move {
                 finish.acquire().await.unwrap().forget();
                 Ok(ControlStatus {
+                    background_session: action == LoginAction::Background,
                     phase: match action {
                         LoginAction::Connect => "authenticating",
-                        LoginAction::Refresh => "awaiting_qualification",
+                        LoginAction::Refresh | LoginAction::Background => "awaiting_qualification",
                         LoginAction::Qualify => "candidates_observed",
                         LoginAction::QualifyText => "text_qualified",
                         LoginAction::QualifyTools => "tool_protocol_qualified",
@@ -297,6 +301,20 @@ mod tests {
         stop.cancel();
         task.await.unwrap().unwrap();
     }
+    #[tokio::test]
+    async fn background_transition_is_cached_without_reopening_login_or_qualifying_routes() {
+        let (channel, browser, stop, task) = fixture();
+        browser.finish.add_permits(1);
+        let status = client(&channel).background().await.unwrap();
+        assert!(status.background_session);
+        assert!(!status.routing_installed && !status.live_qualified);
+        assert_eq!(client(&channel).status(false).await.unwrap(), status);
+        assert_eq!(browser.connects.load(Ordering::SeqCst), 0);
+        assert_eq!(browser.refreshes.load(Ordering::SeqCst), 1);
+        stop.cancel();
+        task.await.unwrap().unwrap();
+    }
+
     #[tokio::test]
     async fn closing_ui_waiter_keeps_admitted_login_operation_alive() {
         let (channel, browser, stop, task) = fixture();

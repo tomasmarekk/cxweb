@@ -11,7 +11,7 @@ use std::{
     ptr::{null, null_mut},
 };
 use windows_sys::Win32::{
-    Foundation::{HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation},
+    Foundation::{HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation, WAIT_OBJECT_0},
     Security::SECURITY_ATTRIBUTES,
     System::{
         JobObjects::{
@@ -25,7 +25,7 @@ use windows_sys::Win32::{
             EXTENDED_STARTUPINFO_PRESENT, InitializeProcThreadAttributeList,
             LPPROC_THREAD_ATTRIBUTE_LIST, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION,
             ResumeThread, STARTF_USESHOWWINDOW, STARTUPINFOEXW, TerminateProcess,
-            UpdateProcThreadAttribute,
+            UpdateProcThreadAttribute, WaitForSingleObject,
         },
     },
     UI::WindowsAndMessaging::{SW_HIDE, SW_SHOWNORMAL},
@@ -38,6 +38,17 @@ pub struct BrowserProcess {
     pub pid: u32,
     pub input: File,
     pub output: File,
+}
+
+impl BrowserProcess {
+    pub fn wait_for_exit(&self) -> io::Result<()> {
+        // SAFETY: the owned process handle stays alive for this bounded wait.
+        if unsafe { WaitForSingleObject(self._process.as_raw_handle(), 10_000) } == WAIT_OBJECT_0 {
+            Ok(())
+        } else {
+            Err(io::Error::other("E_BROWSER_RELEASE"))
+        }
+    }
 }
 
 fn wide(value: &std::ffi::OsStr) -> io::Result<Vec<u16>> {
@@ -145,8 +156,9 @@ pub fn launch(executable: &Path, profile: &Path, visible: bool) -> io::Result<Br
     }
     let mut handles = [child_in.as_raw_handle(), child_out.as_raw_handle()];
     let mut attributes = Attributes::new(&mut handles)?;
+    let mode = if visible { "" } else { " --headless=new" };
     let command = format!(
-        "\"{exe_string}\" --user-data-dir=\"{profile_string}\" --remote-debugging-pipe --remote-debugging-io-pipes={},{} --no-first-run --no-default-browser-check --no-startup-window --lang=en-US --accept-lang=en-US,en",
+        "\"{exe_string}\" --user-data-dir=\"{profile_string}\" --remote-debugging-pipe --remote-debugging-io-pipes={},{} --no-first-run --no-default-browser-check --no-startup-window --lang=en-US --accept-lang=en-US,en{mode}",
         handles[0] as usize as u32, handles[1] as usize as u32
     );
     let mut command = wide(command.as_ref())?;

@@ -7,6 +7,8 @@ function () {
   return {
     browser_language: language(navigator.language),
     page_language: language(document.documentElement.lang),
+    verification_required: !!document.querySelector('#challenge-running, #challenge-stage, iframe[src^="https://challenges.cloudflare.com/"]') || document.title === 'Just a moment...',
+    document_ready: document.readyState === 'complete',
     official_page: true,
     composer: !!composer,
     account_surface: !!profile,

@@ -15,6 +15,8 @@ use tokio::sync::{mpsc, oneshot};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ControlStatus {
+    #[serde(default)]
+    pub background_session: bool,
     pub phase: String,
     pub browser_version: Option<String>,
     pub observation: Option<LoginObservation>,
@@ -48,6 +50,7 @@ pub struct QualifiedModel {
 impl Default for ControlStatus {
     fn default() -> Self {
         Self {
+            background_session: false,
             phase: "disconnected".into(),
             browser_version: None,
             observation: None,
@@ -66,6 +69,14 @@ impl Default for ControlStatus {
 }
 type Reply = oneshot::Sender<Result<ControlStatus, &'static str>>;
 
+fn authenticated_surface(observation: &LoginObservation) -> bool {
+    observation.official_page
+        && observation.composer
+        && observation.account_surface
+        && !observation.login_action
+        && !observation.verification_required
+}
+
 fn qualification_failure_state(submission_intent: bool, error: &str) -> TurnState {
     let send_refused = matches!(
         error,
@@ -81,6 +92,27 @@ fn qualification_failure_state(submission_intent: bool, error: &str) -> TurnStat
 #[cfg(test)]
 mod qualification_tests {
     use super::*;
+
+    #[test]
+    fn verification_challenge_cannot_qualify_a_stale_authenticated_surface() {
+        let mut observation = LoginObservation {
+            verification_required: false,
+            document_ready: true,
+            browser_language: Some("en-US".into()),
+            page_language: Some("en-US".into()),
+            official_page: true,
+            composer: true,
+            account_surface: true,
+            login_action: false,
+            selected_label: None,
+        };
+        assert!(authenticated_surface(&observation));
+        observation.verification_required = true;
+        assert!(!authenticated_surface(&observation));
+        observation.verification_required = false;
+        observation.login_action = true;
+        assert!(!authenticated_surface(&observation));
+    }
 
     #[tokio::test]
     async fn known_send_refusal_is_terminal_without_becoming_uncertain_or_replayable() {
@@ -145,6 +177,7 @@ mod qualification_tests {
     }
 }
 enum WorkerCommand {
+    Background(Reply),
     Connect(Reply),
     Status(Reply),
     Qualify(Reply),
@@ -171,12 +204,13 @@ impl Control {
                 let mut status = ControlStatus::default();
                 let mut observed_routes: Vec<(QualifiedModel, String)> = Vec::new();
                 while let Some(command) = incoming.blocking_recv() {
-                    let (connect, qualify, qualification_kind, reply) = match command {
-                        WorkerCommand::Connect(reply) => (true, false, None, reply),
-                        WorkerCommand::Status(reply) => (false, false, None, reply),
-                        WorkerCommand::Qualify(reply) => (false, true, None, reply),
+                    let (connect, background, qualify, qualification_kind, reply) = match command {
+                        WorkerCommand::Connect(reply) => (true, false, false, None, reply),
+                        WorkerCommand::Background(reply) => (false, true, false, None, reply),
+                        WorkerCommand::Status(reply) => (false, false, false, None, reply),
+                        WorkerCommand::Qualify(reply) => (false, false, true, None, reply),
                         WorkerCommand::QualifyTurn(kind, reply) => {
-                            (false, false, Some(kind), reply)
+                            (false, false, false, Some(kind), reply)
                         }
                     };
                     if reply.is_closed() {
@@ -189,8 +223,19 @@ impl Control {
                         status = ControlStatus::default();
                         observed_routes.clear();
                     }
-                    if connect && page.is_none() {
+                    if connect
+                        && (page.is_none()
+                            || (status.phase == "authenticating"
+                                && page.as_ref().is_some_and(ManagedPage::is_hidden)))
+                    {
                         let opened = (|| {
+                            if page.as_ref().is_some_and(ManagedPage::is_hidden) {
+                                if let Some(current) = browser.as_mut() {
+                                    current.close().map_err(|_| "E_BROWSER_RELEASE")?;
+                                }
+                                page = None;
+                                browser = None;
+                            }
                             if browser.is_none() {
                                 browser = Some(
                                     ManagedBrowser::launch(&executable, &paths.profile, true)
@@ -198,10 +243,28 @@ impl Control {
                                 );
                             }
                             let browser = browser.as_mut().ok_or("E_BROWSER_START")?;
+                            if let Some(current) = page.as_ref() {
+                                browser
+                                    .close_page_checked(current)
+                                    .map_err(|_| "E_BROWSER_RELEASE")?;
+                                page = None;
+                            }
                             let version = browser.version().map_err(|_| "E_BROWSER_PIPE")?;
                             status.browser_version = version["product"].as_str().map(str::to_owned);
-                            page = Some(browser.open_login().map_err(|_| "E_BROWSER_LOGIN")?);
-                            status.phase = "authenticating".into();
+                            page = Some(browser.open_login().map_err(|error| {
+                                match error.to_string().as_str() {
+                                    "E_HIDDEN_TARGET" => "E_HIDDEN_TARGET",
+                                    "E_HIDDEN_ATTACH" => "E_HIDDEN_ATTACH",
+                                    "E_HIDDEN_VIEWPORT" => "E_HIDDEN_VIEWPORT",
+                                    _ => "E_BROWSER_LOGIN",
+                                }
+                            })?);
+                            status = ControlStatus {
+                                phase: "authenticating".into(),
+                                browser_version: status.browser_version.take(),
+                                ..Default::default()
+                            };
+                            observed_routes.clear();
                             Ok(())
                         })();
                         if let Err(error) = opened {
@@ -217,7 +280,78 @@ impl Control {
                         let _ = reply.send(Ok(status.clone()));
                         continue;
                     }
+                    if background {
+                        let result = match (browser.as_mut(), page.as_ref()) {
+                            (Some(browser), Some(page)) => browser
+                                .close_login_window(page)
+                                .map_err(|error| match error.to_string().as_str() {
+                                    "E_BROWSER_BUSY" => "E_BROWSER_BUSY",
+                                    "E_LOGIN_REQUIRED" => "E_LOGIN_REQUIRED",
+                                    _ => "E_BROWSER_RELEASE",
+                                }),
+                            (None, None) => Ok(()),
+                            _ => Err("E_LOGIN_REQUIRED"),
+                        };
+                        if let Err(code) = result {
+                            let _ = reply.send(Err(code));
+                            continue;
+                        }
+                    }
+                    let restore_background = (background && browser.is_none() && page.is_none())
+                        || match (browser.as_mut(), page.as_ref()) {
+                            (Some(browser), Some(current)) => {
+                                matches!(browser.page_exists(current), Ok(false))
+                            }
+                            _ => false,
+                        };
+                    if restore_background {
+                        // A closed login window does not discard the saved
+                        // session. Replace only a positively absent target;
+                        // transport timeouts never trigger a second browser.
+                        let restored = (|| {
+                            if let Some(current) = browser.as_mut() {
+                                current.close()?;
+                            }
+                            page = None;
+                            browser = None;
+                            let mut managed =
+                                ManagedBrowser::launch(&executable, &paths.profile, false)
+                                    .map_err(|_| std::io::Error::other("E_BROWSER_START"))?;
+                            let version = managed.version()?;
+                            let background_page = managed.open_background_session()?;
+                            status = ControlStatus {
+                                phase: "authenticating".into(),
+                                background_session: true,
+                                browser_version: version["product"].as_str().map(str::to_owned),
+                                ..Default::default()
+                            };
+                            observed_routes.clear();
+                            browser = Some(managed);
+                            Ok::<_, std::io::Error>(background_page)
+                        })();
+                        match restored {
+                            Ok(background_page) => page = Some(background_page),
+                            Err(error) => {
+                                page = None;
+                                status = ControlStatus {
+                                    phase: "browser_unavailable".into(),
+                                    ..Default::default()
+                                };
+                                observed_routes.clear();
+                                let _ = reply.send(Err(match error.to_string().as_str() {
+                                    "E_HIDDEN_TARGET" => "E_HIDDEN_TARGET",
+                                    "E_HIDDEN_ATTACH" => "E_HIDDEN_ATTACH",
+                                    "E_HIDDEN_VIEWPORT" => "E_HIDDEN_VIEWPORT",
+                                    "E_BACKGROUND_NAVIGATION" => "E_BACKGROUND_NAVIGATION",
+                                    "E_BROWSER_START" => "E_BROWSER_START",
+                                    _ => "E_BROWSER_RELEASE",
+                                }));
+                                continue;
+                            }
+                        }
+                    }
                     if let (Some(browser), Some(page)) = (browser.as_mut(), page.as_ref()) {
+                        status.background_session = page.is_hidden();
                         // A fresh observation supersedes the previous text test,
                         // including when discovery exits early with an error.
                         status.text_qualified_model = None;
@@ -225,11 +359,7 @@ impl Control {
                         status.qualification_evidence = None;
                         match browser.login_observation(page) {
                             Ok(observation) => {
-                                status.phase = if observation.official_page
-                                    && observation.composer
-                                    && observation.account_surface
-                                    && !observation.login_action
-                                {
+                                status.phase = if authenticated_surface(&observation) {
                                     "awaiting_qualification".into()
                                 } else {
                                     "authenticating".into()
@@ -359,7 +489,8 @@ impl Control {
                                             status.candidate_models.clear();
                                             observed_routes.clear();
                                             status.temporary_chat_available = None;
-                                            status.model_discovery_diagnostic = None;
+                                            status.model_discovery_diagnostic =
+                                                browser.model_diagnostic();
                                             let code = match error.to_string().as_str() {
                                                 "E_LOGIN_REQUIRED" => "E_LOGIN_REQUIRED",
                                                 "E_MODEL_OPEN" => "E_MODEL_OPEN",
@@ -390,6 +521,24 @@ impl Control {
                                     }
                                     let (model, identity) = selected[0];
                                     let fresh = browser.discover_models(page);
+                                    if let Ok(surface) = &fresh {
+                                        status.model_discovery_diagnostic =
+                                            Some(surface.diagnostic.clone());
+                                        status.qualification_diagnostic =
+                                            Some(cxweb_browser_adapter::QualificationDiagnostic {
+                                                expected_model_label: model.label.clone(),
+                                                observed_model_label: surface
+                                                    .candidates
+                                                    .iter()
+                                                    .find(|candidate| candidate.selected)
+                                                    .map(|candidate| candidate.label.clone())
+                                                    .unwrap_or_default(),
+                                                user_present: false,
+                                                user_matches: false,
+                                                assistant_present: false,
+                                                generating: false,
+                                            });
+                                    }
                                     if !fresh.is_ok_and(|surface| {
                                         surface.candidates.iter().filter(|c| c.selected).count()
                                             == 1
@@ -601,6 +750,16 @@ impl Control {
     }
     pub async fn connect(&self) -> Result<ControlStatus, &'static str> {
         self.request(true).await
+    }
+    pub async fn background(&self) -> Result<ControlStatus, &'static str> {
+        let (reply, receive) = oneshot::channel();
+        self.commands
+            .try_send(WorkerCommand::Background(reply))
+            .map_err(|_| "E_CONTROL_BUSY")?;
+        tokio::time::timeout(Duration::from_secs(30), receive)
+            .await
+            .map_err(|_| "E_CONTROL_TIMEOUT")?
+            .map_err(|_| "E_CONTROL_CLOSED")?
     }
     pub async fn status(&self) -> Result<ControlStatus, &'static str> {
         self.request(false).await

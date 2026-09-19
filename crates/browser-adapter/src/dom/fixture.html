@@ -1,5 +1,5 @@
 <!doctype html><html><head><meta charset="utf-8"><title>cxweb synthetic fixture</title></head><body>
-<form><button type="button" data-testid="model-switcher-dropdown-button" aria-haspopup="menu">Fixture text mode</button>
+<form><button type="button" data-testid="model-switcher-dropdown-button" aria-haspopup="menu" style="width:340px">Fixture text mode</button>
 <button type="button" data-testid="accounts-profile-button" aria-controls="account-menu" aria-expanded="false">Fixture account</button>
 <div id="account-menu" role="menu" hidden><span>fixture@example.invalid</span><div role="menuitemradio" aria-checked="true" data-workspace-id="fixture-workspace">Fixture workspace</div></div>
 <button data-testid="temporary-chat-button">Temporary chat</button>
@@ -12,11 +12,24 @@
 <div id="prompt-textarea" contenteditable="true"></div><button type="button" data-testid="send-button">Send</button></form>
 <script>
 document.querySelector('[data-testid="accounts-profile-button"]').onclick = event => {
-  document.querySelector('#account-menu').hidden = false;
-  event.currentTarget.setAttribute('aria-expanded', 'true');
+  const menu = document.querySelector('#account-menu');
+  menu.hidden = !menu.hidden;
+  event.currentTarget.setAttribute('aria-expanded', String(!menu.hidden));
+};
+document.querySelector('[data-testid="accounts-profile-button"]').onkeydown = event => {
+  if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.click(); }
 };
 document.querySelector('[data-testid="model-switcher-dropdown-button"]').onclick = () => {
   const menu = document.querySelector('#model-menu'); setTimeout(() => { menu.hidden = !menu.hidden; }, 40);
+};
+document.querySelector('[data-testid="model-switcher-dropdown-button"]').onmouseenter = event => {
+  event.currentTarget.style.width = '100px';
+};
+document.querySelector('[data-testid="model-switcher-dropdown-button"]').onkeydown = event => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    document.querySelector('[data-testid="model-switcher-dropdown-button"]').click();
+  }
 };
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !document.querySelector('#model-menu').hidden) {

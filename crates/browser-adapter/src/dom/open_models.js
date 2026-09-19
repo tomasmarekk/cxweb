@@ -9,8 +9,6 @@ function () {
   if (!(button instanceof HTMLElement) || button.getClientRects().length === 0) throw new Error('E_MODEL_MENU');
   if (button.getAttribute('aria-expanded') === 'true') return { expanded: true };
   button.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  button.focus();
-  if (document.activeElement !== button) throw new Error('E_MODEL_MENU');
   const box = button.getBoundingClientRect();
   if (box.width <= 0 || box.height <= 0) throw new Error('E_MODEL_MENU');
   const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);

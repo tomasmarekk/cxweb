@@ -28,6 +28,7 @@ pub trait Lifecycle: Send + Sync + 'static {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LoginAction {
+    Background,
     Connect,
     Refresh,
     Qualify,
@@ -43,6 +44,7 @@ impl LoginBackend for Control {
         let control = self.clone();
         Box::pin(async move {
             match action {
+                LoginAction::Background => control.background().await,
                 LoginAction::Connect => control.connect().await,
                 LoginAction::Refresh => control.status().await,
                 LoginAction::Qualify => control.qualify().await,
@@ -125,6 +127,13 @@ pub enum Outcome {
 
 pub(crate) fn login_error(code: &str) -> &'static str {
     match code {
+        "E_BROWSER_START" => "E_BROWSER_START",
+        "E_BROWSER_LOGIN" => "E_BROWSER_LOGIN",
+        "E_BROWSER_PIPE" => "E_BROWSER_PIPE",
+        "E_HIDDEN_TARGET" => "E_HIDDEN_TARGET",
+        "E_HIDDEN_ATTACH" => "E_HIDDEN_ATTACH",
+        "E_HIDDEN_VIEWPORT" => "E_HIDDEN_VIEWPORT",
+        "E_BACKGROUND_NAVIGATION" => "E_BACKGROUND_NAVIGATION",
         "E_SUBMISSION_UNCERTAIN" => "E_SUBMISSION_UNCERTAIN",
         "E_QUALIFICATION_TIMEOUT" => "E_QUALIFICATION_TIMEOUT",
         "E_TEMPORARY_CHAT" => "E_TEMPORARY_CHAT",
@@ -144,6 +153,9 @@ pub(crate) fn login_error(code: &str) -> &'static str {
         "E_MODEL_SELECTION" => "E_MODEL_SELECTION",
         "E_MODEL_SELECT" => "E_MODEL_SELECT",
         "E_MODEL_LABEL" => "E_MODEL_LABEL",
+        "E_BROWSER_BUSY" => "E_BROWSER_BUSY",
+        "E_BROWSER_RELEASE" => "E_BROWSER_RELEASE",
+        "E_LOGIN_REQUIRED" => "E_LOGIN_REQUIRED",
         "E_QUALIFICATION_PROTOCOL" => "E_QUALIFICATION_PROTOCOL",
         "E_MODEL_OPEN" => "E_MODEL_OPEN",
         "E_MODEL_READ" => "E_MODEL_READ",

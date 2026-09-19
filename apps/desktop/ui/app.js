@@ -3,30 +3,33 @@ const $ = id => document.getElementById(id);
 const invoke = window.__TAURI__?.core.invoke;
 let phase = 'disconnected';
 let pending = false;
+let signInRequired = false;
 function showError(code) {
   const messages = {
     E_ALREADY_RUNNING: 'cxweb is already running. Use the existing app window.',
     E_RUNTIME_MISSING: 'The cxweb runtime executable is missing. Build or reinstall the complete application.',
     E_RUNTIME_START: 'The runtime could not start. Close any older cxweb preview and reopen the app.',
-    E_CONTROL_UNAVAILABLE: 'The runtime is not responding. Try again without closing the browser.',
+    E_CONTROL_UNAVAILABLE: 'The runtime is not responding. Check status again shortly.',
     E_CONTROL_BUSY: 'Another cxweb window is processing a request. Try again shortly.',
     E_STATE_PERMISSIONS: 'Local app data has unexpected security permissions. The connection was not changed.',
     E_BROWSER_RUNTIME_MISSING: 'No supported browser was found for development verification.',
-    E_CONTROL_TIMEOUT: 'The browser is not responding yet. Check its window and try checking the status again.',
-    E_MODEL_DISCOVERY: 'The ChatGPT model menu could not be verified. Leave the ChatGPT page open and try again.',
+    E_CONTROL_TIMEOUT: 'The browser is not responding yet. Check status again shortly.',
+    E_MODEL_DISCOVERY: 'The ChatGPT model menu could not be verified. Refresh model candidates.',
     E_MODEL_OPEN: 'Model verification stopped while opening the ChatGPT model menu.',
     E_MODEL_READ: 'Model verification stopped while reading the visible ChatGPT model menu.',
     E_MODEL_CLOSE: 'Model verification stopped while closing the ChatGPT model menu.',
     E_MODEL_PARSE: 'The visible ChatGPT model menu returned an unsupported structure.',
     E_MODEL_RESULT: 'The visible ChatGPT model menu exceeded the safe discovery limits.',
     E_MODEL_SELECTION: 'The selected ChatGPT route changed or could not be verified. Refresh model candidates.',
+    E_MODEL_SELECT: 'The requested thinking effort could not be selected. Refresh model candidates.',
+    E_MODEL_LABEL: 'The model label changed during verification. Refresh model candidates.',
     E_SUBMISSION_UNCERTAIN: 'The test may have been submitted. It was not retried automatically.',
-    E_QUALIFICATION_TIMEOUT: 'The test did not complete within five minutes. Its browser tab is available for inspection.',
-    E_TURN_AMBIGUOUS: 'Multiple conversation turns were observed. The test tab is available for inspection.',
+    E_QUALIFICATION_TIMEOUT: 'The test did not complete within five minutes. No automatic retry was made.',
+    E_TURN_AMBIGUOUS: 'Multiple conversation turns were observed. No automatic retry was made.',
     E_TURN_ATTRIBUTION: 'The conversation identity changed. No automatic retry was made.',
-    E_USER_MESSAGE_MISMATCH: 'The submitted message could not be matched to the test. The test tab is available for inspection.',
+    E_USER_MESSAGE_MISMATCH: 'The submitted message could not be matched to the test. No automatic retry was made.',
     E_MODEL_FIDELITY: 'The model control changed after submission. No automatic retry was made.',
-    E_INVALID_TOOL_ENVELOPE: 'The response used an unsupported code block. The test tab is available for inspection.',
+    E_INVALID_TOOL_ENVELOPE: 'The response used an unsupported code block. No automatic retry was made.',
     E_QUALIFICATION_PROTOCOL: 'ChatGPT responded, but the test response did not match the required protocol.',
     E_LIVE_QUALIFICATION: 'The live text test could not be verified. No automatic retry was made.',
     E_TEMPORARY_CHAT: 'Temporary Chat could not be verified. No test message was sent.',
@@ -38,11 +41,12 @@ function showError(code) {
     E_SEND_DISABLED: 'The send button was not ready. Send was not clicked.',
     E_COMPOSER_MISMATCH: 'The composer did not contain the exact test message. Send was not clicked.'
   };
-  $('error').textContent = messages[code] || 'Verification failed. Check the browser window and try again.';
+  $('error').textContent = messages[code] || 'Verification failed. Check the connection status for details.';
   $('error').hidden = false; $('diagnostic').textContent = String(code).slice(0, 80);
 }
 function render(status) {
   phase = status.phase;
+  signInRequired = phase === 'authenticating' && status.background_session === true && (status.observation?.login_action === true || status.observation?.verification_required === true);
   $('error').hidden = true;
   $('light').classList.toggle('pending', phase !== 'disconnected');
   $('runtime').textContent = status.browser_version ? `Browser: ${status.browser_version}. Private connection over a Windows pipe.` : 'The browser has not started yet.';
@@ -94,9 +98,17 @@ function render(status) {
     details.textContent = `Expanded: ${String(diagnostic.switcher_expanded)}; roots: ${diagnostic.visible_roots ?? 0}; candidates: ${diagnostic.candidate_nodes ?? 0}; model test IDs: ${(diagnostic.model_testids || []).join(', ') || 'none'}; roles: ${(diagnostic.visible_roles || []).join(', ') || 'none'}.`;
     $('models').append(details); $('models').hidden = false;
   } else if (phase === 'authenticating') {
-    $('heading').textContent = 'Sign in to ChatGPT';
-    $('description').textContent = 'Complete sign-in in the browser window, including MFA or any other verification.';
-    $('chatgpt').textContent = 'Waiting for sign-in'; $('connect').textContent = 'Check status';
+    const verification = status.background_session === true && status.observation?.verification_required === true;
+    const restoring = status.background_session === true && !signInRequired;
+    $('heading').textContent = verification ? 'ChatGPT verification required' : restoring ? 'Restoring ChatGPT session' : 'Sign in to ChatGPT';
+    $('description').textContent = verification
+      ? 'ChatGPT requested additional verification in background mode. Background requests are unavailable. Open the sign-in window to check your session.'
+      : restoring
+      ? 'The saved session is loading in the background. Check status again shortly.'
+      : signInRequired ? 'Your saved session needs sign-in. Open the sign-in window to continue.'
+      : 'Complete sign-in in the browser window, including MFA or any other verification. You can close the window afterward.';
+    $('chatgpt').textContent = restoring ? 'Connecting' : 'Waiting for sign-in';
+    $('connect').textContent = signInRequired ? 'Open sign-in window' : 'Check status';
   } else if (phase === 'browser_unavailable') {
     $('heading').textContent = 'Browser unavailable';
     $('description').textContent = 'You can reopen the sign-in window. Saved sign-in data stays in the dedicated cxweb profile.';
@@ -119,7 +131,7 @@ async function act() {
     finally { pending = false; $('connect').disabled = false; }
     return;
   }
-  await check(phase === 'disconnected' || phase === 'browser_unavailable');
+  await check(phase === 'disconnected' || phase === 'browser_unavailable' || signInRequired);
 }
 $('connect').addEventListener('click', act);
 $('test-text').addEventListener('click', async () => {

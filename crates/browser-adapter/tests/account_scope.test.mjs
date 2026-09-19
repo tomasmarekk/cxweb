@@ -32,7 +32,7 @@ test('profile opening chooses an actionable entry point and refuses obscured or 
   assert.equal(openProfiles({ expanded: 1 }), true);
   assert.equal(openProfiles({ expanded: 2 }).failure, 'E_ACCOUNT_AMBIGUOUS');
 });
-function scope(text, workspaces = [], expandedProfiles = 0) {
+function scope(text, workspaces = [], expandedProfiles = 1) {
   class Visible { getClientRects() { return [1]; } }
   const workspaceNodes = workspaces.map(({ id, selected }) => Object.assign(new Visible(), {
     matches: () => selected, getAttribute: () => id
@@ -65,6 +65,7 @@ test('account and workspace require distinct positive evidence', () => {
 });
 
 test('the expanded account entry point owns the menu and multiple expanded entries are refused', () => {
+  assert.equal(scope('unrelated-menu@example.invalid', [], 0), null);
   assert.equal(scope('fixture@example.invalid', [], 1).account, 'fixture@example.invalid');
   assert.equal(scope('fixture@example.invalid', [], 2), null);
 });

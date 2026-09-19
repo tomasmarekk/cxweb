@@ -72,7 +72,21 @@ function () {
       visible_roots: roots.length,
       candidate_nodes: nodes.length,
       model_testids: testids,
+      menu_states: roots.slice(0, 16).map(node => [
+        ['open', 'closed'].includes(node.getAttribute('data-state')) ? node.getAttribute('data-state') : 'unknown',
+        node.checkVisibility?.({ checkOpacity: true, checkVisibilityCSS: true }) ? 'visible' : 'hidden',
+        getComputedStyle(node).pointerEvents === 'none' ? 'no-pointer' : 'pointer',
+        node.getAnimations().some(animation => animation.playState === 'running') ? 'animating' : 'still'
+      ].join(':')),
       composer_controls: composerControls,
+      interaction_state: {
+        ready: document.readyState === 'complete',
+        focused: document.hasFocus?.() ?? false,
+        visible: document.visibilityState === 'visible',
+        disabled: [...(composer?.closest('form')?.querySelectorAll('button[aria-haspopup="menu"][data-tone="neutral"]') ?? [])].some(node => node.disabled || node.getAttribute('aria-disabled') === 'true'),
+        inert: !!composer?.closest('[inert]'),
+        active_menu_trigger: document.activeElement?.getAttribute('aria-haspopup') === 'menu'
+      },
       visible_roles: roles
     }
   };

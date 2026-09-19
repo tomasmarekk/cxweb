@@ -51,6 +51,7 @@ enum Command {
 
 #[derive(Clone, clap::ValueEnum)]
 enum BrowserAction {
+    Background,
     Status,
     Connect,
     Refresh,
@@ -67,6 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 let control = cxweb_runtime::remote_control::RemoteControl::new()?;
                 let status = match action {
+                    BrowserAction::Background => control.background().await?,
                     BrowserAction::Status => control.status(false).await?,
                     BrowserAction::Connect => control.connect().await?,
                     BrowserAction::Refresh => control.status(true).await?,
@@ -77,6 +79,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Fixed summary only: no account metadata, prompt or response body.
                 print_json(&serde_json::json!({
                     "phase": status.phase,
+                    "background_session": status.background_session,
                     "candidate_count": status.candidate_models.len(),
                     "temporary_chat_verified": status.temporary_chat_available,
                     "text_verified": status.text_qualified_model.is_some(),
@@ -85,6 +88,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "qualification_diagnostic": status.qualification_diagnostic,
                     "scope_diagnostic": status.scope_diagnostic,
                     "model_discovery_diagnostic": status.model_discovery_diagnostic,
+                    "session_surface": status.observation.as_ref().map(|observation| serde_json::json!({
+                        "official_page":observation.official_page,"composer":observation.composer,
+                        "account_surface":observation.account_surface,"login_action":observation.login_action,
+                        "verification_required":observation.verification_required,"document_ready":observation.document_ready
+                    })),
                     "language": status.observation.as_ref().map(|observation| serde_json::json!({
                         "browser": observation.browser_language, "page": observation.page_language,
                     })),
@@ -151,7 +159,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 cxweb_platform::state::protected_directory(&profile)?;
                 let mut browser =
-                    cxweb_browser_adapter::ManagedBrowser::launch(&browser, &profile, false)?;
+                    cxweb_browser_adapter::ManagedBrowser::launch(&browser, &profile, open_login)?;
                 let version = browser.version()?;
                 let startup = browser.probe_startup_page()?;
                 let dom = browser.probe_dom()?;

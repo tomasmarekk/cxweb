@@ -2,7 +2,7 @@ function () {
   const visible = node => node instanceof HTMLElement && node.getClientRects().length > 0;
   const profiles = [...document.querySelectorAll('[data-testid="accounts-profile-button"]')].filter(visible);
   const expanded = profiles.filter(profile => profile.getAttribute('aria-expanded') === 'true');
-  if (expanded.length > 1) return null;
+  if (expanded.length !== 1) return null;
   const profile = expanded[0];
   const controlled = profile?.getAttribute('aria-controls');
   const root = controlled ? document.getElementById(controlled) : null;

@@ -78,6 +78,33 @@ test('an observed session stays unqualified and stops automatic polling', async 
   assert.equal(ui.timers.size, 0);
 });
 
+test('background loading checks status without opening a sign-in window', async () => {
+  const ui = panel(async () => ({ phase: 'authenticating', background_session: true }));
+  await flush();
+  assert.equal(ui.nodes.get('heading').textContent, 'Restoring ChatGPT session');
+  await ui.nodes.get('connect').click();
+  assert.deepEqual(ui.calls, ['status', 'status']);
+});
+
+test('expired background session opens sign-in only on explicit action', async () => {
+  const ui = panel(async () => ({ phase: 'authenticating', background_session: true, observation: { login_action: true } }));
+  await flush();
+  assert.deepEqual(ui.calls, ['status']);
+  assert.equal(ui.nodes.get('connect').textContent, 'Open sign-in window');
+  await ui.nodes.get('connect').click();
+  assert.deepEqual(ui.calls, ['status', 'connect']);
+});
+
+test('a verification challenge offers the visible verification window without retrying', async () => {
+  const ui = panel(async () => ({ phase: 'authenticating', background_session: true, observation: { verification_required: true } }));
+  await flush();
+  assert.equal(ui.nodes.get('connect').textContent, 'Open sign-in window');
+  assert.equal(ui.nodes.get('heading').textContent, 'ChatGPT verification required');
+  assert.match(ui.nodes.get('description').textContent, /Background requests are unavailable/);
+  assert.equal(ui.timers.size, 0);
+  assert.deepEqual(ui.calls, ['status']);
+});
+
 test('IPC failure is visible and releases the action button', async () => {
   const ui = panel(async () => { throw 'E_ALREADY_RUNNING'; });
   await flush();
