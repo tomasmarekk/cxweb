@@ -11,6 +11,31 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, sync::Arc};
 
+/// Terminal validation/admission errors must not look like retryable upstream
+/// outages. Retrying an uncertain or rejected turn cannot create another send.
+pub(crate) fn web_failure(code: &'static str) -> Response {
+    use axum::http::StatusCode;
+    let mut response = unavailable(code);
+    *response.status_mut() = match code {
+        "E_REQUEST_IDENTITY" => StatusCode::BAD_REQUEST,
+        "E_MODEL_UNAVAILABLE" => StatusCode::NOT_FOUND,
+        "E_REQUEST_ALREADY_ADMITTED" | "E_REPLAY_UNAVAILABLE" | "E_SUBMISSION_UNCERTAIN" => {
+            StatusCode::CONFLICT
+        }
+        "E_SESSION_SCOPE"
+        | "E_MODEL_FIDELITY"
+        | "E_USER_MESSAGE_MISMATCH"
+        | "E_TURN_ATTRIBUTION"
+        | "E_TURN_AMBIGUOUS"
+        | "E_INVALID_TOOL_ENVELOPE" => StatusCode::UNPROCESSABLE_ENTITY,
+        _ if code.starts_with("E_UNSUPPORTED_") || code == "E_NONPORTABLE_CONTEXT" => {
+            StatusCode::UNPROCESSABLE_ENTITY
+        }
+        _ => StatusCode::BAD_GATEWAY,
+    };
+    response
+}
+
 fn digest(parts: &[&[u8]]) -> String {
     let mut hash = Sha256::new();
     for part in parts {
@@ -110,7 +135,7 @@ impl CoordinatorProvider {
         })
     }
 
-    async fn execute(&self, request: WebRequest) -> Result<Response, &'static str> {
+    pub(crate) async fn execute(&self, request: WebRequest) -> Result<Response, &'static str> {
         if request.compact {
             return Err("E_COMPACTION_UNQUALIFIED");
         }
@@ -171,7 +196,7 @@ impl CoordinatorProvider {
 impl WebProvider for CoordinatorProvider {
     fn respond(&self, request: WebRequest) -> WebFuture {
         let provider = self.clone();
-        Box::pin(async move { provider.execute(request).await.unwrap_or_else(unavailable) })
+        Box::pin(async move { provider.execute(request).await.unwrap_or_else(web_failure) })
     }
 }
 
@@ -204,6 +229,9 @@ mod tests {
         observing: Notify,
     }
     impl BrowserDriver for Browser {
+        fn verify_completion(&self, _: String) -> BrowserFuture<()> {
+            Box::pin(async { Ok(()) })
+        }
         fn prepare(&self, session: SessionKey) -> BrowserFuture<Prepared> {
             self.sessions.lock().unwrap().push(session.clone());
             Box::pin(async move {
@@ -388,7 +416,11 @@ mod tests {
             }
             assert_eq!(
                 router.clone().oneshot(req).await.unwrap().status(),
-                StatusCode::BAD_GATEWAY
+                if variant == 3 {
+                    StatusCode::NOT_FOUND
+                } else {
+                    StatusCode::BAD_REQUEST
+                }
             );
         }
         assert!(browser.sessions.lock().unwrap().is_empty());

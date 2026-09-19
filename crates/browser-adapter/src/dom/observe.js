@@ -44,9 +44,26 @@ function (baselineIds, expectedPrompt) {
     (!controlsInMessage.length && normalize(userContent.innerText) === expected) ||
     normalize(plainText(messageCopy)) === expected
   );
+  // Numeric structure only, never message excerpts or character values.
+  const plain = normalize(messageCopy ? plainText(messageCopy) : '');
+  const rendered = normalize(userContent?.innerText ?? '');
+  let prefix = 0;
+  while (prefix < plain.length && prefix < expected.length && plain[prefix] === expected[prefix]) prefix++;
+  const characterKind = c => c === undefined ? 0 : c === '\n' ? 1 : c === '\r' ? 2 : c === ' ' ? 3 : c === '\t' ? 4 : c === '\u00a0' ? 5 : 6;
   const text = content?.innerText ?? '';
   if (text.length > 4 * 1024 * 1024) throw new Error('E_PAYLOAD_LIMIT');
   return {
+    attribution_diagnostic: {
+      expected_length: expected.length, plain_length: plain.length, rendered_length: rendered.length,
+      common_prefix_length: prefix, actual_character_kind: characterKind(plain[prefix]), expected_character_kind: characterKind(expected[prefix]),
+      control_count: controlsInMessage?.length ?? 0,
+      text_content_matches: Number(normalize(messageCopy?.textContent ?? '') === expected),
+      anchor_count: messageCopy?.querySelectorAll('a[href]').length ?? 0,
+      span_count: messageCopy?.querySelectorAll('span').length ?? 0,
+      code_count: messageCopy?.querySelectorAll('code').length ?? 0,
+      break_count: messageCopy?.querySelectorAll('br').length ?? 0,
+      block_count: messageCopy?.querySelectorAll('div, p, pre, li').length ?? 0
+    },
     user_id: user?.getAttribute('data-turn-id-container') ?? null,
     user_matches: userMatches,
     assistant_id: assistant?.getAttribute('data-turn-id-container') ?? null,

@@ -1,5 +1,6 @@
 //! Browser operations for the durable coordinator, serialized on the browser owner.
-//! Activation must supply an independently qualified account/workspace verifier.
+//! The account/workspace verifier reads the browser UI at turn boundaries.
+use crate::browser_scope::BrowserScope;
 use crate::turn::{BrowserDriver, BrowserFuture, Prepared};
 use cxweb_browser_adapter::{
     ManagedBrowser, ManagedPage,
@@ -69,9 +70,7 @@ impl Binding {
     }
 }
 
-/// Reads the current browser account and workspace scope. It must not simply
-/// echo Binding: activation supplies the DOM-backed verifier after qualification.
-pub type ScopeVerifier = Box<
+type ScopeVerifier = Box<
     dyn FnMut(&mut ManagedBrowser, &ManagedPage) -> Result<(String, String), &'static str> + Send,
 >;
 type Reply<T> = oneshot::Sender<Result<T, &'static str>>;
@@ -79,8 +78,11 @@ enum Command {
     Prepare(SessionKey, Reply<Prepared>),
     Submit(String, String, String, Reply<()>),
     Observe(String, Reply<Observation>),
+    VerifyCompletion(String, Reply<()>),
     Stop(String, Reply<bool>),
     Release(String, Reply<()>),
+    Shutdown(Reply<()>),
+    Diagnostic(Reply<serde_json::Value>),
 }
 struct Lease {
     session: SessionKey,
@@ -101,10 +103,15 @@ impl ManagedDriver {
     pub fn start(
         mut browser: ManagedBrowser,
         binding: Binding,
-        mut verify: ScopeVerifier,
         ownership: std::fs::File,
     ) -> Result<Self, &'static str> {
         binding.validate()?;
+        let installation = binding.installation.clone();
+        let mut verify: ScopeVerifier = Box::new(move |browser, page| {
+            let surface = browser.account_scope(page).map_err(|_| "E_SESSION_SCOPE")?;
+            let scope = BrowserScope::from_surface(&installation, &surface)?;
+            Ok((scope.account, scope.workspace))
+        });
         let (commands, mut incoming) = mpsc::channel(32);
         std::thread::Builder::new()
             .name("cxweb-generation-browser".into())
@@ -114,6 +121,7 @@ impl ManagedDriver {
                 let _ownership = ownership;
                 let mut leases = HashMap::<String, Lease>::new();
                 let mut orphaned = Vec::<ManagedPage>::new();
+                let mut shutdown_reply = None;
                 let check_scope = |browser: &mut ManagedBrowser,
                                    page: &ManagedPage,
                                    verify: &mut ScopeVerifier| {
@@ -125,6 +133,13 @@ impl ManagedDriver {
                 };
                 while let Some(command) = incoming.blocking_recv() {
                     match command {
+                        Command::Diagnostic(reply) => {
+                            let _ = reply.send(Ok(serde_json::json!({"attribution":browser.attribution_diagnostic(), "scope":browser.scope_diagnostic(), "model":browser.model_diagnostic()})));
+                        }
+                        Command::Shutdown(reply) => {
+                            shutdown_reply = Some(reply);
+                            break;
+                        }
                         Command::Prepare(session, reply) => {
                             if reply.is_closed() {
                                 continue;
@@ -231,7 +246,6 @@ impl ManagedDriver {
                             }
                             let result = (|| {
                                 let lease = leases.get(&handle).ok_or("E_BROWSER_LEASE")?;
-                                check_scope(&mut browser, &lease.page, &mut verify)?;
                                 browser
                                     .observe(
                                         &lease.page,
@@ -239,6 +253,19 @@ impl ManagedDriver {
                                         lease.prompt.as_ref().ok_or("E_TURN_STATE")?,
                                     )
                                     .map_err(|_| "E_BROWSER_OBSERVATION")
+                            })();
+                            let _ = reply.send(result);
+                        }
+                        Command::VerifyCompletion(handle, reply) => {
+                            if reply.is_closed() {
+                                continue;
+                            }
+                            let result = (|| {
+                                let lease = leases.get(&handle).ok_or("E_BROWSER_LEASE")?;
+                                if !lease.attempted || lease.prompt.is_none() {
+                                    return Err("E_TURN_STATE");
+                                }
+                                check_scope(&mut browser, &lease.page, &mut verify)
                             })();
                             let _ = reply.send(result);
                         }
@@ -278,10 +305,25 @@ impl ManagedDriver {
                 for page in orphaned {
                     let _ = browser.close_page(page);
                 }
-                let _ = browser.close();
+                let closed = browser.close().map_err(|_| "E_BROWSER_RELEASE");
+                drop(browser);
+                drop(_ownership);
+                if let Some(reply) = shutdown_reply {
+                    let _ = reply.send(closed);
+                }
             })
             .map_err(|_| "E_BROWSER_WORKER")?;
         Ok(Self { commands })
+    }
+
+    /// Call after draining admitted requests. Completion proves browser exit and
+    /// release of the dedicated profile lock, not merely a dropped UI handle.
+    pub fn shutdown(&self) -> BrowserFuture<()> {
+        self.request(Command::Shutdown)
+    }
+
+    pub fn diagnostic(&self) -> BrowserFuture<serde_json::Value> {
+        self.request(Command::Diagnostic)
     }
 
     fn request<T: Send + 'static>(
@@ -300,6 +342,9 @@ impl ManagedDriver {
 }
 
 impl BrowserDriver for ManagedDriver {
+    fn verify_completion(&self, handle: String) -> BrowserFuture<()> {
+        self.request(move |reply| Command::VerifyCompletion(handle, reply))
+    }
     fn prepare(&self, session: SessionKey) -> BrowserFuture<Prepared> {
         self.request(move |reply| Command::Prepare(session, reply))
     }

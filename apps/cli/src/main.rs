@@ -10,6 +10,11 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Isolated real browser gateway. Close the cxweb runtime first. Uses ChatGPT allowance.
+    LiveProbe {
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Invoke a fixed operation through the same private runtime as the desktop.
     BrowserControl {
         #[arg(value_enum)]
@@ -66,6 +71,23 @@ enum BrowserAction {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match Args::parse().command {
+        Command::LiveProbe { output } => {
+            #[cfg(windows)]
+            {
+                let report = cxweb_runtime::live_probe::serve(&output, async {
+                    use tokio::io::AsyncReadExt;
+                    let mut stdin = tokio::io::stdin();
+                    let mut byte = [0];
+                    tokio::select! { _ = tokio::signal::ctrl_c() => (), _ = stdin.read(&mut byte) => () }
+                }).await?;
+                print_json(&report);
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = output;
+                return Err("live browser qualification requires Windows".into());
+            }
+        }
         Command::BrowserControl { action } => {
             #[cfg(windows)]
             {

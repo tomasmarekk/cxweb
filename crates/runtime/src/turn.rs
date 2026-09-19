@@ -30,6 +30,8 @@ pub trait BrowserDriver: Send + Sync {
     fn prepare(&self, session: SessionKey) -> BrowserFuture<Prepared>;
     fn submit(&self, handle: String, prompt: String, selected_model: String) -> BrowserFuture<()>;
     fn observe(&self, handle: String) -> BrowserFuture<Observation>;
+    /// Recheck the account/workspace before any buffered output is delivered.
+    fn verify_completion(&self, handle: String) -> BrowserFuture<()>;
     fn stop(&self, handle: String) -> BrowserFuture<bool>;
     fn release(&self, handle: String) -> BrowserFuture<()>;
 }
@@ -113,17 +115,20 @@ impl Coordinator {
             Admission::Existing(_) => return Err("E_REQUEST_ALREADY_ADMITTED"),
         }
         let prepared = match tokio::time::timeout(
-            Duration::from_secs(30),
+            Duration::from_secs(90),
             self.browser.prepare(input.session.clone()),
         )
         .await
         {
             Ok(Ok(prepared)) => prepared,
-            _ => {
+            failed => {
                 self.ledger
                     .transition(&input.request_id, TurnState::Failed)
                     .await?;
-                return Err("E_BROWSER_PREPARE");
+                return Err(match failed {
+                    Ok(Err(code)) => code,
+                    _ => "E_BROWSER_PREPARE",
+                });
             }
         };
         let result = self
@@ -197,7 +202,7 @@ impl Coordinator {
         // A timed-out send has an unknown upstream outcome.
         if !matches!(
             tokio::time::timeout(
-                Duration::from_secs(15),
+                Duration::from_secs(60),
                 self.browser.submit(
                     prepared.handle.clone(),
                     prompt,
@@ -282,6 +287,24 @@ impl Coordinator {
                 state = TurnState::Generating;
             }
             if let Progress::Completed(text) = progress {
+                let verified = tokio::select! {
+                    _ = cancel.cancelled() => Err("E_CANCELLED"),
+                    result = tokio::time::timeout(Duration::from_secs(60), self.browser.verify_completion(prepared.handle.clone())) =>
+                        result.unwrap_or(Err("E_SESSION_SCOPE")),
+                };
+                if let Err(code) = verified {
+                    self.ledger
+                        .transition(
+                            id,
+                            if code == "E_CANCELLED" {
+                                TurnState::Cancelled
+                            } else {
+                                TurnState::Failed
+                            },
+                        )
+                        .await?;
+                    return Err(code);
+                }
                 let output = match envelope::validate(text.as_bytes(), &request.context(&nonce)) {
                     Ok(output) => output,
                     Err(_) => {
@@ -343,6 +366,7 @@ mod tests {
         Uncertain,
         Waiting,
         WrongAssistant,
+        ChangedScope,
     }
     struct MockBrowser {
         mode: Mode,
@@ -367,6 +391,16 @@ mod tests {
         }
     }
     impl BrowserDriver for MockBrowser {
+        fn verify_completion(&self, _: String) -> BrowserFuture<()> {
+            let changed = matches!(self.mode, Mode::ChangedScope);
+            Box::pin(async move {
+                if changed {
+                    Err("E_SESSION_SCOPE")
+                } else {
+                    Ok(())
+                }
+            })
+        }
         fn prepare(&self, session: SessionKey) -> BrowserFuture<Prepared> {
             Box::pin(async move {
                 Ok(Prepared {
@@ -462,7 +496,12 @@ mod tests {
     }
     #[tokio::test]
     async fn uncertain_send_and_invalid_output_are_not_repaired_by_resubmission() {
-        for mode in [Mode::Uncertain, Mode::Invalid, Mode::WrongAssistant] {
+        for mode in [
+            Mode::Uncertain,
+            Mode::Invalid,
+            Mode::WrongAssistant,
+            Mode::ChangedScope,
+        ] {
             let browser = MockBrowser::new(mode);
             let coordinator = Coordinator::new(Ledger::in_memory(), browser.clone());
             assert!(
@@ -480,6 +519,30 @@ mod tests {
             assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
             assert_eq!(browser.releases.load(Ordering::SeqCst), 1);
         }
+    }
+    #[tokio::test]
+    async fn completion_scope_failure_withholds_and_never_caches_the_answer() {
+        let browser = MockBrowser::new(Mode::ChangedScope);
+        let ledger = Ledger::in_memory();
+        let coordinator = Coordinator::new(ledger.clone(), browser.clone());
+        assert_eq!(
+            coordinator
+                .execute(input(), CancellationToken::new())
+                .await
+                .err(),
+            Some("E_SESSION_SCOPE")
+        );
+        let input = input();
+        assert_eq!(
+            ledger
+                .admit(&input.request_id, &input.session, &input.bytes)
+                .await
+                .unwrap(),
+            Admission::Existing(TurnState::Failed)
+        );
+        assert!(coordinator.replay.lock().unwrap().is_empty());
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
+        assert_eq!(browser.releases.load(Ordering::SeqCst), 1);
     }
     #[tokio::test]
     async fn validated_tool_call_is_delivered_without_local_execution() {

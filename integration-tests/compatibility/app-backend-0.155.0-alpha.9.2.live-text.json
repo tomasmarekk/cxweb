@@ -1,0 +1,43 @@
+{
+  "schema": "cxweb.client-probe.v1",
+  "client": "codex-cli 0.155.0-alpha.9.2",
+  "synthetic": false,
+  "actualPicker": "NOT RUN",
+  "authentication": "saved cxweb browser session; synthetic native key restricted to loopback",
+  "events": [
+    "model/list accepted owned model",
+    "thread/start selected owned model",
+    "turn/start completed through loopback",
+    "expected browser assistant text received"
+  ],
+  "routeLayout": "subscription backend-api/codex",
+  "builtinWebSearch": "disabled in isolated test client; production compatibility remains unqualified",
+  "model": {
+    "id": "webbridge/live-probe",
+    "model": "webbridge/live-probe",
+    "displayName": "ChatGPT Web · Latest · Extra High",
+    "hidden": false,
+    "defaultReasoningEffort": "xhigh"
+  },
+  "selectedReasoningEffort": null,
+  "gatewayError": null,
+  "result": "PASS native backend through authenticated browser",
+  "date": "2026-09-19",
+  "mode": "app-server stdio; disposable CODEX_HOME",
+  "browser": "Chrome/153.0.8010.48",
+  "rendering": "owned off-screen normal Chrome; initial taskbar exposure not qualified",
+  "nativeUpstream": "local rejection stub",
+  "productionRoutingInstalled": false,
+  "browserClosed": true,
+  "runtimeFailures": [],
+  "attribution": {
+    "expected_length": 25997,
+    "plain_length": 25997,
+    "common_prefix_length": 25997,
+    "code_count": 0,
+    "control_count": 1,
+    "text_content_matches": 1
+  },
+  "accountDefaultVerified": true,
+  "accountEvidenceCorroborated": true
+}

@@ -4,11 +4,12 @@
 
 Target: the complete supplied PRD, not a substitute chat application. No subagents.
 Current gate: **G0 IN PROGRESS**. No client or browser combination is certified.
-Manual login and managed reuse of the saved session are user-confirmed. Account/
-model qualification and actual App/CLI picker checks remain incomplete. Production
-integration must remain disabled until the relevant evidence exists.
+Manual login and managed reuse of the saved session are user-confirmed. Scoped
+background text generation now passes through both actual native backends. Actual
+App/CLI pickers, native tool execution, broader model qualification and release
+gates remain incomplete. Production integration remains disabled.
 
-Latest manual check: the user reports `ChatGPT: Session detected` and
+Earlier manual check: the user reports `ChatGPT: Session detected` and
 `Codex connection: Awaiting verification` after checking the desktop status.
 This confirms the login controller recognized the saved session in this run;
 it does not establish the selected account/workspace, model inventory, Temporary
@@ -16,6 +17,52 @@ Chat behavior or a successful generation. After restarting Codex App, its real
 picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
+
+## Authenticated native client text integration (2026-09-19)
+
+- The isolated `live-probe` connects the real managed browser driver, durable
+  coordinator, HTTP provider and gateway to the installed native app-server.
+  It uses the existing authenticated cxweb profile and a disposable CODEX_HOME.
+  Native traffic terminates at a local rejection stub; its synthetic key cannot
+  reach an external native upstream. The capability descriptor is protected by
+  the current-user directory ACL. No real Codex configuration/auth is changed.
+- Actual CLI **0.153.4** and current App backend **0.155.0-alpha.9.2** both listed
+  and selected `webbridge/live-probe` and returned the exact requested text from
+  ChatGPT, on the observed **Latest / Extra High** route. These are authenticated
+  backend tests, explicitly not actual graphical/terminal picker certification.
+  Sanitized reports are in `integration-tests/compatibility/*.live-text.json`.
+- Both runs used normal off-screen Chrome 153.0.8010.48, required English browser
+  and page language, rechecked account-default scope before Send and completion,
+  and confirmed complete browser exit/profile-lock release. The owned window's
+  initial taskbar exposure remains unqualified; the final login-close UX is open.
+- Live testing found that the account submenu can mount before its rows hydrate.
+  The observer now waits for populated controls/selected evidence. A delayed-row
+  Chrome fixture reproduces this race and passes without relaxing scope checks.
+- A second live failure was exact message attribution: ChatGPT rendered 22 inline
+  code spans, removing 44 backticks from the DOM text. Client JSON now uses valid
+  Unicode escapes for Markdown delimiters inside strings only. Decoding preserves
+  instructions, history and tool definitions, including literal backslash escapes
+  and Unicode; budgeting applies to the expanded transport text. No prefix match,
+  inferred text restoration or weaker attribution was introduced. The successful
+  CLI/App messages matched all 22,437/25,997 characters respectively.
+- Scope inspection now runs at preparation, submission and buffered completion,
+  rather than opening Settings on every generation poll. Completion failure
+  withholds output and replay data. Preparation preserves the original static
+  error code; terminal validation/admission errors receive explicit HTTP statuses.
+  Native clients can still retry some failures, but the ledger refuses another
+  browser send. Earlier failed live attempts are not presented as successes.
+- The disposable text-test client explicitly sets `web_search="disabled"`, since
+  its built-in server-search definition is not yet supported by the web adapter.
+  This is a narrow text qualification, not silent removal of incoming definitions
+  or production search compatibility. See the official [web search configuration](https://learn.chatgpt.com/docs/config-file/config-basic#web-search-mode).
+- Verification: `cargo test --workspace`, `cargo clippy --workspace --all-targets
+  -- -D warnings`, all 38 browser/desktop JavaScript tests, and both authenticated
+  `node scripts/probe-client.mjs <client> --live` runs passed. The real Chrome
+  synthetic off-screen fixture passed hydration, selection, attribution, Stop and
+  target cleanup. Two environment-dependent Rust tests remain opt-in/ignored.
+  Formatting/diff checks and release CLI/daemon/desktop builds also passed.
+- Next: native function/custom tool execution and result return, actual pickers,
+  production activation/lifecycle and remaining PRD acceptance/release gates.
 
 ## English browser locale and menu interaction (2026-09-19)
 

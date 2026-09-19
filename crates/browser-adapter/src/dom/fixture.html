@@ -24,10 +24,14 @@
 <div id="prompt-textarea" contenteditable="true"></div><button type="button" data-testid="send-button">Send</button></form>
 <script>
 document.querySelector('#fixture-scope-trigger').onmouseenter = event => {
+  const submenu = document.querySelector('#fixture-scope-menu');
+  for (const child of submenu.children) child.hidden = true;
   setTimeout(() => {
     if (document.querySelector('#account-menu').hidden) return;
     event.target.setAttribute('aria-expanded', 'true');
-    document.querySelector('#fixture-scope-menu').hidden = false;
+    submenu.hidden = false;
+    // A mounted portal can precede its visible account rows.
+    setTimeout(() => { for (const child of submenu.children) child.hidden = false; }, 250);
   }, 60);
 };
 document.querySelector('#fixture-scope-menu').onclick = () => { throw new Error('The account observer must never select a workspace'); };

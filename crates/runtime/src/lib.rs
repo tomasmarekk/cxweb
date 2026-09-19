@@ -15,6 +15,8 @@ pub mod ledger;
 #[cfg(windows)]
 pub mod lifecycle;
 #[cfg(windows)]
+pub mod live_probe;
+#[cfg(windows)]
 pub mod managed_driver;
 pub mod native;
 mod native_ws;

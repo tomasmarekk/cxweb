@@ -198,6 +198,8 @@ pub struct ManagedBrowser {
     failed_qualification: Option<ManagedPage>,
     qualification_diagnostic: Option<QualificationDiagnostic>,
     model_diagnostic: Option<ModelSurfaceDiagnostic>,
+    attribution_diagnostic: std::collections::BTreeMap<String, u64>,
+    scope_diagnostic: Option<ScopeDiagnostic>,
     login_keeper: Option<ManagedPage>,
     headless: bool,
     offscreen: bool,
@@ -241,6 +243,8 @@ impl ManagedBrowser {
             failed_qualification: None,
             qualification_diagnostic: None,
             model_diagnostic: None,
+            attribution_diagnostic: Default::default(),
+            scope_diagnostic: None,
             login_keeper: None,
             headless,
             offscreen,
@@ -928,6 +932,16 @@ impl ManagedBrowser {
     }
 
     pub fn account_scope(&mut self, page: &ManagedPage) -> io::Result<ScopeSurface> {
+        let result = self.account_scope_inner(page);
+        self.scope_diagnostic = result.as_ref().ok().map(|scope| scope.diagnostic.clone());
+        result
+    }
+
+    pub fn scope_diagnostic(&self) -> Option<ScopeDiagnostic> {
+        self.scope_diagnostic.clone()
+    }
+
+    fn account_scope_inner(&mut self, page: &ManagedPage) -> io::Result<ScopeSurface> {
         self.prepare_page(page)?;
         let opened = self
             .dom(page, include_str!("dom/open_account.js"), vec![])
@@ -1007,7 +1021,14 @@ impl ManagedBrowser {
                         .as_str()
                         .filter(|account| account.len() <= 320)
                         .map(str::to_owned);
-                    if value["diagnostic"]["submenu_present"] == true {
+                    // The portal mounts before its account rows hydrate. An
+                    // empty container is not evidence of the active account.
+                    if value["diagnostic"]["submenu_present"] == true
+                        && value["diagnostic"]["selected_items"].as_u64().unwrap_or(0) > 0
+                        && value["diagnostic"]["controls"]
+                            .as_array()
+                            .is_some_and(|controls| !controls.is_empty())
+                    {
                         break;
                     }
                 }
@@ -1403,12 +1424,40 @@ impl ManagedBrowser {
         baseline: &Baseline,
         prompt: &str,
     ) -> io::Result<Observation> {
-        serde_json::from_value(self.dom(
+        let mut value = self.dom(
             page,
             include_str!("dom/observe.js"),
             vec![json!(baseline.ids), json!(prompt)],
-        )?)
-        .map_err(|_| io::Error::other("E_BROWSER_ADAPTER"))
+        )?;
+        self.attribution_diagnostic.clear();
+        if let Some(object) = value.as_object_mut()
+            && let Some(diagnostic) = object.remove("attribution_diagnostic")
+        {
+            for key in [
+                "expected_length",
+                "plain_length",
+                "rendered_length",
+                "common_prefix_length",
+                "actual_character_kind",
+                "expected_character_kind",
+                "control_count",
+                "text_content_matches",
+                "anchor_count",
+                "span_count",
+                "code_count",
+                "break_count",
+                "block_count",
+            ] {
+                if let Some(value) = diagnostic[key].as_u64() {
+                    self.attribution_diagnostic.insert(key.into(), value);
+                }
+            }
+        }
+        serde_json::from_value(value).map_err(|_| io::Error::other("E_BROWSER_ADAPTER"))
+    }
+
+    pub fn attribution_diagnostic(&self) -> std::collections::BTreeMap<String, u64> {
+        self.attribution_diagnostic.clone()
     }
 
     pub fn stop(&mut self, page: &ManagedPage) -> io::Result<bool> {
