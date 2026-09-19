@@ -113,6 +113,13 @@ async fn probe(
         return error(StatusCode::NOT_FOUND, "E_LOCAL_CAPABILITY");
     };
     match (method, path) {
+        (Method::GET, "responses") => {
+            // Native Codex explicitly negotiates HTTP fallback on 426. This
+            // synthetic server has no WebSocket implementation. A generic 404
+            // caused five unnecessary connection retries in the actual TUI.
+            record(&state, "diagnostic_http_fallback");
+            error(StatusCode::UPGRADE_REQUIRED, "E_DIAGNOSTIC_HTTP_ONLY")
+        }
         (Method::GET, "models") => {
             record(&state, "models");
             let payload = json!({"models":[synthetic_model()]}).to_string();
@@ -221,6 +228,26 @@ mod tests {
     use axum::{body::Body, http::Request};
     use http_body_util::BodyExt;
     use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn synthetic_websocket_negotiation_uses_explicit_http_fallback() {
+        let state = ProbeState::new(12345);
+        let response = diagnostic_router(state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri(format!("{}/responses", state.base_url()))
+                    .header("host", "127.0.0.1:12345")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UPGRADE_REQUIRED);
+        assert_eq!(
+            *state.observations.lock().unwrap(),
+            vec!["diagnostic_http_fallback"]
+        );
+    }
 
     #[tokio::test]
     async fn rejects_wrong_host_origin_capability_and_admin_routes() {

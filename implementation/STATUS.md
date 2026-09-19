@@ -6,7 +6,8 @@ Target: the complete supplied PRD, not a substitute chat application. No subagen
 Current gate: **G0 IN PROGRESS**. No client or browser combination is certified.
 Manual login and managed reuse of the saved session are user-confirmed. Scoped
 background text generation and native read/apply_patch cycles now pass through
-both actual native backends. Actual App/CLI pickers, broader coding/model
+both actual native backends. The actual CLI picker passed an isolated synthetic
+round trip. Actual App picker, native subscription coexistence, broader coding/model
 qualification and release gates remain incomplete. Production integration remains
 disabled.
 
@@ -18,6 +19,67 @@ Chat behavior or a successful generation. After restarting Codex App, its real
 picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
+
+## Optional hosted search and actual CLI UI (2026-09-19)
+
+- Default native clients attach a hosted `web_search` declaration even to ordinary
+  text/coding requests. The earlier isolated `web_search="disabled"` workaround
+  has been removed from the probe. The adapter preserves the reviewed optional
+  declaration in `unavailable_server_tools`, explains the route limitation to the
+  model, and returns `x-cxweb-unavailable-tools: web_search`. It cannot emit a
+  fabricated search call/result. Forced hosted search and ambiguous required-tool
+  requests fail before browser submission. Unknown tool types, extra hosted-search
+  options, duplicate declarations and malformed values continue to fail.
+- This is an explicit V1 text/coding scope decision, not implemented hosted search.
+  The desktop details disclose it. No native/global search configuration is
+  changed; native model traffic remains byte-preserving. Reviewed source:
+  [hosted tool construction](https://github.com/openai/codex/blob/3d2ee51ca2d5db578f328aa75e20aa22c0197c9a/codex-rs/core/src/tools/hosted_spec.rs)
+  and [native tool specification](https://github.com/openai/codex/blob/3d2ee51ca2d5db578f328aa75e20aa22c0197c9a/codex-rs/tools/src/tool_spec.rs).
+- CLI 0.155.1 and App backend 0.155.0-alpha.9.2 each passed the complete native
+  read/apply_patch/final-answer cycle with their default hosted-search declaration
+  present in all three requests. The App backend also passed a separate request
+  for hosted search: it returned the exact capability limitation rather than
+  claiming a search result. Reports: `*.default-search-tools.json` and
+  `app-backend-0.155.0-alpha.9.2.search-limit.json` under compatibility evidence.
+- An earlier default-search coding run completed both native tools but withheld
+  the final response because the account menu gained the public subtitle
+  `Personal account`. Qualification now accepts exactly the observed personal
+  subtitle variant with the same account/Settings corroboration and workspace
+  exclusion. Organization markers, different layouts and mismatched identities
+  still fail. Later fresh CLI/App runs passed; the failed run is not relabeled.
+- `scripts/probe-tui.mjs` exercises the unmodified CLI through a PTY in a disposable
+  home. The actual `/model` menu displayed `webbridge/diagnostic` with the explicit
+  ChatGPT Web description; confirmation selected `medium`, and the terminal
+  displayed the exact synthetic assistant response. The gateway independently
+  confirmed the owned route and native request identity. The synthetic API key was
+  installed only in this disposable home through the supported native login CLI;
+  no real native authentication/configuration was read or changed. The terminal's
+  optional sandbox setup was dismissed with its normal Back action; no sandbox
+  configuration was changed and this UI scenario executed no tools.
+- CLI 0.155.1 uses provider-level WebSocket negotiation; the obsolete model field
+  `prefer_websockets` was removed. A 404 diagnostic handshake caused retries before
+  HTTP fallback. The synthetic server and isolated native rejection stub now
+  return the client's reviewed 426 fallback status, and the repeated TUI scenario
+  completed immediately without those retry errors. This is not production mixed
+  WebSocket certification: native passthrough must retain its native transport.
+  [Native fallback source](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/core/src/client.rs).
+- Verification: 23 adapter tests, 81 runtime tests, the account-scope regression,
+  14 desktop/test-approval JavaScript tests, affected-crate Clippy with warnings
+  denied, formatting, script syntax and diff checks passed. Current release builds
+  of the CLI, daemon and desktop passed.
+- The actual CLI picker also displayed the live owned route and selected `xhigh`;
+  its terminal and isolated transcript both contained the exact authenticated
+  browser response. Normal `/quit` exited with code 0, the runtime exited with
+  code 0, and browser closure was confirmed. The complete scenario still FAILED:
+  six auxiliary requests were rejected with `E_UNSUPPORTED_OUTPUT_FORMAT`.
+  This is a request-format gap, not a cleanup failure. Native TUI source contains
+  hidden structured title generation using the current model when the native
+  title model is absent. The exact live request shape remains to be qualified.
+  Report: `cli-0.155.1.tui-live-incomplete.json`. No rejected request was sent to
+  ChatGPT; the successful visible response does not certify the whole client.
+- Still open: actual App UI qualification, native subscription coexistence,
+  production WebSocket handling for owned requests, dynamic catalog/activation,
+  context compaction, namespaced dynamic-tool qualification and remaining gates.
 
 ## Native function and custom tool execution (2026-09-19)
 

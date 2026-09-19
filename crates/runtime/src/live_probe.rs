@@ -16,7 +16,10 @@ use std::{
     future::Future,
     io::Write,
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::{Duration, Instant},
 };
 use tokio::net::TcpListener;
@@ -27,9 +30,16 @@ const ROUTE: &str = "webbridge/live-probe";
 struct ProbeProvider {
     provider: CoordinatorProvider,
     failures: Arc<Mutex<Vec<&'static str>>>,
+    search_requests: Arc<AtomicUsize>,
 }
 impl crate::gateway::WebProvider for ProbeProvider {
     fn respond(&self, request: crate::gateway::WebRequest) -> crate::gateway::WebFuture {
+        if request.payload["tools"]
+            .as_array()
+            .is_some_and(|tools| tools.iter().any(|tool| tool["type"] == "web_search"))
+        {
+            self.search_requests.fetch_add(1, Ordering::Relaxed);
+        }
         let provider = self.provider.clone();
         let failures = self.failures.clone();
         Box::pin(async move {
@@ -170,16 +180,21 @@ pub async fn serve(
         let native = NativeTransport::new(format!("http://{native_address}"))?;
         let native_stop = CancellationToken::new();
         let _native_guard = native_stop.clone().drop_guard();
-        tokio::spawn(axum::serve(native_listener, axum::Router::new().fallback(|| async {
+        tokio::spawn(axum::serve(native_listener, axum::Router::new().route("/responses", axum::routing::get(|| async {
+            // This isolated stub has no native WebSocket upstream. Ask the
+            // unmodified client to negotiate HTTP rather than retrying 503s.
+            axum::http::StatusCode::UPGRADE_REQUIRED
+        })).fallback(|| async {
             axum::http::StatusCode::SERVICE_UNAVAILABLE
         })).with_graceful_shutdown(native_stop.cancelled_owned()).into_future());
         let listener = TcpListener::bind("127.0.0.1:0").await.map_err(|_| "E_PROBE_LISTENER")?;
         let failures = Arc::new(Mutex::new(Vec::new()));
-        let gateway = Gateway::new(listener.local_addr().map_err(|_| "E_PROBE_LISTENER")?.port(), native, Arc::new(ProbeProvider { provider, failures: failures.clone() }));
+        let search_requests = Arc::new(AtomicUsize::new(0));
+        let gateway = Gateway::new(listener.local_addr().map_err(|_| "E_PROBE_LISTENER")?.port(), native, Arc::new(ProbeProvider { provider, failures: failures.clone(), search_requests: search_requests.clone() }));
         let mut model = cxweb_codex_adapter::catalog::synthetic_model();
         model["slug"] = json!(ROUTE);
         model["display_name"] = json!(format!("ChatGPT Web · {label}"));
-        model["description"] = json!("Authenticated browser integration probe; uses the saved cxweb session");
+        model["description"] = json!(format!("ChatGPT Web · {label}. Authenticated diagnostic; hosted search unavailable"));
         model["default_reasoning_level"] = json!(effort);
         model["supported_reasoning_levels"] = json!([{"effort":effort,"description":label}]);
         let mut descriptor = std::fs::OpenOptions::new().write(true).create_new(true).open(output).map_err(|_| "E_PROBE_OUTPUT")?;
@@ -197,7 +212,7 @@ pub async fn serve(
             }
         }
         let diagnostic = driver.diagnostic().await?;
-        Ok(json!({"live":true,"route":ROUTE,"browser_label":label,"native_upstream":"local rejection stub","routing_installed":false,"diagnostic":diagnostic,"failures":failures.lock().map_err(|_| "E_PROBE_STATE")?.clone()}))
+        Ok(json!({"live":true,"route":ROUTE,"browser_label":label,"native_upstream":"local rejection stub","routing_installed":false,"diagnostic":diagnostic,"optional_web_search_requests":search_requests.load(Ordering::Relaxed),"failures":failures.lock().map_err(|_| "E_PROBE_STATE")?.clone()}))
     }.await;
     let closed = driver.shutdown().await;
     closed?;

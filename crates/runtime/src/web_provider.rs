@@ -147,6 +147,7 @@ impl CoordinatorProvider {
             return Err("E_MODEL_UNAVAILABLE");
         }
         let stream = decoded.stream;
+        let hosted_search_unavailable = decoded.hosted_search_unavailable();
         // Delivery format and tracing metadata cannot turn a retry into a second
         // generation. All generation/tool/history fields remain in the digest.
         let object = payload.as_object_mut().ok_or("E_INVALID_REQUEST")?;
@@ -174,7 +175,7 @@ impl CoordinatorProvider {
                 request.cancellation,
             )
             .await?;
-        Response::builder()
+        let mut response = Response::builder()
             .header(
                 "content-type",
                 if stream {
@@ -184,7 +185,11 @@ impl CoordinatorProvider {
                 },
             )
             .header("cache-control", "no-store")
-            .header("x-cxweb-delivery", "buffered")
+            .header("x-cxweb-delivery", "buffered");
+        if hosted_search_unavailable {
+            response = response.header("x-cxweb-unavailable-tools", "web_search");
+        }
+        response
             .body(Body::from(if stream {
                 delivery.sse
             } else {
@@ -335,6 +340,37 @@ mod tests {
             .header("x-codex-turn-metadata", json!({"turn_id":turn,"context_window_id":context,"session_id":"RAW_SESSION","thread_id":"RAW_THREAD","extra":"PRIVATE_METADATA"}).to_string())
             .body(Body::from(json!({"model":"webbridge/test","input":"fixture task","stream":stream,"client_metadata":{"trace":"PRIVATE_METADATA"}}).to_string())).unwrap()
     }
+    #[tokio::test]
+    async fn optional_hosted_search_is_visible_and_forced_search_never_sends() {
+        let (gateway, browser) = fixture(false);
+        let base = gateway.base_url();
+        let router = gateway.router();
+        for (choice, expected) in [
+            ("required", StatusCode::UNPROCESSABLE_ENTITY),
+            ("auto", StatusCode::OK),
+        ] {
+            let (parts, _) = request(&base, choice, "context", false).into_parts();
+            let body = json!({"model":"webbridge/test","input":"fixture task","tools":[{"type":"web_search","external_web_access":false}],"tool_choice":choice});
+            let response = router
+                .clone()
+                .oneshot(Request::from_parts(parts, Body::from(body.to_string())))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected);
+            if choice == "required" {
+                assert_eq!(browser.sends.load(Ordering::SeqCst), 0);
+                let bytes = response.into_body().collect().await.unwrap().to_bytes();
+                assert!(String::from_utf8_lossy(&bytes).contains("E_UNSUPPORTED_SERVER_TOOL"));
+            } else {
+                assert_eq!(
+                    response.headers()["x-cxweb-unavailable-tools"],
+                    "web_search"
+                );
+                assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
+            }
+        }
+    }
+
     #[tokio::test]
     async fn gateway_coordinator_replays_retries_but_distinguishes_new_turns_and_contexts() {
         let (gateway, browser) = fixture(false);

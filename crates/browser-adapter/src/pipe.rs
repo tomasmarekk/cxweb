@@ -1862,7 +1862,8 @@ fn qualifies_default_context(surface: &ScopeSurface) -> bool {
         )
         && switcher.workspace_candidates == 0
         && switcher.selected_items == 1
-        && switcher.public_labels == ["Add account"]
+        && (switcher.public_labels == ["Add account"]
+            || switcher.public_labels == ["Personal account", "Add account"])
         && switcher.controls
             == [
                 "menuitem:other:unselected",
@@ -1952,6 +1953,12 @@ mod tests {
         switcher.account_source = Some("account_heading".into());
         switcher.selected_account_candidates = 0;
         assert!(qualifies_default_context(&heading));
+        // Observed after a completed generation: the same selected single-account
+        // row gained a public Personal account subtitle. All independent identity,
+        // workspace and exact control-layout checks still apply.
+        heading.diagnostic.switcher.as_mut().unwrap().public_labels =
+            vec!["Personal account".into(), "Add account".into()];
+        assert!(qualifies_default_context(&heading));
         heading.diagnostic.account_switcher_matches_settings = false;
         assert!(!qualifies_default_context(&heading));
         let mutations: &[fn(&mut ScopeSurface)] = &[
@@ -1980,6 +1987,13 @@ mod tests {
             },
             |s| s.diagnostic.switcher.as_mut().unwrap().workspace_candidates = 1,
             |s| s.diagnostic.switcher.as_mut().unwrap().selected_items = 2,
+            |s| {
+                s.diagnostic.switcher.as_mut().unwrap().public_labels = vec![
+                    "Personal account".into(),
+                    "Business".into(),
+                    "Add account".into(),
+                ]
+            },
             |s| {
                 s.diagnostic
                     .switcher

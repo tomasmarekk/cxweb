@@ -11,13 +11,14 @@ import { approveFixtureRead, approveFixturePatch, fixtureReadCommand } from './p
 
 const executable = process.argv[2];
 const modes = process.argv.slice(3);
-if (!executable || modes.length > 1 || modes.some(mode => !['--live', '--live-read', '--live-patch', '--capture-tools'].includes(mode))) {
-  throw new Error('Usage: node scripts/probe-client.mjs <absolute codex executable> [--live | --live-read | --live-patch | --capture-tools]');
+if (!executable || modes.length > 1 || modes.some(mode => !['--live', '--live-read', '--live-patch', '--live-search-limit', '--capture-tools'].includes(mode))) {
+  throw new Error('Usage: node scripts/probe-client.mjs <absolute codex executable> [--live | --live-read | --live-patch | --live-search-limit | --capture-tools]');
 }
+const searchLimitProbe = modes.includes('--live-search-limit');
 const patchProbe = process.argv.includes('--live-patch');
 const captureTools = process.argv.includes('--capture-tools');
 const readProbe = process.argv.includes('--live-read') || patchProbe;
-const live = process.argv.includes('--live') || readProbe;
+const live = process.argv.includes('--live') || readProbe || searchLimitProbe;
 const root = resolve('.local/probes');
 await mkdir(root, { recursive: true });
 const work = await mkdtemp(join(root, 'client-'));
@@ -57,11 +58,11 @@ try {
   if (readProbe || captureTools) catalog.models[0].shell_type = 'unified_exec';
   if (patchProbe || captureTools) catalog.models[0].apply_patch_tool_type = 'freeform';
   await writeFile(join(home, 'catalog.json'), JSON.stringify(catalog));
-  // The first live qualification exercises text/function transport. Built-in
-  // server search remains a separate compatibility gate; disable it explicitly
-  // only in this disposable client, never by dropping incoming definitions.
-  await writeFile(join(home, 'config.toml'), `openai_base_url = ${JSON.stringify(endpoint)}\nmodel_catalog_json = ${JSON.stringify(join(home, 'catalog.json').replaceAll('\\', '/'))}\n${live ? 'web_search = "disabled"\n' : ''}`);
-  if (live) evidence.builtinWebSearch = 'disabled in isolated test client; production compatibility remains unqualified';
+  // Exercise the client's default optional hosted-search definition. cxweb
+  // reports hosted search as unavailable on its text/coding route; no global
+  // search override is written even in this disposable client.
+  await writeFile(join(home, 'config.toml'), `openai_base_url = ${JSON.stringify(endpoint)}\nmodel_catalog_json = ${JSON.stringify(join(home, 'catalog.json').replaceAll('\\', '/'))}\n`);
+  if (live) evidence.builtinWebSearch = 'native default preserved; hosted search explicitly unavailable on this web route';
   // Sanitize inherited route/auth/home overrides. Only this subprocess sees the mock key.
   const env = { ...process.env };
   for (const key of Object.keys(env)) if (/^(CODEX_|OPENAI_|CHATGPT_)/i.test(key)) delete env[key];
@@ -122,9 +123,10 @@ try {
   stage = 'thread creation';
   const thread = await rpc('thread/start', { cwd, model: route, ephemeral: true });
   evidence.selectedReasoningEffort = thread.reasoningEffort;
-  const expected = readProbe ? toolMarker : live ? 'cxweb live client round-trip succeeded' : 'cxweb diagnostic round-trip succeeded';
+  const expected = searchLimitProbe ? 'Built-in web search is unavailable on this ChatGPT Web route. Use a native Codex model for web search.' : readProbe ? toolMarker : live ? 'cxweb live client round-trip succeeded' : 'cxweb diagnostic round-trip succeeded';
   const prompt = readProbe
     ? `Use exec_command once to run exactly ${fixtureReadCommand} in the current working directory. ${patchProbe ? 'After reading it, use the apply_patch custom tool once to create probe-output.txt containing that exact line followed by a newline. Wait for the successful patch result before your final answer. Do not modify other files.' : 'This is a read-only fixture test. Do not modify files.'} Do not request elevated permissions or run other commands. Return a final answer containing exactly the single line read from the input file, without extra text.`
+    : searchLimitProbe ? `Use the built-in hosted web_search tool to check the current stable Rust release. If that hosted tool is unavailable, do not guess or use other tools: return exactly this final text: ${expected}`
     : live ? `Return a final answer with exactly this text: ${expected}` : 'Synthetic diagnostic only. Reply with the diagnostic response.';
   const turn = await rpc('turn/start', { threadId: thread.thread.id, input: [{ type: 'text', text: prompt, text_elements: [] }] });
   stage = 'generation';
@@ -174,7 +176,7 @@ try {
     assert.equal(identity.raw_identifiers_recorded, false);
     evidence.identity = identity;
   }
-  evidence.result = patchProbe ? 'PASS native function and custom tools through authenticated browser' : readProbe ? 'PASS native read tool through authenticated browser' : live ? 'PASS native backend through authenticated browser' : 'PASS backend-only synthetic test';
+  evidence.result = searchLimitProbe ? 'PASS hosted-search limitation returned through native backend' : patchProbe ? 'PASS native function and custom tools through authenticated browser' : readProbe ? 'PASS native read tool through authenticated browser' : live ? 'PASS native backend through authenticated browser' : 'PASS backend-only synthetic test';
 } catch (error) {
   evidence.result = 'FAIL';
   evidence.failedStage = stage;
@@ -194,7 +196,10 @@ try {
     const exited = await Promise.race([serverExit, delay(65000, null, { ref: false })]);
     if (!exited) { server.kill(); evidence.cleanup = 'unconfirmed'; process.exitCode = 1; }
     else {
-      try { evidence.runtime = JSON.parse(serverOutput); } catch {
+      try {
+        evidence.runtime = JSON.parse(serverOutput);
+        assert.ok(evidence.runtime.optional_web_search_requests > 0, 'native client supplied optional hosted search');
+      } catch {
         evidence.runtimeError = serverError.match(/\bE_[A-Z_]+\b/)?.[0] ?? 'E_PROBE_RUNTIME';
         process.exitCode = 1;
       }

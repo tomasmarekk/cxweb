@@ -45,7 +45,7 @@ pub fn etag(bytes: &[u8]) -> String {
 pub fn synthetic_model() -> Value {
     json!({
         "slug": "webbridge/diagnostic", "display_name": "ChatGPT Web · Diagnostic",
-        "description": "Local synthetic compatibility probe; no remote inference",
+        "description": "ChatGPT Web · Diagnostic. Local synthetic probe; no remote inference",
         "default_reasoning_level": "medium",
         "supported_reasoning_levels": [{"effort": "medium", "description": "Diagnostic"}],
         "shell_type": "disabled", "visibility": "list", "supported_in_api": true,
@@ -55,7 +55,7 @@ pub fn synthetic_model() -> Value {
         "apply_patch_tool_type": null, "truncation_policy": {"mode": "bytes", "limit": 10000},
         "supports_reasoning_summary": false, "supports_reasoning_summary_parameter": false,
         "supports_parallel_tool_calls": false, "input_modalities": ["text"],
-        "prefer_websockets": false, "tool_mode": "direct", "experimental_supported_tools": []
+        "tool_mode": "direct", "experimental_supported_tools": []
     })
 }
 

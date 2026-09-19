@@ -1,0 +1,23 @@
+{
+  "schema": "cxweb.tui-probe.v1",
+  "client": "codex-cli 0.155.1",
+  "executableSha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+  "authentication": "synthetic key restricted to local diagnostic server",
+  "actualPicker": "observed through native TUI in PTY",
+  "catalogStrategy": "isolated static diagnostic catalog",
+  "clientExitCode": 0,
+  "identity": {
+    "raw_identifiers_recorded": false,
+    "verified_native_identity": true
+  },
+  "result": "PASS actual CLI picker and synthetic round trip in isolated home",
+  "executableUnchanged": true,
+  "date": "2026-09-19",
+  "visibleRow": "webbridge/diagnostic (current)",
+  "visibleDescription": "ChatGPT Web · Diagnostic. Local synthetic probe; no remote inference",
+  "confirmedSelection": "webbridge/diagnostic medium",
+  "visibleAssistantResponse": "cxweb diagnostic round-trip succeeded",
+  "transport": "native HTTP fallback negotiated with 426; no client transport override",
+  "productionRoutingInstalled": false,
+  "nativeSubscriptionCoexistence": "NOT RUN"
+}
