@@ -312,6 +312,10 @@ impl Coordinator {
                         return Err("E_INVALID_TOOL_ENVELOPE");
                     }
                 };
+                if let Err(code) = request.validate_output(&output) {
+                    self.ledger.transition(id, TurnState::Failed).await?;
+                    return Err(code);
+                }
                 let response_id = format!("resp_cxweb_{:x}", Sha256::digest(id.as_bytes()));
                 let created_at = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -476,6 +480,32 @@ mod tests {
     }
     fn input() -> TurnInput {
         TurnInput { request_id:"request-1".into(), session:SessionKey { installation:"i".into(),native_session:"s".into(),account_scope:"a".into(),workspace_scope:"w".into(),route:"webbridge/test".into(),epoch:0 }, bytes:json!({"model":"webbridge/test","input":"synthetic task","tools":[{"type":"function","name":"read_file","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}}]}).to_string().into_bytes() }
+    }
+    #[tokio::test]
+    async fn structured_output_violation_is_terminal_without_delivery_or_resubmission() {
+        let browser = MockBrowser::new(Mode::Final);
+        let coordinator = Coordinator::new(Ledger::in_memory(), browser.clone());
+        let mut request = input();
+        let mut payload: serde_json::Value = serde_json::from_slice(&request.bytes).unwrap();
+        payload["text"] = json!({"format":{"type":"json_schema","name":"fixture","strict":true,"schema":{"type":"object","required":["title"]}}});
+        request.bytes = serde_json::to_vec(&payload).unwrap();
+        let retry = TurnInput {
+            request_id: request.request_id.clone(),
+            session: request.session.clone(),
+            bytes: request.bytes.clone(),
+        };
+        // The normal mock returns an attributed plain-text answer. It cannot be
+        // delivered when this request requires JSON, even with a valid envelope.
+        assert!(matches!(
+            coordinator.execute(request, CancellationToken::new()).await,
+            Err("E_OUTPUT_SCHEMA")
+        ));
+        assert!(matches!(
+            coordinator.execute(retry, CancellationToken::new()).await,
+            Err("E_REQUEST_ALREADY_ADMITTED")
+        ));
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
+        assert_eq!(browser.releases.load(Ordering::SeqCst), 1);
     }
     #[tokio::test]
     async fn complete_response_is_replayed_without_a_second_browser_submission() {

@@ -1,0 +1,66 @@
+{
+  "schema": "cxweb.tui-probe.v1",
+  "client": "codex-cli 0.155.1",
+  "executableSha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+  "authentication": "saved cxweb browser session; synthetic native key restricted to loopback",
+  "actualPicker": "requires independent observation of the terminal UI",
+  "catalogStrategy": "isolated static diagnostic catalog",
+  "synthetic": false,
+  "clientExitCode": 0,
+  "exactAssistantResponse": true,
+  "result": "FAIL",
+  "runtimeExitCode": 0,
+  "browserClosed": true,
+  "runtimeFailures": [
+    "E_INVALID_TOOL_ENVELOPE",
+    "E_REQUEST_ALREADY_ADMITTED",
+    "E_REQUEST_ALREADY_ADMITTED",
+    "E_REQUEST_ALREADY_ADMITTED",
+    "E_REQUEST_ALREADY_ADMITTED",
+    "E_REQUEST_ALREADY_ADMITTED"
+  ],
+  "outputFormats": [
+    {
+      "kind": "absent",
+      "matches_native_title_schema": false,
+      "strict": null
+    },
+    {
+      "kind": "json_schema",
+      "matches_native_title_schema": true,
+      "strict": true
+    },
+    {
+      "kind": "json_schema",
+      "matches_native_title_schema": true,
+      "strict": true
+    },
+    {
+      "kind": "json_schema",
+      "matches_native_title_schema": true,
+      "strict": true
+    },
+    {
+      "kind": "json_schema",
+      "matches_native_title_schema": true,
+      "strict": true
+    },
+    {
+      "kind": "json_schema",
+      "matches_native_title_schema": true,
+      "strict": true
+    },
+    {
+      "kind": "json_schema",
+      "matches_native_title_schema": true,
+      "strict": true
+    }
+  ],
+  "optionalWebSearchRequests": 1,
+  "lastMessageMatchedInFull": true,
+  "runtimeError": "E_REJECTED_CLIENT_REQUESTS",
+  "executableUnchanged": true,
+  "date": "2026-09-19",
+  "activeBrowserGenerationLimit": 1,
+  "productionRoutingInstalled": false
+}

@@ -135,7 +135,7 @@ impl Registry {
     }
 }
 
-fn has_external_reference(schema: &Value) -> bool {
+pub(crate) fn has_external_reference(schema: &Value) -> bool {
     match schema {
         Value::Object(o) => o.iter().any(|(key, v)| {
             (matches!(key.as_str(), "$ref" | "$dynamicRef" | "$recursiveRef")

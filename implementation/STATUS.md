@@ -6,8 +6,9 @@ Target: the complete supplied PRD, not a substitute chat application. No subagen
 Current gate: **G0 IN PROGRESS**. No client or browser combination is certified.
 Manual login and managed reuse of the saved session are user-confirmed. Scoped
 background text generation and native read/apply_patch cycles now pass through
-both actual native backends. The actual CLI picker passed an isolated synthetic
-round trip. Actual App picker, native subscription coexistence, broader coding/model
+both actual native backends. The actual CLI picker passed isolated synthetic and
+authenticated browser round trips, including its structured auxiliary request.
+Actual App picker, native subscription coexistence, broader coding/model
 qualification and release gates remain incomplete. Production integration remains
 disabled.
 
@@ -19,6 +20,56 @@ Chat behavior or a successful generation. After restarting Codex App, its real
 picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
+
+## Structured output and auxiliary CLI requests (2026-09-19)
+
+- Structural diagnostics confirmed that the six rejected auxiliary TUI requests
+  exactly match the public native thread-title schema with `strict=true`.
+  [Native title generation](https://github.com/openai/codex/blob/3d2ee51ca2d5db578f328aa75e20aa22c0197c9a/codex-rs/tui/src/app/thread_title.rs)
+  runs a hidden temporary thread using the current model when the native title
+  model is absent. This is part of the unmodified CLI behavior, not a cxweb task.
+- The adapter now preserves `text.format` JSON Schema definitions, compiles them
+  without external retrieval, includes them in the browser request, and validates
+  the complete final text after transport-envelope validation. Invalid JSON,
+  duplicate keys and schema violations are terminal, never repaired or resent.
+  Intermediate validated client tool calls retain their existing contract.
+  Unknown formats/options and external schema references fail before submission.
+- Accepting the auxiliary request exposed overlapping preparation/observation in
+  the serialized browser owner. The two-generation TUI run failed with browser
+  observation/submission uncertainty; no retries sent duplicate browser work.
+  The current default is one active browser generation and an eight-entry FIFO
+  queue. Native clients can submit concurrent tasks; their browser work waits its
+  turn. Parallel browser operation is not qualified or advertised.
+- With sequential browser work, the main TUI answer completed but the first
+  structured title failed the strict transport envelope. Prompt instructions now
+  explicitly keep client schema properties inside the JSON-encoded final text.
+  Diagnostic output records only fixed structural booleans/counts, never model
+  content, arbitrary schema names or native correlation identifiers. The failed
+  runs remain recorded as `*.tui-concurrent-incomplete.json` and
+  `*.tui-envelope-incomplete.json`; they are not relabeled as successful.
+- Browser answer selection now requires a unique assistant content block outside
+  marked intermediate sections. Fenced-output validation waits for completion;
+  incomplete rendering is not a final protocol reply. Three DOM-selection tests,
+  10 browser-adapter Rust tests (one installed-browser test excluded), and the
+  actual Chrome 153.0.8010.48 offscreen fixture passed. The fixture still reports
+  initial taskbar exposure for its offscreen native window; it is not proof of
+  a completely invisible production lifecycle. The final live title had one
+  answer block, no intermediate blocks and no fence, so its earlier failure
+  cannot be attributed to commentary selection alone.
+- Unicode quote escaping in the structured text prompt resolved the live title
+  scenario. The final structural observation confirms a valid four-field outer
+  envelope, a string-valued inner answer and Unicode quote escapes. Both actual
+  TUI requests completed in the durable ledger with no runtime failures. The
+  terminal visibly showed the exact fixed main answer; the auxiliary answer
+  passed the native JSON Schema locally. No claim is made about a persisted UI
+  task name. The client and runtime exited with code 0 and browser closure was
+  confirmed. Report: `cli-0.155.1.tui-live.json`.
+- Verification: 27 adapter tests and 85 runtime tests passed, including
+  schema rejection/no-resend, exact schema preservation, sequential auxiliary
+  admission, and diagnostic content exclusion. Affected-crate Clippy with
+  warnings denied and current release CLI/daemon/desktop builds passed. The
+  actual TUI test uses a disposable static catalog and local native rejection
+  stub; production mixed native/WebSocket/App qualification remains open.
 
 ## Optional hosted search and actual CLI UI (2026-09-19)
 

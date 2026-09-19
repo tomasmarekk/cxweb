@@ -20,7 +20,10 @@ function (baselineIds, expectedPrompt) {
   const afterUser = user ? containers.slice(userIndex + 1).filter(node => !old.has(node.getAttribute('data-turn-id-container'))) : [];
   const assistants = afterUser.filter(node => node.matches(assistantSelector) || node.querySelector(assistantSelector));
   const assistant = assistants.length === 1 ? assistants[0] : null;
-  const content = assistant?.querySelector('.markdown');
+  const answer = readAnswerContent(assistant);
+  const content = answer.content;
+  const generating = !!document.querySelector('[data-testid="stop-button"]');
+  const complete = !!assistant?.querySelector('[data-testid="copy-turn-action-button"]');
   const userContent = user?.querySelector('[data-message-author-role="user"]') ?? user;
   // Collapsed messages contain their own expand/copy controls. Compare the
   // message text, not those localized control labels. Keep the source DOM
@@ -62,16 +65,18 @@ function (baselineIds, expectedPrompt) {
       span_count: messageCopy?.querySelectorAll('span').length ?? 0,
       code_count: messageCopy?.querySelectorAll('code').length ?? 0,
       break_count: messageCopy?.querySelectorAll('br').length ?? 0,
-      block_count: messageCopy?.querySelectorAll('div, p, pre, li').length ?? 0
+      block_count: messageCopy?.querySelectorAll('div, p, pre, li').length ?? 0,
+      answer_candidates: answer.candidates, intermediate_blocks: answer.intermediate,
+      answer_fenced: Number(!!content?.querySelector('pre')), answer_generating: Number(generating)
     },
     user_id: user?.getAttribute('data-turn-id-container') ?? null,
     user_matches: userMatches,
     assistant_id: assistant?.getAttribute('data-turn-id-container') ?? null,
     text,
-    generating: !!document.querySelector('[data-testid="stop-button"]'),
-    completion_control: !!assistant?.querySelector('[data-testid="copy-turn-action-button"]'),
+    generating,
+    completion_control: complete && answer.candidates === 1,
     fenced_output: !!content?.querySelector('pre'),
     selected_model: model.textContent.trim().slice(0, 120),
-    ambiguous: users.length > 1 || assistants.length > 1 || afterUser.some(node => node !== user && (node.matches(userSelector) || node.querySelector(userSelector)))
+    ambiguous: users.length > 1 || assistants.length > 1 || (complete && !generating && answer.candidates !== 1) || afterUser.some(node => node !== user && (node.matches(userSelector) || node.querySelector(userSelector)))
   };
 }

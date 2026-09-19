@@ -99,10 +99,15 @@ try {
         const report = JSON.parse(serverOutput);
         evidence.browserClosed = report.browser_closed === true;
         evidence.runtimeFailures = report.failures;
+        evidence.outputFormats = report.output_formats;
+        evidence.outputShape = report.diagnostic.output_shape;
+        evidence.answerSurface = Object.fromEntries(['answer_candidates', 'intermediate_blocks', 'answer_fenced', 'answer_generating'].map(key => [key, report.diagnostic.attribution[key]]));
         evidence.optionalWebSearchRequests = report.optional_web_search_requests;
         assert.equal(report.browser_closed, true);
-        assert.deepEqual(report.failures, []);
         evidence.lastMessageMatchedInFull = report.diagnostic.attribution.text_content_matches === 1;
+        if (report.failures.length !== 0) {
+          evidence.result = 'FAIL'; evidence.runtimeError = 'E_REJECTED_CLIENT_REQUESTS'; process.exitCode = 1;
+        }
       } catch { evidence.result = 'FAIL'; evidence.cleanupError = 'E_RUNTIME_REPORT'; process.exitCode = 1; }
     }
   } else { server.kill(); await serverExit; }

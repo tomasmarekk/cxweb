@@ -122,6 +122,7 @@ impl ManagedDriver {
                 let mut leases = HashMap::<String, Lease>::new();
                 let mut orphaned = Vec::<ManagedPage>::new();
                 let mut shutdown_reply = None;
+                let mut output_shape = serde_json::Value::Null;
                 let check_scope = |browser: &mut ManagedBrowser,
                                    page: &ManagedPage,
                                    verify: &mut ScopeVerifier| {
@@ -134,7 +135,7 @@ impl ManagedDriver {
                 while let Some(command) = incoming.blocking_recv() {
                     match command {
                         Command::Diagnostic(reply) => {
-                            let _ = reply.send(Ok(serde_json::json!({"attribution":browser.attribution_diagnostic(), "scope":browser.scope_diagnostic(), "model":browser.model_diagnostic()})));
+                            let _ = reply.send(Ok(serde_json::json!({"attribution":browser.attribution_diagnostic(), "scope":browser.scope_diagnostic(), "model":browser.model_diagnostic(), "output_shape":output_shape})));
                         }
                         Command::Shutdown(reply) => {
                             shutdown_reply = Some(reply);
@@ -254,6 +255,9 @@ impl ManagedDriver {
                                     )
                                     .map_err(|_| "E_BROWSER_OBSERVATION")
                             })();
+                            if let Ok(observation) = &result {
+                                output_shape = summarize_output_shape(&observation.text);
+                            }
                             let _ = reply.send(result);
                         }
                         Command::VerifyCompletion(handle, reply) => {
@@ -341,6 +345,26 @@ impl ManagedDriver {
     }
 }
 
+fn summarize_output_shape(text: &str) -> serde_json::Value {
+    use serde_json::json;
+    let parsed = cxweb_codex_adapter::strict_json::parse(text.as_bytes(), 8 * 1024 * 1024).ok();
+    let object = parsed.as_ref().and_then(serde_json::Value::as_object);
+    json!({
+        "json_valid":parsed.is_some(),
+        "starts_object":text.trim_start().starts_with('{'),
+        "unicode_quote_escape":text.contains("\\u0022"),
+        "unescaped_nested_text":text.contains("\"text\":\"{\"") || text.contains("\"text\": \"{\""),
+        "object":object.is_some(),
+        "field_count":object.map(|value| value.len()),
+        "protocol_valid":parsed.as_ref().is_some_and(|value| value["protocol"] == "webbridge.tool.v1"),
+        "kind_final":parsed.as_ref().is_some_and(|value| value["kind"] == "final"),
+        "text_string":parsed.as_ref().is_some_and(|value| value["text"].is_string()),
+        "text_object":parsed.as_ref().is_some_and(|value| value["text"].is_object()),
+        "title_string":parsed.as_ref().is_some_and(|value| value["title"].is_string()),
+        "nonce_hex":parsed.as_ref().and_then(|value| value["turn_nonce"].as_str()).is_some_and(|value| value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit())),
+    })
+}
+
 impl BrowserDriver for ManagedDriver {
     fn verify_completion(&self, handle: String) -> BrowserFuture<()> {
         self.request(move |reply| Command::VerifyCompletion(handle, reply))
@@ -365,6 +389,21 @@ impl BrowserDriver for ManagedDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn output_shape_exports_only_fixed_structural_metadata() {
+        let observed = summarize_output_shape(
+            r#"{"title":"PRIVATE_TITLE","PRIVATE_FIELD":"PRIVATE_CONTENT"}"#,
+        );
+        assert_eq!(observed["title_string"], true);
+        assert_eq!(observed["field_count"], 2);
+        assert_eq!(observed["protocol_valid"], false);
+        assert!(!observed.to_string().contains("PRIVATE"));
+        assert_eq!(
+            summarize_output_shape("PRIVATE_NON_JSON")["json_valid"],
+            false
+        );
+    }
 
     fn binding() -> Binding {
         Binding {

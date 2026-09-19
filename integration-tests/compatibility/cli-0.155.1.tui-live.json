@@ -1,0 +1,62 @@
+{
+  "schema": "cxweb.tui-probe.v1",
+  "client": "codex-cli 0.155.1",
+  "executableSha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+  "authentication": "saved cxweb browser session; synthetic native key restricted to loopback",
+  "actualPicker": "observed through native TUI in PTY",
+  "catalogStrategy": "isolated static diagnostic catalog",
+  "synthetic": false,
+  "clientExitCode": 0,
+  "exactAssistantResponse": true,
+  "result": "PASS actual CLI picker, authenticated browser response and structured auxiliary request",
+  "runtimeExitCode": 0,
+  "browserClosed": true,
+  "runtimeFailures": [],
+  "outputFormats": [
+    {
+      "kind": "absent",
+      "matches_native_title_schema": false,
+      "strict": null
+    },
+    {
+      "kind": "json_schema",
+      "matches_native_title_schema": true,
+      "strict": true
+    }
+  ],
+  "outputShape": {
+    "field_count": 4,
+    "json_valid": true,
+    "kind_final": true,
+    "nonce_hex": true,
+    "object": true,
+    "protocol_valid": true,
+    "starts_object": true,
+    "text_object": false,
+    "text_string": true,
+    "title_string": false,
+    "unescaped_nested_text": false,
+    "unicode_quote_escape": true
+  },
+  "answerSurface": {
+    "answer_candidates": 1,
+    "intermediate_blocks": 0,
+    "answer_fenced": 0,
+    "answer_generating": 0
+  },
+  "optionalWebSearchRequests": 1,
+  "lastMessageMatchedInFull": true,
+  "executableUnchanged": true,
+  "date": "2026-09-19",
+  "visibleRow": "webbridge/live-probe (current)",
+  "visibleDescription": "ChatGPT Web · Latest · Extra High. Authenticated diagnostic; hosted search unavailable",
+  "confirmedSelection": "webbridge/live-probe xhigh",
+  "visibleAssistantResponse": "cxweb live terminal round-trip succeeded",
+  "activeBrowserGenerationLimit": 1,
+  "browserGenerationsByState": {
+    "completed": 2
+  },
+  "productionRoutingInstalled": false,
+  "nativeSubscriptionCoexistence": "NOT RUN",
+  "transport": "native HTTP fallback negotiated with 426; no client transport override"
+}

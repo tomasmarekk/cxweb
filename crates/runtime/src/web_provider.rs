@@ -27,6 +27,7 @@ pub(crate) fn web_failure(code: &'static str) -> Response {
         | "E_USER_MESSAGE_MISMATCH"
         | "E_TURN_ATTRIBUTION"
         | "E_TURN_AMBIGUOUS"
+        | "E_OUTPUT_SCHEMA"
         | "E_INVALID_TOOL_ENVELOPE" => StatusCode::UNPROCESSABLE_ENTITY,
         _ if code.starts_with("E_UNSUPPORTED_") || code == "E_NONPORTABLE_CONTEXT" => {
             StatusCode::UNPROCESSABLE_ENTITY

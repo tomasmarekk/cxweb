@@ -127,10 +127,12 @@ impl TurnTracker {
         if !observation.text.starts_with(&self.committed_prefix) {
             return self.fail("E_STREAM_REVISION");
         }
-        if observation.fenced_output {
-            return self.fail("E_INVALID_TOOL_ENVELOPE");
-        }
         if observation.completion_control && !observation.generating {
+            // Intermediate rendering is not a completed protocol reply. Refuse
+            // fenced final output without cancelling an in-progress answer.
+            if observation.fenced_output {
+                return self.fail("E_INVALID_TOOL_ENVELOPE");
+            }
             self.state
                 .transition(TurnState::Completed)
                 .map_err(|_| "E_TURN_STATE")?;
@@ -264,6 +266,23 @@ mod tests {
         assert_eq!(tracker.state(), TurnState::SubmissionUncertain);
         assert!(tracker.begin_submission().is_err());
         assert!(tracker.observe(observation()).is_err());
+    }
+    #[test]
+    fn intermediate_rendering_is_not_validated_as_a_final_envelope() {
+        let mut tracker = tracker();
+        let mut intermediate = observation();
+        intermediate.generating = true;
+        intermediate.completion_control = false;
+        intermediate.fenced_output = true;
+        intermediate.text = "unfinished intermediate rendering".into();
+        assert!(matches!(
+            tracker.observe(intermediate),
+            Ok(Progress::Generating)
+        ));
+        assert!(matches!(
+            tracker.observe(observation()),
+            Ok(Progress::Completed(_))
+        ));
     }
     #[test]
     fn committed_text_cannot_be_revised() {

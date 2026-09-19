@@ -31,9 +31,15 @@ struct ProbeProvider {
     provider: CoordinatorProvider,
     failures: Arc<Mutex<Vec<&'static str>>>,
     search_requests: Arc<AtomicUsize>,
+    output_formats: Arc<Mutex<Vec<Value>>>,
 }
 impl crate::gateway::WebProvider for ProbeProvider {
     fn respond(&self, request: crate::gateway::WebRequest) -> crate::gateway::WebFuture {
+        if let Ok(mut formats) = self.output_formats.lock()
+            && formats.len() < 32
+        {
+            formats.push(output_format_observation(&request.payload));
+        }
         if request.payload["tools"]
             .as_array()
             .is_some_and(|tools| tools.iter().any(|tool| tool["type"] == "web_search"))
@@ -56,6 +62,24 @@ impl crate::gateway::WebProvider for ProbeProvider {
             }
         })
     }
+}
+
+// Retain only known format names and comparisons with a public native schema.
+// Never export user-provided schemas, descriptions, property names or content.
+fn output_format_observation(payload: &Value) -> Value {
+    let format = payload.get("text").and_then(|text| text.get("format"));
+    let kind = match format {
+        None => "absent",
+        Some(Value::Null) => "null",
+        Some(value) => match value.get("type").and_then(Value::as_str) {
+            Some("text") => "text",
+            Some("json_schema") => "json_schema",
+            Some("json_object") => "json_object",
+            _ => "unknown",
+        },
+    };
+    let title = json!({"type":"object","properties":{"title":{"type":"string","minLength":1,"maxLength":36}},"required":["title"],"additionalProperties":false});
+    json!({"kind":kind,"matches_native_title_schema":format.is_some_and(|f| f.get("schema") == Some(&title)),"strict":format.and_then(|f| f.get("strict")).and_then(Value::as_bool)})
 }
 
 pub async fn serve(
@@ -190,7 +214,8 @@ pub async fn serve(
         let listener = TcpListener::bind("127.0.0.1:0").await.map_err(|_| "E_PROBE_LISTENER")?;
         let failures = Arc::new(Mutex::new(Vec::new()));
         let search_requests = Arc::new(AtomicUsize::new(0));
-        let gateway = Gateway::new(listener.local_addr().map_err(|_| "E_PROBE_LISTENER")?.port(), native, Arc::new(ProbeProvider { provider, failures: failures.clone(), search_requests: search_requests.clone() }));
+        let output_formats = Arc::new(Mutex::new(Vec::new()));
+        let gateway = Gateway::new(listener.local_addr().map_err(|_| "E_PROBE_LISTENER")?.port(), native, Arc::new(ProbeProvider { provider, failures: failures.clone(), search_requests: search_requests.clone(), output_formats: output_formats.clone() }));
         let mut model = cxweb_codex_adapter::catalog::synthetic_model();
         model["slug"] = json!(ROUTE);
         model["display_name"] = json!(format!("ChatGPT Web · {label}"));
@@ -212,7 +237,7 @@ pub async fn serve(
             }
         }
         let diagnostic = driver.diagnostic().await?;
-        Ok(json!({"live":true,"route":ROUTE,"browser_label":label,"native_upstream":"local rejection stub","routing_installed":false,"diagnostic":diagnostic,"optional_web_search_requests":search_requests.load(Ordering::Relaxed),"failures":failures.lock().map_err(|_| "E_PROBE_STATE")?.clone()}))
+        Ok(json!({"live":true,"route":ROUTE,"browser_label":label,"native_upstream":"local rejection stub","routing_installed":false,"diagnostic":diagnostic,"optional_web_search_requests":search_requests.load(Ordering::Relaxed),"output_formats":output_formats.lock().map_err(|_| "E_PROBE_STATE")?.clone(),"failures":failures.lock().map_err(|_| "E_PROBE_STATE")?.clone()}))
     }.await;
     let closed = driver.shutdown().await;
     closed?;
@@ -220,4 +245,26 @@ pub async fn serve(
         report["browser_closed"] = json!(true);
         report
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_diagnostics_never_export_arbitrary_schema_content() {
+        let observed = output_format_observation(
+            &json!({"text":{"format":{"type":"PRIVATE_FORMAT","name":"PRIVATE_NAME","schema":{"properties":{"PRIVATE_PROPERTY":{"description":"PRIVATE_DESCRIPTION"}}}}}}),
+        );
+        assert_eq!(
+            observed,
+            json!({"kind":"unknown","matches_native_title_schema":false,"strict":null})
+        );
+        assert!(!observed.to_string().contains("PRIVATE"));
+        assert_eq!(
+            output_format_observation(&json!({"text":{"format":null}}))["kind"],
+            "null"
+        );
+        assert_eq!(output_format_observation(&json!({}))["kind"], "absent");
+    }
 }

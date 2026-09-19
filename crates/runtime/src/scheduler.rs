@@ -18,7 +18,11 @@ pub struct Scheduler {
 
 impl Default for Scheduler {
     fn default() -> Self {
-        Self::new(2, 8, Duration::from_secs(600))
+        // The current browser owner serializes DOM operations. Preparing a
+        // second tab can block observation of the first beyond its deadline.
+        // Queue independent native turns (including automatic titles) until a
+        // driver with bounded interleaving is separately qualified.
+        Self::new(1, 8, Duration::from_secs(600))
     }
 }
 impl Scheduler {
@@ -98,6 +102,26 @@ mod tests {
             route: "webbridge/test".into(),
             epoch: 0,
         }
+    }
+    #[tokio::test]
+    async fn default_queues_auxiliary_turn_until_active_generation_releases() {
+        let scheduler = Scheduler::default();
+        let cancel = CancellationToken::new();
+        let active = scheduler.acquire(session("main"), &cancel).await.unwrap();
+        let auxiliary = scheduler.acquire(session("title"), &cancel);
+        tokio::pin!(auxiliary);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut auxiliary)
+                .await
+                .is_err()
+        );
+        drop(active);
+        let admitted = tokio::time::timeout(Duration::from_secs(1), auxiliary)
+            .await
+            .unwrap()
+            .unwrap();
+        drop(admitted);
+        assert!(scheduler.acquire(session("main"), &cancel).await.is_ok());
     }
     #[tokio::test]
     async fn cancel_queued_work_releases_its_slot_and_session() {

@@ -459,8 +459,9 @@ impl ManagedBrowser {
         // All functions are reviewed bundled sources, never IPC/model data.
         let effort_label = include_str!("dom/effort_label.js");
         let model_families = include_str!("dom/model_families.js");
+        let answer_content = include_str!("dom/answer_content.js");
         let guarded = format!(
-            "function(expectedOrigin, args) {{ if (location.origin !== expectedOrigin || (expectedOrigin === 'null' && location.href !== 'about:blank')) throw new Error('E_OFFICIAL_ORIGIN_REQUIRED'); const readEffortLabel = ({effort_label}); const readModelFamilies = ({model_families}); return ({function})(...args); }}"
+            "function(expectedOrigin, args) {{ if (location.origin !== expectedOrigin || (expectedOrigin === 'null' && location.href !== 'about:blank')) throw new Error('E_OFFICIAL_ORIGIN_REQUIRED'); const readEffortLabel = ({effort_label}); const readModelFamilies = ({model_families}); const readAnswerContent = ({answer_content}); return ({function})(...args); }}"
         );
         let result = self.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":guarded,"arguments":[{"value":if page.fixture {"null"} else {"https://chatgpt.com"}},{"value":arguments}],"returnByValue":true}), Some(&page.session));
         let _ = self.call(
@@ -1447,6 +1448,10 @@ impl ManagedBrowser {
                 "code_count",
                 "break_count",
                 "block_count",
+                "answer_candidates",
+                "intermediate_blocks",
+                "answer_fenced",
+                "answer_generating",
             ] {
                 if let Some(value) = diagnostic[key].as_u64() {
                     self.attribution_diagnostic.insert(key.into(), value);
