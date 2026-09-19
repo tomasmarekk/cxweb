@@ -4,6 +4,8 @@ pub mod atomic_file;
 #[cfg(windows)]
 pub mod browser_process;
 #[cfg(windows)]
+mod browser_window;
+#[cfg(windows)]
 pub mod control_pipe;
 #[cfg(windows)]
 pub mod loopback;

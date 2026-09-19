@@ -49,26 +49,46 @@ entry was visible, which is the expected evidence while activation remains absen
   dedicated profile. A private `browser-control background` diagnostic can also
   start the saved profile without opening a visible window. No browser profile
   or credential material is copied, and no native Codex settings are changed.
-- Background execution uses ordinary Chrome headless mode. Native hidden targets
-  in a headed browser were rejected for generation: their model menu retained a
-  running exit animation after its trigger closed. Synthetic fixtures alone had
-  missed this live failure. Reduced-motion and scheduler-flag experiments did
-  not resolve it and are absent from the final launch configuration.
-- A real cold headless start succeeded over the private pipe, but ChatGPT then
-  required an additional verification step. Background authenticated generation
-  is therefore **NOT QUALIFIED**. No test message was sent in this investigation.
-  The panel distinguishes background loading, expired sign-in and verification
-  challenges. It does not retry or treat a retained composer as authentication
-  evidence while a challenge is present. No challenge automation or browser
-  identity spoofing is implemented.
+- Background execution now keeps ordinary Chrome rendering in an owned native
+  window positioned outside the virtual desktop. Only windows belonging to the
+  retained browser process handle/PID and the expected Chromium window class
+  can be repositioned. Their taskbar/activation styles are suppressed. Existing
+  parked windows are reused without repeated hide/show cycles. Authentication
+  windows retain normal visible behavior and the browser identity is unchanged.
+- The real saved session loaded after a cold background start, reported `en-US`
+  for both browser/page, discovered five effort choices and verified Temporary
+  Chat. One text test and one function/custom tool-envelope test then **PASSED**
+  without a visible work window. Both attributed the exact submitted message and
+  completed response with matching `Extra High` labels. These results establish
+  background transport, not actual Codex tool execution or picker integration.
+- Native hidden CDP targets had stalled CSS exit animations. Headless mode was
+  also tested but required additional provider verification and is not used for
+  saved-session background work. The independent off-screen implementation was
+  informed by the reference application's render-surface lifetime, with no code
+  copied. The fixture now requires a CSS animation to finish; it would reject
+  the earlier stalled renderer. Normal Chromium sandbox/security remain enabled.
+- Startup qualification remains incomplete: the off-screen fixture found no
+  initial desktop exposure, but the initial window still had taskbar-capable
+  styles before placement. A transient shell entry is not yet ruled out. Display
+  changes and actual login-window closure need full regression coverage before
+  claiming the final no-window UX. The diagnostic reports this limitation.
+- The panel distinguishes background loading, expired sign-in and verification
+  challenges, and does not retry challenges or qualify a retained composer while
+  verification is required. No challenge automation is implemented.
 - Scope observation now requires an expanded account entry point, so an unrelated
   model menu cannot accidentally be read as the account menu. Account/workspace
   identity, actual App/CLI integration and production activation remain open.
 - All 119 workspace tests passed (two opt-in tests ignored); all 25 JavaScript
   tests passed. Workspace Clippy with warnings denied passed. The real Chrome
   synthetic background fixture and the opt-in local HTTP/English-language test
-  passed. These local fixtures do not establish provider acceptance of headless
-  operation or release readiness.
+  passed. These local fixtures alone do not establish release readiness.
+- After adding native off-screen placement, all 97 tests in platform, browser
+  adapter and runtime passed (one opt-in ignored), and workspace Clippy passed.
+  The Chrome fixture passed with CSS animation completion, menu/model selection,
+  exact prompt attribution, Stop and complete owned-target cleanup.
+- Windows references: [window visibility](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-showwindow),
+  [extended window styles](https://learn.microsoft.com/en-us/windows/win32/winmsg/extended-window-styles),
+  and [window positioning](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowpos).
 
 ## Composer integrity correction (2026-09-18)
 

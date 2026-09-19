@@ -11,7 +11,7 @@ use std::{
     ptr::{null, null_mut},
 };
 use windows_sys::Win32::{
-    Foundation::{HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation, WAIT_OBJECT_0},
+    Foundation::{HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation, WAIT_OBJECT_0, WAIT_TIMEOUT},
     Security::SECURITY_ATTRIBUTES,
     System::{
         JobObjects::{
@@ -35,12 +35,26 @@ pub struct BrowserProcess {
     // Closing the job ends only the child tree created here, even after a crash.
     _job: OwnedHandle,
     _process: OwnedHandle,
-    pub pid: u32,
+    pid: u32,
     pub input: File,
     pub output: File,
 }
 
 impl BrowserProcess {
+    pub fn pid(&self) -> u32 {
+        self.pid
+    }
+    pub fn background_bounds() -> (i32, i32, i32, i32) {
+        crate::browser_window::bounds()
+    }
+
+    pub fn park_windows(&self) -> io::Result<(usize, bool, bool)> {
+        // SAFETY: this owns a live process handle; a zero timeout never blocks.
+        if unsafe { WaitForSingleObject(self._process.as_raw_handle(), 0) } != WAIT_TIMEOUT {
+            return Err(io::Error::other("E_BROWSER_RELEASE"));
+        }
+        crate::browser_window::park(self.pid)
+    }
     pub fn wait_for_exit(&self) -> io::Result<()> {
         // SAFETY: the owned process handle stays alive for this bounded wait.
         if unsafe { WaitForSingleObject(self._process.as_raw_handle(), 10_000) } == WAIT_OBJECT_0 {
@@ -135,6 +149,20 @@ impl Drop for Attributes {
 /// `profile` must be an application-owned, dedicated directory. This function
 /// never attaches to an existing browser or accepts arbitrary debugging flags.
 pub fn launch(executable: &Path, profile: &Path, visible: bool) -> io::Result<BrowserProcess> {
+    launch_mode(executable, profile, visible, !visible, false)
+}
+
+pub fn launch_offscreen(executable: &Path, profile: &Path) -> io::Result<BrowserProcess> {
+    launch_mode(executable, profile, false, false, true)
+}
+
+fn launch_mode(
+    executable: &Path,
+    profile: &Path,
+    visible: bool,
+    headless: bool,
+    offscreen: bool,
+) -> io::Result<BrowserProcess> {
     let executable = browser_path(executable)?;
     let profile = browser_path(profile)?;
     let exe_string = executable
@@ -156,7 +184,13 @@ pub fn launch(executable: &Path, profile: &Path, visible: bool) -> io::Result<Br
     }
     let mut handles = [child_in.as_raw_handle(), child_out.as_raw_handle()];
     let mut attributes = Attributes::new(&mut handles)?;
-    let mode = if visible { "" } else { " --headless=new" };
+    let mode = if headless {
+        " --headless=new"
+    } else if offscreen {
+        " --disable-backgrounding-occluded-windows --disable-renderer-backgrounding"
+    } else {
+        ""
+    };
     let command = format!(
         "\"{exe_string}\" --user-data-dir=\"{profile_string}\" --remote-debugging-pipe --remote-debugging-io-pipes={},{} --no-first-run --no-default-browser-check --no-startup-window --lang=en-US --accept-lang=en-US,en{mode}",
         handles[0] as usize as u32, handles[1] as usize as u32

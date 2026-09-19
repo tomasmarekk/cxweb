@@ -27,6 +27,9 @@ enum Command {
         hold_seconds: u8,
         #[arg(long)]
         open_login: bool,
+        /// Test an off-screen native render surface in the fresh fixture profile.
+        #[arg(long, conflicts_with = "open_login")]
+        offscreen: bool,
         /// Leave the page idle before inspecting it, to reproduce manual login startup.
         #[arg(long, default_value_t = 0, requires = "open_login")]
         login_idle_seconds: u8,
@@ -150,6 +153,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             profile,
             hold_seconds,
             open_login,
+            offscreen,
             login_idle_seconds,
         } => {
             if profile.exists() {
@@ -158,8 +162,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             #[cfg(windows)]
             {
                 cxweb_platform::state::protected_directory(&profile)?;
-                let mut browser =
-                    cxweb_browser_adapter::ManagedBrowser::launch(&browser, &profile, open_login)?;
+                let mut browser = if offscreen {
+                    cxweb_browser_adapter::ManagedBrowser::launch_offscreen(&browser, &profile)?
+                } else {
+                    cxweb_browser_adapter::ManagedBrowser::launch(&browser, &profile, open_login)?
+                };
                 let version = browser.version()?;
                 let startup = browser.probe_startup_page()?;
                 let dom = browser.probe_dom()?;

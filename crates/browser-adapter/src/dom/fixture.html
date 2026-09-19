@@ -1,4 +1,6 @@
-<!doctype html><html><head><meta charset="utf-8"><title>cxweb synthetic fixture</title></head><body>
+<!doctype html><html><head><meta charset="utf-8"><title>cxweb synthetic fixture</title>
+<style>@keyframes fixture-progress { from { opacity: 0; } to { opacity: 1; } } #fixture-animation { animation: fixture-progress 100ms linear forwards; }</style>
+</head><body><div id="fixture-animation">Animation fixture</div>
 <form><button type="button" data-testid="model-switcher-dropdown-button" aria-haspopup="menu" style="width:340px">Fixture text mode</button>
 <button type="button" data-testid="accounts-profile-button" aria-controls="account-menu" aria-expanded="false">Fixture account</button>
 <div id="account-menu" role="menu" hidden><span>fixture@example.invalid</span><div role="menuitemradio" aria-checked="true" data-workspace-id="fixture-workspace">Fixture workspace</div></div>

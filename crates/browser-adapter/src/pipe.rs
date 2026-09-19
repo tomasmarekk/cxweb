@@ -125,11 +125,25 @@ pub struct ManagedBrowser {
     model_diagnostic: Option<ModelSurfaceDiagnostic>,
     login_keeper: Option<ManagedPage>,
     headless: bool,
+    offscreen: bool,
+    offscreen_started: bool,
 }
 
 impl ManagedBrowser {
     pub fn launch(executable: &Path, profile: &Path, visible: bool) -> io::Result<Self> {
         let process = browser_process::launch(executable, profile, visible)?;
+        Self::from_process(process, !visible, false)
+    }
+
+    pub fn launch_offscreen(executable: &Path, profile: &Path) -> io::Result<Self> {
+        Self::from_process(
+            browser_process::launch_offscreen(executable, profile)?,
+            false,
+            true,
+        )
+    }
+
+    fn from_process(process: BrowserProcess, headless: bool, offscreen: bool) -> io::Result<Self> {
         let output = process.output.try_clone()?;
         let (sender, replies) = sync_channel(32);
         std::thread::spawn(move || {
@@ -153,12 +167,14 @@ impl ManagedBrowser {
             qualification_diagnostic: None,
             model_diagnostic: None,
             login_keeper: None,
-            headless: !visible,
+            headless,
+            offscreen,
+            offscreen_started: false,
         })
     }
 
     pub fn pid(&self) -> u32 {
-        self.process.pid
+        self.process.pid()
     }
 
     pub fn version(&mut self) -> io::Result<Value> {
@@ -166,7 +182,7 @@ impl ManagedBrowser {
     }
 
     pub fn open_login(&mut self) -> io::Result<ManagedPage> {
-        if self.headless {
+        if self.headless || self.offscreen {
             return Err(io::Error::other("E_VISIBLE_LOGIN_REQUIRED"));
         }
         // Keep the managed browser alive when the user closes its last visible
@@ -193,19 +209,30 @@ impl ManagedBrowser {
     }
 
     fn open_hidden_page(&mut self, url: &'static str, fixture: bool) -> io::Result<ManagedPage> {
+        let params = if self.offscreen {
+            if self.offscreen_started {
+                json!({"url":"about:blank","background":true})
+            } else {
+                let (x, y, width, height) = BrowserProcess::background_bounds();
+                json!({"url":"about:blank","background":true,"newWindow":true,"left":x,"top":y,"width":width,"height":height})
+            }
+        } else {
+            json!({"url":"about:blank","hidden":!self.headless,"background":true})
+        };
         let result = self
-            .call(
-                "Target.createTarget",
-                json!({
-                    "url":"about:blank","hidden":!self.headless,"background":true
-                }),
-                None,
-            )
+            .call("Target.createTarget", params, None)
             .map_err(|_| io::Error::other("E_HIDDEN_TARGET"))?;
         let target = result["targetId"]
             .as_str()
             .ok_or_else(|| io::Error::other("E_BROWSER_TARGET"))?
             .to_owned();
+        if self.offscreen {
+            if self.process.park_windows().is_err() {
+                let _ = self.call("Target.closeTarget", json!({"targetId":target}), None);
+                return Err(io::Error::other("E_BACKGROUND_WINDOW"));
+            }
+            self.offscreen_started = true;
+        }
         match self.attach(target.clone(), fixture, true) {
             Ok(page) => {
                 if url != "about:blank" {
@@ -912,34 +939,56 @@ impl ManagedBrowser {
     /// Development qualification only. Uses bundled synthetic markup in a fresh
     /// blank target. It cannot qualify selectors against a real account.
     pub fn probe_dom(&mut self) -> io::Result<Value> {
-        let mut result = self.probe_dom_mode(true)?;
-        self.probe_dom_mode(false)?;
+        let background = self.headless || self.offscreen;
+        let mut result = self.probe_dom_mode(background)?;
+        if background {
+            let second = self.probe_dom_mode(false)?;
+            for field in ["initial_desktop_exposure", "initial_taskbar_exposure"] {
+                if self.offscreen {
+                    result[field] = json!(result[field] == true || second[field] == true);
+                }
+            }
+        }
         self.probe_startup_page()?;
-        result["background_page_fixture"] = json!("PASS");
+        result["background_page_fixture"] = json!(if background { "PASS" } else { "NOT RUN" });
         result["headless"] = json!(self.headless);
+        result["offscreen"] = json!(self.offscreen);
         result["owned_targets_released"] = json!(true);
+        result["css_animation_completed"] = json!(true);
         Ok(result)
     }
 
     fn probe_dom_mode(&mut self, hidden: bool) -> io::Result<Value> {
-        let result = self.call(
-            "Target.createTarget",
-            json!({"url":"about:blank", "hidden":hidden && !self.headless, "background":hidden}),
-            None,
-        )?;
+        let params = if self.offscreen {
+            let (x, y, width, height) = BrowserProcess::background_bounds();
+            json!({"url":"about:blank", "newWindow":true, "background":true, "left":x,"top":y,"width":width,"height":height})
+        } else {
+            json!({"url":"about:blank", "hidden":hidden && !self.headless, "background":hidden})
+        };
+        let result = self.call("Target.createTarget", params, None)?;
         let target = result["targetId"]
             .as_str()
             .ok_or_else(|| io::Error::other("missing fixture target"))?
             .to_owned();
-        let page = self.attach(target, true, hidden)?;
+        let native_initial = if self.offscreen {
+            Some(self.process.park_windows()?)
+        } else {
+            None
+        };
+        let page = self.attach(target, true, hidden || self.offscreen)?;
         let result = self.run_dom_fixture(&page);
         let result = result.map_err(|error| {
             let metrics = self.dom(&page, "function () { return { width:innerWidth, height:innerHeight, focused:document.hasFocus(), visible:document.visibilityState === 'visible' }; }", vec![]).unwrap_or(Value::Null);
             io::Error::other(format!("E_DOM_FIXTURE hidden={hidden} metrics={metrics}: {error}"))
         });
         let closed = self.close_page(page);
-        let result = result?;
+        let mut result = result?;
         closed?;
+        if let Some((windows, exposed, taskbar)) = native_initial {
+            result["native_window_count"] = json!(windows);
+            result["initial_desktop_exposure"] = json!(exposed);
+            result["initial_taskbar_exposure"] = json!(taskbar);
+        }
         Ok(result)
     }
 
@@ -947,6 +996,16 @@ impl ManagedBrowser {
         let frame = self.call("Page.getFrameTree", json!({}), Some(&page.session))?;
         for wrong_label in [true, false] {
             self.call("Page.setDocumentContent", json!({"frameId":frame["frameTree"]["frame"]["id"],"html":include_str!("dom/fixture.html")}), Some(&page.session))?;
+            let animation_deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                if self.dom(page, "function () { const animations = document.getElementById('fixture-animation').getAnimations(); return animations.length === 1 && animations[0].playState === 'finished'; }", vec![])? == true {
+                    break;
+                }
+                if Instant::now() >= animation_deadline {
+                    return Err(io::Error::other("E_BACKGROUND_ANIMATION"));
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
             let label = if wrong_label {
                 "Unobserved route"
             } else {

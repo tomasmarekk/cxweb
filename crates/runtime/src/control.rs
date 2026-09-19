@@ -315,7 +315,7 @@ impl Control {
                             page = None;
                             browser = None;
                             let mut managed =
-                                ManagedBrowser::launch(&executable, &paths.profile, false)
+                                ManagedBrowser::launch_offscreen(&executable, &paths.profile)
                                     .map_err(|_| std::io::Error::other("E_BROWSER_START"))?;
                             let version = managed.version()?;
                             let background_page = managed.open_background_session()?;
@@ -343,6 +343,7 @@ impl Control {
                                     "E_HIDDEN_ATTACH" => "E_HIDDEN_ATTACH",
                                     "E_HIDDEN_VIEWPORT" => "E_HIDDEN_VIEWPORT",
                                     "E_BACKGROUND_NAVIGATION" => "E_BACKGROUND_NAVIGATION",
+                                    "E_BACKGROUND_WINDOW" => "E_BACKGROUND_WINDOW",
                                     "E_BROWSER_START" => "E_BROWSER_START",
                                     _ => "E_BROWSER_RELEASE",
                                 }));
