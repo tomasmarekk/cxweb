@@ -21,6 +21,45 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Windows configuration access validation (2026-09-19)
+
+- Configuration snapshots now validate the selected file and immediate parent
+  through live Windows handles. Null DACLs, unsupported ACE forms, foreign grants,
+  untrusted ownership, read-only files and insufficient effective token access
+  fail before staging. Current-user, SYSTEM and Administrators ownership is
+  accepted only with the required effective rights; no privileges are enabled.
+- Access snapshots are rechecked before staging, replacement and removal.
+  A changed trusted ACL also conflicts. Replacement preserves the original owner
+  and DACL; newly created staging files have protected private ACLs. No selected
+  configuration's permissions are repaired or widened to make installation work.
+- Windows can normalize file ACE child-propagation flags and DACL auto-inherited
+  bookkeeping during ReplaceFile. Post-commit comparison accounts for those two
+  cases while preserving effective rights, inherit-only behavior, protection,
+  owner, ACE order/type/mask and trustees. Pre-write comparisons remain exact.
+  New files omit meaningless directory inheritance flags; old private files are
+  covered by replacement regression tests.
+- Native preflight reports selected-file/immediate-parent access verification,
+  and permission refusal has a fixed diagnostic code. It does not certify all
+  ancestor paths, other clients' effective configuration or activation. The
+  known external rename race in path-based replacement remains documented.
+- Both actual native backends passed eleven isolated preflight cases each with
+  the release CLI, including refusal of an exposed home before backend launch.
+  The exposed fixture remained empty. Existing config bytes remained unchanged.
+  Fixture ACL setup is limited to newly created empty probe directories; no real
+  user configuration, native credentials or system policy was modified.
+- Evidence: `cli-0.155.1.preflight-access.json` and
+  `app-backend-0.155.0-alpha.9.2.preflight-access.json` in
+  `integration-tests/compatibility`. Reproduce with `node scripts/probe-preflight.mjs
+  <reviewed backend> target/release/cxweb.exe` after building the release CLI.
+- Validation: `cargo test --workspace` passed 170 tests with two opt-in tests
+  ignored. `cargo clippy --workspace --all-targets -- -D warnings`,
+  `cargo fmt --all --check`, JavaScript syntax and diff checks passed.
+  `cargo build --release -p cxweb` succeeded. No desktop application was launched.
+- Windows contracts: [handle security inspection](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-getsecurityinfo),
+  [effective access evaluation](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-accesscheck),
+  [replacement behavior](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew),
+  [ACE inheritance semantics](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-ace_header).
+
 ## Native configuration preflight (2026-09-19)
 
 - Added `cxweb native-preflight --client <absolute executable> --home <absolute

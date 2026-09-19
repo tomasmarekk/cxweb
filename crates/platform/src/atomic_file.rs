@@ -70,6 +70,8 @@ pub struct Snapshot {
     path: PathBuf,
     identity: Option<Identity>,
     bytes: Vec<u8>,
+    access: Option<crate::config_access::AccessSnapshot>,
+    parent_access: crate::config_access::AccessSnapshot,
 }
 impl Snapshot {
     /// Uses a canonical parent and refuses reparse points and hard-linked files.
@@ -86,20 +88,26 @@ impl Snapshot {
             return Err(io::Error::other("E_CONFIG_PATH"));
         }
         let path = parent.join(name);
+        let parent_access = crate::config_access::AccessSnapshot::directory(&parent)?;
         match open(&path) {
             Ok(mut file) => {
                 let identity = identity(&file)?;
+                let access = crate::config_access::AccessSnapshot::capture(&file, false)?;
                 let bytes = read(&mut file)?;
                 Ok(Self {
                     path,
                     identity: Some(identity),
                     bytes,
+                    access: Some(access),
+                    parent_access,
                 })
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Self {
                 path,
                 identity: None,
                 bytes: Vec::new(),
+                access: None,
+                parent_access,
             }),
             Err(error) => Err(error),
         }
@@ -115,7 +123,11 @@ impl Snapshot {
     }
     pub fn verify_unchanged(&self) -> io::Result<()> {
         let current = Self::capture(&self.path)?;
-        if current.identity != self.identity || current.bytes != self.bytes {
+        if current.identity != self.identity
+            || current.bytes != self.bytes
+            || current.access != self.access
+            || current.parent_access != self.parent_access
+        {
             return Err(io::Error::other("E_CONFIG_CHANGED"));
         }
         Ok(())
@@ -125,6 +137,7 @@ impl Snapshot {
     /// open, writers and renames are denied; a replacement at this path is never
     /// selected by a later path-based delete. Caller proves semantic ownership.
     pub fn remove(&self) -> io::Result<()> {
+        self.verify_unchanged()?;
         let expected = self
             .identity
             .as_ref()
@@ -134,7 +147,10 @@ impl Snapshot {
             .share_mode(FILE_SHARE_READ)
             .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
             .open(&self.path)?;
-        if &identity(&file)? != expected || read(&mut file)? != self.bytes {
+        if &identity(&file)? != expected
+            || read(&mut file)? != self.bytes
+            || Some(crate::config_access::AccessSnapshot::capture(&file, false)?) != self.access
+        {
             return Err(io::Error::other("E_CONFIG_CHANGED"));
         }
         let disposition = FILE_DISPOSITION_INFO { DeleteFile: true };
@@ -157,6 +173,7 @@ impl Snapshot {
     /// Creates a caller-named same-directory private file with create-new semantics.
     /// Caller records its exact path and candidate hash in the durable journal.
     pub fn stage(&self, name: &str, candidate: &[u8]) -> io::Result<PathBuf> {
+        self.verify_unchanged()?;
         if !name.starts_with(".cxweb-")
             || !name.ends_with(".tmp")
             || !name
@@ -167,7 +184,10 @@ impl Snapshot {
             return Err(io::Error::other("E_CONFIG_STAGE"));
         }
         let path = self.path.with_file_name(name);
-        let mut file = crate::state::create_private_file(&path)?;
+        let mut file = crate::state::create_private_file_with_owner(
+            &path,
+            self.access.as_ref().map(|access| access.owner()),
+        )?;
         file.write_all(candidate)?;
         file.sync_all()?;
         Ok(path)
@@ -178,6 +198,7 @@ impl Snapshot {
     /// Another writer can still rename it in the final check/replace interval;
     /// full editor qualification and post-commit journal verification are required.
     pub fn commit(&self, staged: &Path, candidate: &[u8]) -> io::Result<()> {
+        self.verify_unchanged()?;
         if staged.parent() != self.path.parent()
             || !staged
                 .file_name()
@@ -187,13 +208,19 @@ impl Snapshot {
         }
         let mut file = open(staged)?;
         identity(&file)?;
+        crate::config_access::AccessSnapshot::capture(&file, false)?;
         if read(&mut file)? != candidate {
             return Err(io::Error::other("E_CONFIG_STAGE_CHANGED"));
         }
         drop(file); // ReplaceFile needs exclusive access to the replacement file.
         let guard = match (&self.identity, open(&self.path)) {
             (Some(expected), Ok(mut current)) => {
-                if &identity(&current)? != expected || read(&mut current)? != self.bytes {
+                if &identity(&current)? != expected
+                    || read(&mut current)? != self.bytes
+                    || Some(crate::config_access::AccessSnapshot::capture(
+                        &current, false,
+                    )?) != self.access
+                {
                     return Err(io::Error::other("E_CONFIG_CHANGED"));
                 }
                 Some(current)
@@ -229,6 +256,14 @@ impl Snapshot {
         }
         let mut committed = open(&self.path)?;
         identity(&committed)?;
+        let committed_access = crate::config_access::AccessSnapshot::capture(&committed, false)?;
+        if self
+            .access
+            .as_ref()
+            .is_some_and(|before| before.descriptor_differs(&committed_access))
+        {
+            return Err(io::Error::other("E_CONFIG_POST_COMMIT_PERMISSIONS"));
+        }
         if read(&mut committed)? != candidate {
             return Err(io::Error::other("E_CONFIG_POST_COMMIT_CHANGED"));
         }
@@ -239,6 +274,62 @@ impl Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn set_fixture_acl(path: &Path, grants: Option<&str>) {
+        use windows_sys::Win32::Security::{
+            Authorization::{
+                ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+                SE_FILE_OBJECT, SetNamedSecurityInfoW,
+            },
+            DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl,
+            PROTECTED_DACL_SECURITY_INFORMATION,
+        };
+        let mut path = wide(path).unwrap();
+        let mut acl = null_mut();
+        let mut parsed = null_mut();
+        // SAFETY: paths are unique test-owned objects. Optional SDDL is a fixed
+        // test policy with the OS-provided SID; returned descriptor remains live
+        // through SetNamedSecurityInfo and is freed by LocalAllocation.
+        unsafe {
+            if let Some(grants) = grants {
+                let sid = crate::state::current_sid().unwrap();
+                let sddl: Vec<u16> = format!("D:P{}\0", grants.replace("CURRENT_USER", &sid))
+                    .encode_utf16()
+                    .collect();
+                assert_ne!(
+                    ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                        sddl.as_ptr(),
+                        SDDL_REVISION_1,
+                        &mut parsed,
+                        null_mut()
+                    ),
+                    0
+                );
+                let mut present = 0;
+                let mut defaulted = 0;
+                assert_ne!(
+                    GetSecurityDescriptorDacl(parsed, &mut present, &mut acl, &mut defaulted),
+                    0
+                );
+                assert_ne!(present, 0);
+            }
+            let _parsed = crate::state::LocalAllocation(parsed);
+            assert_eq!(
+                SetNamedSecurityInfoW(
+                    path.as_mut_ptr(),
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                    null_mut(),
+                    null_mut(),
+                    acl,
+                    null_mut()
+                ),
+                0
+            );
+        }
+    }
+
+    const PRIVATE_ACL: &str = "(A;OICI;FA;;;SY)(A;OICI;FA;;;CURRENT_USER)";
     struct Fixture(PathBuf);
     impl Fixture {
         fn new() -> Self {
@@ -259,8 +350,125 @@ mod tests {
     }
     impl Drop for Fixture {
         fn drop(&mut self) {
+            // Permission tests restore only this unique fixture before cleanup.
+            set_fixture_acl(&self.0, Some(PRIVATE_ACL));
+            for entry in std::fs::read_dir(&self.0).unwrap() {
+                let path = entry.unwrap().path();
+                set_fixture_acl(&path, Some(PRIVATE_ACL));
+                let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+                // This module is Windows-only: clearing the fixture's read-only
+                // attribute does not change its private DACL.
+                #[allow(clippy::permissions_set_readonly_false)]
+                permissions.set_readonly(false);
+                std::fs::set_permissions(path, permissions).unwrap();
+            }
             std::fs::remove_dir_all(&self.0).unwrap();
         }
+    }
+
+    #[test]
+    fn foreign_read_grants_null_dacl_and_denied_writes_never_qualify() {
+        for acl in [
+            Some("(A;;FA;;;CURRENT_USER)(A;;FR;;;WD)"),
+            Some("(A;;FA;;;CURRENT_USER)(A;;FW;;;BU)"),
+            Some("(D;;0x2;;;CURRENT_USER)(A;;FA;;;CURRENT_USER)"),
+            None,
+        ] {
+            let fixture = Fixture::new();
+            std::fs::write(fixture.config(), b"original").unwrap();
+            set_fixture_acl(&fixture.config(), acl);
+            assert!(Snapshot::capture(&fixture.config()).is_err());
+            // The validator neither repairs the ACL nor changes file content.
+            assert_eq!(std::fs::read(fixture.config()).unwrap(), b"original");
+        }
+        let fixture = Fixture::new();
+        set_fixture_acl(&fixture.0, Some("(A;;FA;;;CURRENT_USER)(A;;FR;;;WD)"));
+        assert!(Snapshot::capture(&fixture.config()).is_err());
+        assert!(!fixture.config().exists());
+    }
+
+    #[test]
+    fn changed_trusted_file_acl_blocks_commit_and_remove_without_repair() {
+        let fixture = Fixture::new();
+        std::fs::write(fixture.config(), b"original").unwrap();
+        let snapshot = Snapshot::capture(&fixture.config()).unwrap();
+        let staged = snapshot.stage(".cxweb-acl.tmp", b"candidate").unwrap();
+        set_fixture_acl(
+            &fixture.config(),
+            Some("(A;;FA;;;SY)(A;;FA;;;CURRENT_USER)(A;;FR;;;BA)"),
+        );
+        let changed = Snapshot::capture(&fixture.config()).unwrap();
+        assert!(snapshot.verify_unchanged().is_err());
+        assert!(snapshot.commit(&staged, b"candidate").is_err());
+        assert!(snapshot.remove().is_err());
+        changed.verify_unchanged().unwrap();
+        assert_eq!(std::fs::read(fixture.config()).unwrap(), b"original");
+    }
+
+    #[test]
+    fn changed_parent_or_exposed_staging_blocks_replacement() {
+        for change_parent in [true, false] {
+            let fixture = Fixture::new();
+            let snapshot = Snapshot::capture(&fixture.config()).unwrap();
+            let staged = snapshot.stage(".cxweb-acl.tmp", b"candidate").unwrap();
+            if change_parent {
+                set_fixture_acl(
+                    &fixture.0,
+                    Some("(A;;FA;;;SY)(A;;FA;;;CURRENT_USER)(A;;FR;;;BA)"),
+                );
+            } else {
+                set_fixture_acl(&staged, Some("(A;;FA;;;CURRENT_USER)(A;;FR;;;WD)"));
+            }
+            assert!(snapshot.commit(&staged, b"candidate").is_err());
+            assert!(!fixture.config().exists());
+        }
+    }
+
+    #[test]
+    fn readonly_attributes_are_not_removed_to_force_an_installation() {
+        let fixture = Fixture::new();
+        std::fs::write(fixture.config(), b"original").unwrap();
+        let mut permissions = std::fs::metadata(fixture.config()).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(fixture.config(), permissions).unwrap();
+        assert!(Snapshot::capture(&fixture.config()).is_err());
+        assert!(
+            std::fs::metadata(fixture.config())
+                .unwrap()
+                .permissions()
+                .readonly()
+        );
+    }
+    #[test]
+    fn replacing_private_owned_file_preserves_protected_acl() {
+        for legacy_inheritance_flags in [false, true] {
+            let fixture = Fixture::new();
+            if legacy_inheritance_flags {
+                std::fs::write(fixture.config(), b"legacy").unwrap();
+                set_fixture_acl(&fixture.config(), Some(PRIVATE_ACL));
+            }
+            for text in [b"first".as_slice(), b"second".as_slice()] {
+                let snapshot = Snapshot::capture(&fixture.config()).unwrap();
+                let staged = snapshot.stage(".cxweb-private.tmp", text).unwrap();
+                snapshot.commit(&staged, text).unwrap();
+            }
+        }
+    }
+    #[test]
+    fn parent_need_not_allow_deletion_or_subdirectory_creation() {
+        let fixture = Fixture::new();
+        // Read + add file + traverse only; child files inherit full access.
+        set_fixture_acl(
+            &fixture.0,
+            Some("(A;;0x1200ab;;;CURRENT_USER)(A;OICIIO;FA;;;CURRENT_USER)(A;OICI;FA;;;SY)"),
+        );
+        let snapshot = Snapshot::capture(&fixture.config()).unwrap();
+        let staged = snapshot.stage(".cxweb-private.tmp", b"candidate").unwrap();
+        snapshot.commit(&staged, b"candidate").unwrap();
+        Snapshot::capture(&fixture.config())
+            .unwrap()
+            .remove()
+            .unwrap();
     }
     #[test]
     fn existing_and_absent_destinations_commit_the_flushed_candidate() {

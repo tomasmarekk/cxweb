@@ -397,11 +397,19 @@ mod tests {
     #[test]
     fn task_plan_is_interactive_least_privilege_and_bounded() {
         let executable = std::env::current_exe().unwrap();
-        let directory = executable.parent().unwrap();
+        let directory = std::env::temp_dir().join(format!(
+            "cxweb-task-plan-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        crate::state::protected_directory(&directory).unwrap();
         let plan = TaskPlan::new(
             &"a".repeat(32),
             &executable,
-            directory,
+            &directory,
             &directory.join("absent-config.toml"),
         )
         .unwrap();
@@ -420,10 +428,11 @@ mod tests {
             TaskPlan::new(
                 "../foreign",
                 &executable,
-                directory,
+                &directory,
                 &directory.join("config.toml")
             )
             .is_err()
         );
+        std::fs::remove_dir(directory).unwrap();
     }
 }

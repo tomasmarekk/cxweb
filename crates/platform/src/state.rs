@@ -117,9 +117,21 @@ pub(crate) fn verify_process_user(pid: u32) -> io::Result<()> {
 }
 
 pub(crate) fn descriptor() -> io::Result<LocalAllocation> {
+    descriptor_with_owner(None, true)
+}
+
+fn descriptor_with_owner(owner: Option<&str>, directory: bool) -> io::Result<LocalAllocation> {
     let sid = current_sid()?;
+    let owner = owner.unwrap_or(&sid);
+    if owner != sid && owner != "S-1-5-18" && owner != "S-1-5-32-544" {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "E_CONFIG_OWNER",
+        ));
+    }
+    let inheritance = if directory { "OICI" } else { "" };
     let sddl = wide(OsStr::new(&format!(
-        "O:{sid}D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;{sid})"
+        "O:{owner}D:P(A;{inheritance};FA;;;SY)(A;{inheritance};FA;;;{sid})"
     )))?;
     let mut descriptor = null_mut();
     // SAFETY: terminated UTF-16 input and writable descriptor output. Returned
@@ -138,13 +150,14 @@ pub(crate) fn descriptor() -> io::Result<LocalAllocation> {
     Ok(LocalAllocation(descriptor))
 }
 
-/// Creates a new private staging file without an initially permissive ACL.
-pub(crate) fn create_private_file(path: &Path) -> io::Result<File> {
+/// Preserve a reviewed destination owner on the private replacement. Windows
+/// refuses an owner the current token cannot assign; no privilege is enabled.
+pub(crate) fn create_private_file_with_owner(path: &Path, owner: Option<&str>) -> io::Result<File> {
     use windows_sys::Win32::{
         Foundation::{GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE},
         Storage::FileSystem::{CREATE_NEW, CreateFileW, FILE_ATTRIBUTE_NORMAL},
     };
-    let descriptor = descriptor()?;
+    let descriptor = descriptor_with_owner(owner, false)?;
     let path = wide(path.as_os_str())?;
     let attributes = SECURITY_ATTRIBUTES {
         nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,

@@ -24,6 +24,7 @@ pub struct Report {
     pub executable_sha256: String,
     pub assessment: Assessment,
     pub user_config_unchanged: bool,
+    pub selected_config_and_parent_access_verified: bool,
     pub executable_unchanged: bool,
     pub model_requests: u32,
     pub activation_eligible: bool,
@@ -39,6 +40,14 @@ fn reviewed(hash: &str) -> Option<(&'static str, CatalogCodec)> {
             Some(("0.155.0-alpha.9.2", CatalogCodec::App01550Alpha92))
         }
         _ => None,
+    }
+}
+
+fn config_capture_error(error: std::io::Error) -> &'static str {
+    if error.kind() == std::io::ErrorKind::PermissionDenied {
+        "E_PREFLIGHT_CONFIG_PERMISSIONS"
+    } else {
+        "E_PREFLIGHT_CONFIG_IDENTITY"
     }
 }
 
@@ -154,8 +163,7 @@ pub async fn inspect(client: &Path, home: &Path, cwd: &Path) -> Result<Report, &
     // executed simply to ask them what version they claim to be.
     let hash = fingerprint(&client).await?;
     let (build, codec) = reviewed(&hash).ok_or("E_PREFLIGHT_CLIENT_UNQUALIFIED")?;
-    let original =
-        Snapshot::capture(&home.join("config.toml")).map_err(|_| "E_PREFLIGHT_CONFIG_IDENTITY")?;
+    let original = Snapshot::capture(&home.join("config.toml")).map_err(config_capture_error)?;
     let text = std::str::from_utf8(original.original()).map_err(|_| "E_PREFLIGHT_CONFIG_PARSE")?;
     let file_report =
         cxweb_codex_adapter::config::inspect(text).map_err(|_| "E_PREFLIGHT_CONFIG_PARSE")?;
@@ -183,7 +191,7 @@ pub async fn inspect(client: &Path, home: &Path, cwd: &Path) -> Result<Report, &
         for layer in layers {
             if layer["name"]["type"] == "user" && layer["name"]["profile"].is_null() {
                 let file = layer["name"]["file"].as_str().ok_or("E_PREFLIGHT_SCHEMA")?;
-                let reported = Snapshot::capture(Path::new(file)).map_err(|_| "E_PREFLIGHT_CONFIG_IDENTITY")?;
+                let reported = Snapshot::capture(Path::new(file)).map_err(config_capture_error)?;
                 if reported.path() != original.path() || reported.original() != original.original() {
                     return Err("E_PREFLIGHT_HOME_MISMATCH");
                 }
@@ -228,11 +236,12 @@ pub async fn inspect(client: &Path, home: &Path, cwd: &Path) -> Result<Report, &
         executable_sha256: hash,
         assessment: result?,
         user_config_unchanged: true,
+        selected_config_and_parent_access_verified: true,
         executable_unchanged: true,
         model_requests: 0,
         activation_eligible: false,
         remaining_checks: vec![
-            "target filesystem ownership and permissions",
+            "target path ancestry and client target qualification",
             "actual client picker and native coexistence",
             "browser route and coding qualification",
         ],

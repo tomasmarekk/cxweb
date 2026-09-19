@@ -1,18 +1,23 @@
 // Exercise native configuration inspection with disposable homes and no account.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, writeFile, access } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile, access, readdir } from 'node:fs/promises';
 import { resolve, join, isAbsolute } from 'node:path';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 
 const client = process.argv[2];
-if (!client || !isAbsolute(client) || process.argv.length !== 3) {
-  throw new Error('Usage: node scripts/probe-preflight.mjs <reviewed absolute native backend>');
+if (!client || !isAbsolute(client) || process.argv.length > 4) {
+  throw new Error('Usage: node scripts/probe-preflight.mjs <reviewed absolute native backend> [cxweb executable]');
 }
-const bridge = resolve('target/debug/cxweb.exe');
+const bridge = resolve(process.argv[3] ?? 'target/debug/cxweb.exe');
 const root = resolve('.local/probes');
 await mkdir(root, { recursive: true });
 const work = await mkdtemp(join(root, 'preflight-'));
+const protectFixture = (path, foreign = false) => execFileSync('powershell.exe', [
+  '-NoProfile', '-NonInteractive', '-File', resolve('scripts/protect-preflight-fixture.ps1'),
+  '-Path', path, ...(foreign ? ['-ForeignRead'] : []),
+], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+protectFixture(work);
 const env = { ...process.env };
 for (const key of Object.keys(env)) if (/^(CODEX_|OPENAI_|CHATGPT_)/i.test(key)) delete env[key];
 const cases = [
@@ -58,6 +63,7 @@ try {
     assert.equal(report.activation_eligible, false);
     assert.equal(report.model_requests, 0);
     assert.equal(report.user_config_unchanged, true);
+    assert.equal(report.selected_config_and_parent_access_verified, true);
     assert.equal(report.executable_unchanged, true);
     assert.ok(!JSON.stringify(report).includes('PRIVATE_'));
     for (const [file, content] of files) assert.equal(digest(await readFile(file)), digest(content), 'fixture bytes preserved');
@@ -72,6 +78,13 @@ try {
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /E_PREFLIGHT_CLIENT_UNQUALIFIED/);
   evidence.cases.push({ name: 'unreviewed-executable', result: 'PASS refused before execution' });
+  const foreign = await mkdtemp(join(root, 'preflight-'));
+  protectFixture(foreign, true);
+  const denied = spawnSync(bridge, ['native-preflight', '--client', client, '--home', foreign, '--cwd', foreign], { env, encoding: 'utf8', windowsHide: true, timeout: 60000 });
+  assert.notEqual(denied.status, 0);
+  assert.match(denied.stderr, /E_PREFLIGHT_CONFIG_PERMISSIONS/);
+  assert.deepEqual(await readdir(foreign), [], 'native backend must not start in exposed home');
+  evidence.cases.push({ name: 'foreign-read-grant', result: 'PASS refused before backend launch; home unchanged' });
   evidence.result = 'PASS';
 } catch (error) {
   evidence.result = 'FAIL';
