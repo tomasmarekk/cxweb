@@ -5,9 +5,10 @@
 Target: the complete supplied PRD, not a substitute chat application. No subagents.
 Current gate: **G0 IN PROGRESS**. No client or browser combination is certified.
 Manual login and managed reuse of the saved session are user-confirmed. Scoped
-background text generation now passes through both actual native backends. Actual
-App/CLI pickers, native tool execution, broader model qualification and release
-gates remain incomplete. Production integration remains disabled.
+background text generation and native read/apply_patch cycles now pass through
+both actual native backends. Actual App/CLI pickers, broader coding/model
+qualification and release gates remain incomplete. Production integration remains
+disabled.
 
 Earlier manual check: the user reports `ChatGPT: Session detected` and
 `Codex connection: Awaiting verification` after checking the desktop status.
@@ -17,6 +18,55 @@ Chat behavior or a successful generation. After restarting Codex App, its real
 picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
+
+## Native function and custom tool execution (2026-09-19)
+
+- Actual CLI **0.155.1** and App backend **0.155.0-alpha.9.2** each passed a live
+  native read and a full read/apply_patch/final-answer cycle through the real
+  browser gateway, on **Latest / Extra High**. CLI updated from 0.153.4 during
+  development; the successful tool reports belong to 0.155.1. The harness now
+  fingerprints each executable immediately before launching it and checks that
+  the file is unchanged afterward. It does not interfere with client updates.
+- The harness creates a random marker in an isolated input file without putting
+  the marker in the prompt. Codex executes `exec_command`, receives its own tool
+  result, then executes a custom `apply_patch` to create a second file. Assertions
+  require one successful native command, one successful native file-change item,
+  exact output-file bytes and the exact final assistant text. The durable browser
+  ledger contains three completed generations per full test and no failed turns.
+  The product and harness do not perform the model's shell/file operations.
+- Test-client approval handling accepts only its fixed read command in its exact
+  fixture directory, and the one new output file with the exact expected content.
+  Patch approval is bound to the native started-item/thread/turn identity. It does
+  not grant a directory, change sandbox/approval policies or remember a session
+  allowance. Early attempts correctly returned a denied tool result to ChatGPT
+  when the harness declined the command; those failed execution tests remain
+  separate from the later successful runs.
+- The positive patch test first stopped before browser submission with
+  `E_UNSUPPORTED_TOOL`. A synthetic native registry capture isolated an otherwise
+  identical apply_patch grammar using CRLF instead of LF in the Windows asset.
+  The adapter now accepts both exact reviewed hashes. Unknown grammar changes and
+  malformed patch payloads still fail; it does not execute patches itself. The
+  regression verifies both asset encodings, literal payload preservation, refusal
+  of changed grammar rules and refusal of trailing unframed content.
+- Sanitized `*.live-read.json` and `*.live-tools.json` reports contain versions,
+  public model labels, counts/booleans and binary hashes, not raw tool payloads,
+  account identifiers or the random marker. All runs used the saved English
+  off-screen browser session and confirmed browser/profile cleanup. Native API
+  traffic stayed on the local rejection stub with a synthetic key.
+- Commands passed: `node scripts/probe-client.mjs <client> --live-read` and
+  `--live-patch` for each backend; `--capture-tools` for CLI 0.155.1 (synthetic);
+  `cargo test -p cxweb-codex-adapter` (21 tests); affected-crate Clippy with warnings
+  denied; formatting/diff checks; three test-client approval regressions (also
+  added to CI); and release CLI/daemon/desktop builds. A Clippy suggestion in the
+  new regression was corrected before the successful rerun.
+- Sources: [native approval command projection](https://github.com/openai/codex/blob/3d2ee51ca2d5db578f328aa75e20aa22c0197c9a/codex-rs/app-server/src/bespoke_event_handling.rs),
+  [quoted argv encoding](https://github.com/openai/codex/blob/3d2ee51ca2d5db578f328aa75e20aa22c0197c9a/codex-rs/shell-command/src/parse_command.rs),
+  [file-change approval content](https://github.com/openai/codex/blob/3d2ee51ca2d5db578f328aa75e20aa22c0197c9a/codex-rs/app-server-protocol/src/protocol/item_builders.rs),
+  and the [pinned apply_patch grammar](https://github.com/openai/codex/blob/3d2ee51ca2d5db578f328aa75e20aa22c0197c9a/codex-rs/core/assets/tools/apply_patch.lark).
+- This is a narrow authenticated coding-path result, not complete G2/release
+  certification. Built-in server search remains disabled only in the disposable
+  client; actual pickers, namespaced dynamic tool execution, broader coding and
+  cancellation/error behavior, production activation and remaining gates are open.
 
 ## Authenticated native client text integration (2026-09-19)
 

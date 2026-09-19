@@ -123,3 +123,34 @@ fn schema_cannot_read_files_or_access_network_and_unknown_grammar_fails() {
     assert!(Registry::from_native(&[json!({"type":"custom","name":"test","format":{"type":"grammar","syntax":"lark","definition":"start: x"}})]).is_err());
     assert!(Registry::from_native(&[json!({"type":"unknown","name":"test"})]).is_err());
 }
+
+#[test]
+fn native_patch_grammar_accepts_reviewed_windows_asset_without_relaxing_the_protocol() {
+    let fixture: Value =
+        serde_json::from_str(include_str!("fixtures/apply-patch-grammar.json")).unwrap();
+    let lf = fixture["definition"].as_str().unwrap();
+    let patch = "*** Begin Patch\n*** Add File: fixture.txt\n+literal payload\n*** End Patch\n";
+    for definition in [lf.to_owned(), lf.replace('\n', "\r\n")] {
+        let tool = json!({"type":"custom","name":"apply_patch","format":{"type":"grammar","syntax":"lark","definition":definition}});
+        let registry = Registry::from_native(std::slice::from_ref(&tool)).unwrap();
+        let context = Context {
+            nonce: "11111111111111111111111111111111",
+            purpose: Purpose::Normal,
+            parallel: false,
+            choice: ToolChoice::Auto,
+            registry: &registry,
+        };
+        let mut response = json!({"protocol":"webbridge.tool.v1","turn_nonce":context.nonce,"kind":"tool_calls","calls":[{"tool_key":"tool_0001","input":patch}]});
+        let ValidatedOutput::Calls(calls) =
+            validate(response.to_string().as_bytes(), &context).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(native_call(&calls[0], "item", "call")["input"], patch);
+        response["calls"][0]["input"] = json!(format!("{patch}unframed text"));
+        assert!(validate(response.to_string().as_bytes(), &context).is_err());
+        let mut changed = tool;
+        changed["format"]["definition"] = json!(definition.replace("hunk+", "hunk*"));
+        assert!(Registry::from_native(&[changed]).is_err());
+    }
+}

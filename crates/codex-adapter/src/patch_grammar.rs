@@ -1,10 +1,14 @@
 //! Syntax-only recognizer for the pinned native apply_patch grammar. No file IO.
-//! Contract: openai/codex rust-v0.153.4 core/assets/tools/apply_patch.lark.
+//! Contract: openai/codex core/assets/tools/apply_patch.lark. Reviewed LF source
+//! and the otherwise identical CRLF asset observed in Windows CLI 0.155.1.
 use sha2::{Digest, Sha256};
 
 pub fn recognizes(definition: &str) -> bool {
-    format!("{:x}", Sha256::digest(definition.as_bytes()))
-        == "d6367f4826ed608c424b0a308f3d6163527df63c22513d089b91863552f8bfeb"
+    matches!(
+        format!("{:x}", Sha256::digest(definition.as_bytes())).as_str(),
+        "d6367f4826ed608c424b0a308f3d6163527df63c22513d089b91863552f8bfeb"
+            | "ce2574fac05867f519a0ce3bdae50ce7d68b6d2e5f68d3c0c7e75518142d89b3"
+    )
 }
 
 pub fn valid(input: &str) -> bool {

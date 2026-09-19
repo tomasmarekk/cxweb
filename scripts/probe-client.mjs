@@ -6,16 +6,31 @@ import { resolve, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { setTimeout as delay } from 'node:timers/promises';
 import assert from 'node:assert/strict';
+import { randomUUID, createHash } from 'node:crypto';
+import { approveFixtureRead, approveFixturePatch, fixtureReadCommand } from './probe-client-approval.mjs';
 
 const executable = process.argv[2];
-const live = process.argv.includes('--live');
-if (!executable) throw new Error('Usage: node scripts/probe-client.mjs <absolute codex executable> [--live]');
+const modes = process.argv.slice(3);
+if (!executable || modes.length > 1 || modes.some(mode => !['--live', '--live-read', '--live-patch', '--capture-tools'].includes(mode))) {
+  throw new Error('Usage: node scripts/probe-client.mjs <absolute codex executable> [--live | --live-read | --live-patch | --capture-tools]');
+}
+const patchProbe = process.argv.includes('--live-patch');
+const captureTools = process.argv.includes('--capture-tools');
+const readProbe = process.argv.includes('--live-read') || patchProbe;
+const live = process.argv.includes('--live') || readProbe;
 const root = resolve('.local/probes');
 await mkdir(root, { recursive: true });
 const work = await mkdtemp(join(root, 'client-'));
 const home = join(work, 'home');
 const cwd = join(work, 'workspace');
 await mkdir(home); await mkdir(cwd);
+const toolMarker = `cxweb-native-tool-${randomUUID()}`;
+if (readProbe) await writeFile(join(cwd, 'probe-input.txt'), toolMarker + '\n');
+// Resolve the host's actual bundled shell before any model response is read.
+const hostShellExecutables = [];
+if (readProbe) for (const name of ['pwsh.exe', 'powershell.exe']) {
+  try { hostShellExecutables.push(...execFileSync('where.exe', [name], { encoding: 'utf8', windowsHide: true }).trim().split(/\r?\n/)); } catch { /* absent optional shell */ }
+}
 const bridge = resolve('target/debug/cxweb.exe');
 const descriptor = live ? join(work, 'runtime', 'connection.json') : join(work, 'probe.json');
 const server = spawn(bridge, live ? ['live-probe', '--output', descriptor] : ['probe', '--output', descriptor, '--tools-output', join(work, 'tools.json'), '--identity-output', join(work, 'identity.json')], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -38,8 +53,10 @@ try {
   assert.ok(endpoint.endsWith('/backend-api/codex'), 'probe uses the subscription-shaped product route');
   evidence.routeLayout = 'subscription backend-api/codex';
   const route = live ? connection.model : 'webbridge/diagnostic';
-  const catalog = live ? JSON.stringify(connection.catalog) : execFileSync(bridge, ['probe-catalog'], { encoding: 'utf8', windowsHide: true });
-  await writeFile(join(home, 'catalog.json'), catalog);
+  const catalog = live ? connection.catalog : JSON.parse(execFileSync(bridge, ['probe-catalog'], { encoding: 'utf8', windowsHide: true }));
+  if (readProbe || captureTools) catalog.models[0].shell_type = 'unified_exec';
+  if (patchProbe || captureTools) catalog.models[0].apply_patch_tool_type = 'freeform';
+  await writeFile(join(home, 'catalog.json'), JSON.stringify(catalog));
   // The first live qualification exercises text/function transport. Built-in
   // server search remains a separate compatibility gate; disable it explicitly
   // only in this disposable client, never by dropping incoming definitions.
@@ -50,9 +67,13 @@ try {
   for (const key of Object.keys(env)) if (/^(CODEX_|OPENAI_|CHATGPT_)/i.test(key)) delete env[key];
   env.CODEX_HOME = home;
   env.OPENAI_API_KEY = 'cxweb-synthetic-not-a-real-key';
+  evidence.executableSha256 = createHash('sha256').update(await readFile(executable)).digest('hex');
+  evidence.client = execFileSync(executable, ['--version'], { encoding: 'utf8', windowsHide: true }).trim();
   client = spawn(executable, ['app-server', '--listen', 'stdio://'], { env, cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   const pending = new Map();
   const notifications = [];
+  const approvals = [];
+  const patchApprovals = [];
   let id = 0;
   let stderr = '';
   client.stderr.on('data', data => { if (stderr.length < 16000) stderr += data.toString(); });
@@ -63,8 +84,25 @@ try {
       if (msg.error) reject(new Error(JSON.stringify(msg.error))); else resolve(msg.result);
     } else if (msg.method) {
       notifications.push(msg);
-      // Never authorize or execute anything requested by a probe.
-      if (msg.id !== undefined) client.stdin.write(JSON.stringify({ id: msg.id, error: { code: -32601, message: 'Probe does not authorize tools' } }) + '\n');
+      // This test client approves only its explicit fixture operations. The product
+      // never executes model output or decides native approvals.
+      if (msg.id !== undefined) {
+        const commandApproval = msg.method === 'item/commandExecution/requestApproval';
+        const fileApproval = msg.method === 'item/fileChange/requestApproval';
+        const approval = commandApproval || fileApproval;
+        let accepted = readProbe && commandApproval
+          && approvals.length === 0 && approveFixtureRead(msg.params, cwd, hostShellExecutables);
+        if (fileApproval && patchProbe && patchApprovals.length === 0) {
+          const started = notifications.findLast(n => n.method === 'item/started' && n.params?.item?.id === msg.params?.itemId);
+          accepted = approveFixturePatch(msg.params, started, cwd, toolMarker);
+        }
+        if (commandApproval) approvals.push(accepted);
+        if (fileApproval) patchApprovals.push(accepted);
+        if (approval && live) console.log(`Native fixture approval: ${accepted ? 'accepted' : 'declined'}`);
+        client.stdin.write(JSON.stringify(approval
+          ? { id: msg.id, result: { decision: accepted ? 'accept' : 'decline' } }
+          : { id: msg.id, error: { code: -32601, message: 'Probe does not authorize tools' } }) + '\n');
+      }
     }
   });
   const rpc = (method, params) => new Promise((resolve, reject) => {
@@ -84,8 +122,10 @@ try {
   stage = 'thread creation';
   const thread = await rpc('thread/start', { cwd, model: route, ephemeral: true });
   evidence.selectedReasoningEffort = thread.reasoningEffort;
-  const expected = live ? 'cxweb live client round-trip succeeded' : 'cxweb diagnostic round-trip succeeded';
-  const prompt = live ? `Return a final answer with exactly this text: ${expected}` : 'Synthetic diagnostic only. Reply with the diagnostic response.';
+  const expected = readProbe ? toolMarker : live ? 'cxweb live client round-trip succeeded' : 'cxweb diagnostic round-trip succeeded';
+  const prompt = readProbe
+    ? `Use exec_command once to run exactly ${fixtureReadCommand} in the current working directory. ${patchProbe ? 'After reading it, use the apply_patch custom tool once to create probe-output.txt containing that exact line followed by a newline. Wait for the successful patch result before your final answer. Do not modify other files.' : 'This is a read-only fixture test. Do not modify files.'} Do not request elevated permissions or run other commands. Return a final answer containing exactly the single line read from the input file, without extra text.`
+    : live ? `Return a final answer with exactly this text: ${expected}` : 'Synthetic diagnostic only. Reply with the diagnostic response.';
   const turn = await rpc('turn/start', { threadId: thread.thread.id, input: [{ type: 'text', text: prompt, text_elements: [] }] });
   stage = 'generation';
   for (let i = 0; i < (live ? 12000 : 400); i++) {
@@ -98,6 +138,33 @@ try {
     evidence.gatewayError = JSON.stringify(completed?.params?.turn?.error ?? {}).match(known)?.[0] ?? null;
   }
   const messages = notifications.filter(n => n.method === 'item/completed').map(n => n.params?.item).filter(i => i?.type === 'agentMessage');
+  if (readProbe) {
+    const commands = notifications.filter(n => n.method === 'item/completed' && n.params?.item?.type === 'commandExecution').map(n => n.params.item);
+    evidence.nativeTools = {
+      fixture: 'random marker not supplied in the prompt',
+      commandCount: commands.length,
+      completed: commands.filter(item => item.status === 'completed' && item.exitCode === 0).length,
+      resultContainsMarker: commands.some(item => item.aggregatedOutput?.includes(toolMarker)),
+      approvalRequests: notifications.filter(n => n.method === 'item/commandExecution/requestApproval').length,
+      exactReadApprovals: approvals.filter(Boolean).length,
+      harnessExecutedTools: false,
+    };
+    assert.equal(commands.length, 1, 'Codex executes one native read');
+    assert.equal(evidence.nativeTools.completed, 1, 'native command succeeds');
+    assert.ok(evidence.nativeTools.resultContainsMarker, 'native result contains the undisclosed fixture marker');
+    if (patchProbe) {
+      const patches = notifications.filter(n => n.method === 'item/completed' && n.params?.item?.type === 'fileChange').map(n => n.params.item);
+      let actual;
+      try { actual = await readFile(join(cwd, 'probe-output.txt'), 'utf8'); } catch { /* missing is a failed test */ }
+      evidence.nativeTools.patchCount = patches.length;
+      evidence.nativeTools.patchesCompleted = patches.filter(item => item.status === 'completed').length;
+      evidence.nativeTools.exactPatchApprovals = patchApprovals.filter(Boolean).length;
+      evidence.nativeTools.fileMatchesMarker = actual === toolMarker + '\n';
+      assert.equal(patches.length, 1, 'Codex applies one native patch');
+      assert.equal(evidence.nativeTools.patchesCompleted, 1, 'native patch succeeds');
+      assert.ok(evidence.nativeTools.fileMatchesMarker, 'Codex writes the exact fixture contents');
+    }
+  }
   assert.equal(completed?.params?.turn?.status, 'completed', JSON.stringify(completed?.params ?? notifications.slice(-5)));
   assert.ok(messages.some(m => live ? m.text === expected : m.text.includes(expected)), 'client receives exact gateway text');
   evidence.events.push('thread/start selected owned model', 'turn/start completed through loopback', live ? 'expected browser assistant text received' : 'expected synthetic assistant text received');
@@ -107,7 +174,7 @@ try {
     assert.equal(identity.raw_identifiers_recorded, false);
     evidence.identity = identity;
   }
-  evidence.result = live ? 'PASS native backend through authenticated browser' : 'PASS backend-only synthetic test';
+  evidence.result = patchProbe ? 'PASS native function and custom tools through authenticated browser' : readProbe ? 'PASS native read tool through authenticated browser' : live ? 'PASS native backend through authenticated browser' : 'PASS backend-only synthetic test';
 } catch (error) {
   evidence.result = 'FAIL';
   evidence.failedStage = stage;
@@ -116,6 +183,12 @@ try {
   process.exitCode = 1;
 } finally {
   client?.kill();
+  if (evidence.executableSha256) {
+    try {
+      evidence.executableUnchanged = createHash('sha256').update(await readFile(executable)).digest('hex') === evidence.executableSha256;
+    } catch { evidence.executableUnchanged = false; }
+    if (!evidence.executableUnchanged) { evidence.result = 'FAIL'; evidence.error = 'E_CLIENT_CHANGED'; process.exitCode = 1; }
+  }
   if (live) {
     if (server.exitCode === null && server.signalCode === null) server.stdin.end('stop\n');
     const exited = await Promise.race([serverExit, delay(65000, null, { ref: false })]);
