@@ -21,6 +21,23 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Context rejection before browser preparation (2026-09-20)
+
+- The coordinator now encodes and checks the complete prompt before scheduler
+  admission, durable turn admission or browser preparation. The same prepared
+  prompt and nonce are used for the eventual submission; there is no truncation
+  or second encoding with potentially different content.
+- `E_CONTEXT_BUDGET` is a terminal HTTP 422 response instead of a retryable 502.
+  Regression coverage includes oversized history, current instructions, tool
+  schemas and compaction input, including inputs that exceed the ceiling only
+  after Markdown-safe Unicode escaping. All cases reject without preparing a
+  browser page, including a repeated identical request.
+- Validation: 111 runtime library tests passed, workspace Clippy with warnings
+  denied and formatting/diff checks passed. Release CLI, daemon and desktop
+  builds succeeded. The earlier full workspace run passed 182 tests with two ignored;
+  this adds one regression case. This fixes the local guardrail path; automatic
+  route-specific native context budgets remain a separate qualification task.
+
 ## Compaction execution and continuation (2026-09-20)
 
 - Connected the reviewed Responses v2 trigger to a separate tool-disabled browser

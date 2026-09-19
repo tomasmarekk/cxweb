@@ -42,6 +42,29 @@ pub struct TurnInput {
     pub bytes: Vec<u8>,
 }
 
+struct BrowserRequest {
+    request: CanonicalRequest,
+    nonce: String,
+    prompt: String,
+}
+impl BrowserRequest {
+    fn prepare(request: CanonicalRequest) -> Result<Self, &'static str> {
+        let nonce: String = rand::random::<[u8; 16]>()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        // Count the complete escaped prompt, including instructions and tool
+        // schemas, before admission or any browser operation. This is a local
+        // byte ceiling, not an estimate of the provider's token capacity.
+        let prompt = request.browser_prompt(&nonce, 512 * 1024)?;
+        Ok(Self {
+            request,
+            nonce,
+            prompt,
+        })
+    }
+}
+
 /// Runtime-owned encryption bound to one qualified task and codec. The model
 /// cannot select a key, scope or ciphertext, and sealing precedes durable completion.
 pub(crate) trait CheckpointEncoder: Send + Sync {
@@ -112,6 +135,7 @@ impl Coordinator {
         if request.model != input.session.route {
             return Err("E_MODEL_FIDELITY");
         }
+        let request = BrowserRequest::prepare(request)?;
         let _generation = self
             .scheduler
             .acquire(input.session.clone(), &cancel)
@@ -177,11 +201,16 @@ impl Coordinator {
         &self,
         id: &str,
         expected_session: &SessionKey,
-        request: CanonicalRequest,
+        request: BrowserRequest,
         prepared: &Prepared,
         cancel: &CancellationToken,
         checkpoint: Option<&dyn CheckpointEncoder>,
     ) -> Result<Delivery, &'static str> {
+        let BrowserRequest {
+            request,
+            nonce,
+            prompt,
+        } = request;
         if &prepared.verified_session != expected_session {
             self.ledger.transition(id, TurnState::Failed).await?;
             return Err("E_SESSION_SCOPE");
@@ -196,17 +225,6 @@ impl Coordinator {
             });
         let mut tracker = match validation {
             Ok(tracker) => tracker,
-            Err(error) => {
-                self.ledger.transition(id, TurnState::Failed).await?;
-                return Err(error);
-            }
-        };
-        let nonce: String = rand::random::<[u8; 16]>()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
-        let prompt = match request.browser_prompt(&nonce, 512 * 1024) {
-            Ok(prompt) => prompt,
             Err(error) => {
                 self.ledger.transition(id, TurnState::Failed).await?;
                 return Err(error);

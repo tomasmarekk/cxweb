@@ -29,6 +29,7 @@ pub(crate) fn web_failure(code: &'static str) -> Response {
         | "E_TURN_AMBIGUOUS"
         | "E_OUTPUT_SCHEMA"
         | "E_COMPACTION_UNQUALIFIED"
+        | "E_CONTEXT_BUDGET"
         | "E_INVALID_TOOL_ENVELOPE" => StatusCode::UNPROCESSABLE_ENTITY,
         _ if code.starts_with("E_UNSUPPORTED_") || code == "E_NONPORTABLE_CONTEXT" => {
             StatusCode::UNPROCESSABLE_ENTITY
@@ -497,6 +498,15 @@ mod tests {
             }
         };
         let pending = json!({"type":"custom_tool_call","name":"apply_patch","call_id":"pending","input":"literal\n🦀"});
+        let oversized = json!({"model":"webbridge/test","input":[{"role":"user","content":"*".repeat(100_000)},{"type":"compaction_trigger"}]});
+        assert_eq!(
+            provider
+                .execute(make_request(oversized, "oversized-compact", "old", "task"))
+                .await
+                .err(),
+            Some("E_CONTEXT_BUDGET")
+        );
+        assert!(browser.sessions.lock().unwrap().is_empty());
         let compact = json!({"model":"webbridge/test","input":[{"role":"user","content":"Read only"},pending,{"type":"compaction_trigger"}]});
         let first = provider
             .execute(make_request(compact.clone(), "compact", "old", "task"))
@@ -642,6 +652,41 @@ mod tests {
             .header("x-client-request-id", "RAW_THREAD")
             .header("x-codex-turn-metadata", json!({"turn_id":turn,"context_window_id":context,"session_id":"RAW_SESSION","thread_id":"RAW_THREAD","extra":"PRIVATE_METADATA"}).to_string())
             .body(Body::from(json!({"model":"webbridge/test","input":"fixture task","stream":stream,"client_metadata":{"trace":"PRIVATE_METADATA"}}).to_string())).unwrap()
+    }
+
+    #[tokio::test]
+    async fn oversized_full_context_is_terminal_before_browser_preparation() {
+        let (gateway, browser) = fixture(false);
+        let base = gateway.base_url();
+        let router = gateway.router();
+        for location in ["history", "instructions", "schema"] {
+            // These characters expand to Unicode escapes in the literal browser
+            // transport. The unescaped input is below the browser byte ceiling.
+            let large = "*".repeat(100_000);
+            let mut payload = json!({"model":"webbridge/test","input":"fixture"});
+            match location {
+                "history" => payload["input"] = json!(large),
+                "instructions" => payload["instructions"] = json!(large),
+                _ => {
+                    payload["tools"] = json!([{"type":"function","name":"fixture","parameters":{"type":"object","description":large}}])
+                }
+            }
+            assert!(payload.to_string().len() < 512 * 1024);
+            for _ in 0..2 {
+                let (parts, _) = request(&base, location, "context", false).into_parts();
+                let response = router
+                    .clone()
+                    .oneshot(Request::from_parts(parts, Body::from(payload.to_string())))
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+                let bytes = response.into_body().collect().await.unwrap().to_bytes();
+                let body: Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(body["error"]["code"], "E_CONTEXT_BUDGET");
+            }
+        }
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 0);
+        assert!(browser.sessions.lock().unwrap().is_empty());
     }
     #[tokio::test]
     async fn optional_hosted_search_is_visible_and_forced_search_never_sends() {
