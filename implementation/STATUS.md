@@ -196,6 +196,57 @@ entry was visible, which is the expected evidence while activation remains absen
   exposure and the remaining release gates remain incomplete. Production routing
   stays disabled and native Codex configuration/authentication remain unchanged.
 
+## Observed account-default context and qualification binding (2026-09-19)
+
+- The account observer now inspects the profile submenu through ordinary hover,
+  without selecting an account or workspace. The live single-account variant
+  places its email in a heading before the checked row, not inside that row.
+  The adapter requires the known three-control layout and independently matches
+  this candidate against the selected, loaded Settings / Account panel. Raw
+  identifiers stay in memory; exported diagnostics contain bounded structural
+  counts, known labels and booleans only.
+- Deliberate specification adaptation: this verified UI variant exposes no
+  workspace selector or provider workspace ID. It can establish a separately
+  tagged **account-default context**, never an invented personal workspace ID.
+  The precise recognized profile/submenu structure, one account, an individual
+  plan marker and matching Account panel are required. Workspace controls,
+  organization markers, ambiguity, failed loading or unknown layout invalidate
+  it. Explicitly observed workspace IDs remain a different scope kind.
+- Rust alone computes this qualification; a DOM payload cannot assert it.
+  Installation-separated, domain-tagged hashes bind the account and either the
+  observed workspace or account-default context. The diagnostic worker uses a
+  fresh lifetime-specific installation value; production activation must supply
+  its durable installation ID. No native account metadata is substituted.
+- Text/tool diagnostics now require a qualified discovered scope, verify it in
+  their own Temporary Chat before submission and again after completion, and
+  persist only opaque scope IDs in the durable ledger. A mismatch prevents
+  submission or withholds the completed response, with no automatic resend.
+  Scope is discarded when browser/model observations are invalidated.
+- The live check exposed Account-tab pointer activation during dialog animation:
+  the dialog opened, but the Account tab remained unselected. It now uses verified
+  focus and native Enter, with selected-panel evidence still required. Enter also
+  carries its normal character event for ordinary HTML button default activation;
+  the Chrome fixture covers this separately from the live site's key handler.
+- Authenticated background discovery confirmed the account-default binding. One
+  final live function/custom-envelope test passed on Latest / Extra High with
+  matching scope before and after generation, exact submitted-message attribution,
+  completed assistant output and browser/page language en-US. Earlier failed
+  scope preflights sent no message. This proves scoped diagnostic transport, not
+  execution by Codex or production model publication.
+- Verification: `cargo test -p cxweb-browser-adapter -p cxweb-runtime` passed
+  87 tests (one opt-in ignored). The desktop/browser Node suite passed 38 tests;
+  affected-crate Clippy with warnings denied and format/diff checks passed.
+  The real Chrome off-screen fixture passed account-submenu inspection, native
+  Account-tab activation, no-send on preflight scope failure, withheld output
+  after a completion-time scope failure, and complete owned-target cleanup.
+  No additional generation is attempted on either scope failure path.
+  Release CLI, daemon and desktop builds succeeded.
+- Remaining integration: hand the single browser owner to the durable generation
+  driver, apply account checks at appropriate generation boundaries without
+  navigating Settings on every polling tick, then qualify actual Codex tool
+  round trips and pickers. Production routing remains disabled. Initial shell
+  exposure, full lifecycle/release qualification and all remaining gates stay open.
+
 ## Composer integrity correction (2026-09-18)
 
 - Added an explicit `browser-control test-tools` operation through the same

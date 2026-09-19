@@ -138,6 +138,7 @@ pub(crate) fn login_error(code: &str) -> &'static str {
         "E_SUBMISSION_UNCERTAIN" => "E_SUBMISSION_UNCERTAIN",
         "E_QUALIFICATION_TIMEOUT" => "E_QUALIFICATION_TIMEOUT",
         "E_TEMPORARY_CHAT" => "E_TEMPORARY_CHAT",
+        "E_SESSION_SCOPE" => "E_SESSION_SCOPE",
         "E_SEND_SURFACE" => "E_SEND_SURFACE",
         "E_SEND_DISABLED" => "E_SEND_DISABLED",
         "E_COMPOSER_MISMATCH" => "E_COMPOSER_MISMATCH",

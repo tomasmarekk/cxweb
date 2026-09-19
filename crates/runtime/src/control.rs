@@ -1,4 +1,5 @@
 //! Login and explicit qualification worker. Browser IPC stays off the reactor.
+use crate::browser_scope::BrowserScope;
 use crate::ledger::{Admission, Ledger};
 use crate::qualification::Kind;
 use cxweb_browser_adapter::{
@@ -240,6 +241,11 @@ impl Control {
                 let mut page: Option<ManagedPage> = None;
                 let mut status = ControlStatus::default();
                 let mut observed_routes: Vec<(QualifiedModel, String)> = Vec::new();
+                // Diagnostic scope is unique to this browser owner's lifetime.
+                // Production activation supplies its persistent installation ID.
+                let scope_installation =
+                    format!("cxweb-qualification-{:032x}", rand::random::<u128>());
+                let mut observed_scope: Option<BrowserScope> = None;
                 while let Some(command) = incoming.blocking_recv() {
                     let (connect, background, qualify, qualification_kind, reply) = match command {
                         WorkerCommand::Connect(reply) => (true, false, false, None, reply),
@@ -259,6 +265,7 @@ impl Control {
                         browser = None;
                         status = ControlStatus::default();
                         observed_routes.clear();
+                        observed_scope = None;
                     }
                     if connect
                         && (page.is_none()
@@ -302,6 +309,7 @@ impl Control {
                                 ..Default::default()
                             };
                             observed_routes.clear();
+                            observed_scope = None;
                             Ok(())
                         })();
                         if let Err(error) = opened {
@@ -363,6 +371,7 @@ impl Control {
                                 ..Default::default()
                             };
                             observed_routes.clear();
+                            observed_scope = None;
                             browser = Some(managed);
                             Ok::<_, std::io::Error>(background_page)
                         })();
@@ -375,6 +384,7 @@ impl Control {
                                     ..Default::default()
                                 };
                                 observed_routes.clear();
+                                observed_scope = None;
                                 let _ = reply.send(Err(match error.to_string().as_str() {
                                     "E_HIDDEN_TARGET" => "E_HIDDEN_TARGET",
                                     "E_HIDDEN_ATTACH" => "E_HIDDEN_ATTACH",
@@ -405,6 +415,7 @@ impl Control {
                                 status.observation = Some(observation);
                                 if status.phase != "awaiting_qualification" {
                                     observed_routes.clear();
+                                    observed_scope = None;
                                     status.candidate_models.clear();
                                     status.text_qualified_model = None;
                                     status.qualification_evidence = None;
@@ -441,6 +452,7 @@ impl Control {
                                             };
                                             if let Err(code) = selection {
                                                 observed_routes.clear();
+                                                observed_scope = None;
                                                 status.candidate_models.clear();
                                                 status.temporary_chat_available = None;
                                                 status.model_discovery_diagnostic =
@@ -452,8 +464,17 @@ impl Control {
                                                 browser.verify_temporary_chat().unwrap_or(false);
                                             status.scope_diagnostic =
                                                 Some(match browser.account_scope(page) {
-                                                    Ok(scope) => scope.diagnostic,
+                                                    Ok(scope) => {
+                                                        observed_scope =
+                                                            BrowserScope::from_surface(
+                                                                &scope_installation,
+                                                                &scope,
+                                                            )
+                                                            .ok();
+                                                        scope.diagnostic
+                                                    }
                                                     Err(error) => {
+                                                        observed_scope = None;
                                                         cxweb_browser_adapter::ScopeDiagnostic {
                                                             failure: Some(
                                                                 match error.to_string().as_str() {
@@ -529,6 +550,7 @@ impl Control {
                                         Err(error) => {
                                             status.candidate_models.clear();
                                             observed_routes.clear();
+                                            observed_scope = None;
                                             status.temporary_chat_available = None;
                                             status.model_discovery_diagnostic =
                                                 browser.model_diagnostic();
@@ -566,6 +588,10 @@ impl Control {
                                         continue;
                                     }
                                     let (model, identity) = selected[0];
+                                    let Some(expected_scope) = observed_scope.as_ref() else {
+                                        let _ = reply.send(Err("E_SESSION_SCOPE"));
+                                        continue;
+                                    };
                                     // Recheck the chosen route without traversing or changing
                                     // every other family immediately before a generation.
                                     let verified =
@@ -596,12 +622,12 @@ impl Control {
                                         let ledger =
                                             Ledger::open(&paths.state.join("qualification.sqlite"))
                                                 .await?;
-                                        // This scope is a diagnostic operation, not a certified account.
+                                        // Diagnostic only, bound to the actual observed UI scope.
                                         let scope = SessionKey {
-                                            installation: "cxweb-qualification".into(),
+                                            installation: scope_installation.clone(),
                                             native_session: nonce.clone(),
-                                            account_scope: "unqualified-diagnostic".into(),
-                                            workspace_scope: "unqualified-diagnostic".into(),
+                                            account_scope: expected_scope.account.clone(),
+                                            workspace_scope: expected_scope.workspace.clone(),
                                             route: model.id.clone(),
                                             epoch: 0,
                                         };
@@ -641,6 +667,42 @@ impl Control {
                                             submission_intent = true;
                                             Ok(())
                                         },
+                                        |browser, page| {
+                                            let surface =
+                                                browser.account_scope(page).map_err(|error| {
+                                                    let code = match error.to_string().as_str() {
+                                                        "E_ACCOUNT_OPEN" => "E_ACCOUNT_OPEN",
+                                                        "E_ACCOUNT_SCOPE" => "E_ACCOUNT_SCOPE",
+                                                        "E_ACCOUNT_READ" => "E_ACCOUNT_READ",
+                                                        "E_ACCOUNT_PARSE" => "E_ACCOUNT_PARSE",
+                                                        "E_ACCOUNT_SETTINGS_CLOSE" => {
+                                                            "E_ACCOUNT_SETTINGS_CLOSE"
+                                                        }
+                                                        "E_MODEL_CLOSE" => "E_MODEL_CLOSE",
+                                                        _ => "E_ACCOUNT_OPERATION",
+                                                    };
+                                                    status.scope_diagnostic = Some(
+                                                        cxweb_browser_adapter::ScopeDiagnostic {
+                                                            failure: Some(code.into()),
+                                                            ..Default::default()
+                                                        },
+                                                    );
+                                                    std::io::Error::other("E_SESSION_SCOPE")
+                                                })?;
+                                            let current = BrowserScope::from_surface(
+                                                &scope_installation,
+                                                &surface,
+                                            );
+                                            status.scope_diagnostic = Some(surface.diagnostic);
+                                            if current
+                                                .as_ref()
+                                                .is_ok_and(|scope| scope == expected_scope)
+                                            {
+                                                Ok(())
+                                            } else {
+                                                Err(std::io::Error::other("E_SESSION_SCOPE"))
+                                            }
+                                        },
                                     );
                                     status.qualification_diagnostic =
                                         browser.qualification_diagnostic();
@@ -672,6 +734,7 @@ impl Control {
                                                     "E_QUALIFICATION_TIMEOUT"
                                                 }
                                                 "E_TEMPORARY_CHAT" => "E_TEMPORARY_CHAT",
+                                                "E_SESSION_SCOPE" => "E_SESSION_SCOPE",
                                                 "E_SEND_SURFACE" => "E_SEND_SURFACE",
                                                 "E_SEND_DISABLED" => "E_SEND_DISABLED",
                                                 "E_COMPOSER_MISMATCH" => "E_COMPOSER_MISMATCH",
@@ -762,6 +825,7 @@ impl Control {
                                 status.qualification_evidence = None;
                                 status.candidate_models.clear();
                                 observed_routes.clear();
+                                observed_scope = None;
                             }
                         }
                     }

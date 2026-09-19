@@ -108,6 +108,12 @@ pub struct QualificationOutcome {
 #[serde(deny_unknown_fields)]
 pub struct ScopeDiagnostic {
     #[serde(default)]
+    pub default_context_verified: bool,
+    #[serde(default)]
+    pub account_switcher_matches_settings: bool,
+    #[serde(default)]
+    pub switcher: Option<AccountSwitcherDiagnostic>,
+    #[serde(default)]
     pub menu_controls: Vec<String>,
     #[serde(default)]
     pub workspace_markers: Vec<String>,
@@ -141,12 +147,36 @@ pub struct ScopeDiagnostic {
     pub has_workspace_id: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AccountSwitcherDiagnostic {
+    #[serde(default)]
+    pub account_source: Option<String>,
+    #[serde(default)]
+    pub selected_email_sources: Vec<usize>,
+    #[serde(default)]
+    pub email_controls: Vec<String>,
+    pub available: bool,
+    pub expanded: bool,
+    pub submenu_present: bool,
+    pub account_candidates: usize,
+    pub workspace_candidates: usize,
+    pub selected_items: usize,
+    pub selected_account_candidates: usize,
+    pub public_labels: Vec<String>,
+    pub controls: Vec<String>,
+}
+
 // Identifiers stay in memory for comparison/hashing, never diagnostic output.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScopeSurface {
     pub account: Option<String>,
     pub workspace: Option<String>,
+    /// An explicitly qualified UI-default context, not a provider workspace ID.
+    /// Only the Rust evidence check may set this; DOM payloads cannot supply it.
+    #[serde(skip)]
+    pub default_workspace: bool,
     pub diagnostic: ScopeDiagnostic,
 }
 
@@ -863,13 +893,21 @@ impl ManagedBrowser {
         expected_label: &str,
         prompt: &str,
         before_send: impl FnOnce() -> io::Result<()>,
+        verify_scope: impl FnMut(&mut Self, &ManagedPage) -> io::Result<()>,
     ) -> io::Result<QualificationOutcome> {
         self.qualification_diagnostic = None;
         if let Some(previous) = self.failed_qualification.take() {
             let _ = self.close_page(previous);
         }
         let page = self.open_temporary_chat()?;
-        let result = self.qualify_page(&page, identity, expected_label, prompt, before_send);
+        let result = self.qualify_page(
+            &page,
+            identity,
+            expected_label,
+            prompt,
+            before_send,
+            verify_scope,
+        );
         if result.is_err() {
             let _ = self.stop(&page);
             self.failed_qualification = Some(page);
@@ -920,6 +958,7 @@ impl ManagedBrowser {
             return Ok(ScopeSurface {
                 account: None,
                 workspace: None,
+                default_workspace: false,
                 diagnostic: ScopeDiagnostic {
                     failure: Some(failure.into()),
                     profile_control_tags: tags,
@@ -943,6 +982,74 @@ impl ManagedBrowser {
                 }
             };
             let mut surface = result?;
+            let mut switcher_account = None;
+            let switcher_deadline = Instant::now() + Duration::from_secs(2);
+            let mut hovered = false;
+            loop {
+                if let Ok(value) = self.dom(page, include_str!("dom/account_switcher.js"), vec![])
+                    && !value.is_null()
+                {
+                    if !hovered
+                        && value["point"]["x"].is_number()
+                        && value["point"]["y"].is_number()
+                    {
+                        let (x, y) = Self::point_coordinates(&value["point"])?;
+                        self.call(
+                            "Input.dispatchMouseEvent",
+                            json!({"type":"mouseMoved","x":x,"y":y,"button":"none","buttons":0}),
+                            Some(&page.session),
+                        )?;
+                        hovered = true;
+                    }
+                    surface.diagnostic.switcher =
+                        serde_json::from_value(value["diagnostic"].clone()).ok();
+                    switcher_account = value["account"]
+                        .as_str()
+                        .filter(|account| account.len() <= 320)
+                        .map(str::to_owned);
+                    if value["diagnostic"]["submenu_present"] == true {
+                        break;
+                    }
+                }
+                if Instant::now() >= switcher_deadline {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            if surface
+                .diagnostic
+                .switcher
+                .as_ref()
+                .is_some_and(|switcher| switcher.submenu_present)
+            {
+                // Inspecting the submenu never selects an account or workspace.
+                // Leave its hover area, dismiss it, then restore the parent menu.
+                self.call(
+                    "Input.dispatchMouseEvent",
+                    json!({"type":"mouseMoved","x":10,"y":10,"button":"none","buttons":0}),
+                    Some(&page.session),
+                )?;
+                for event_type in ["rawKeyDown", "keyUp"] {
+                    self.call("Input.dispatchKeyEvent", json!({"type":event_type,"key":"Escape","code":"Escape","windowsVirtualKeyCode":27}), Some(&page.session))?;
+                }
+                let opened = self.dom(page, include_str!("dom/open_account.js"), vec![])?;
+                if opened["x"].is_number() && opened["y"].is_number() {
+                    self.click_point(page, &opened)?;
+                }
+                let deadline = Instant::now() + Duration::from_secs(5);
+                loop {
+                    if self
+                        .dom(page, include_str!("dom/account_scope.js"), vec![])
+                        .is_ok_and(|value| !value.is_null())
+                    {
+                        break;
+                    }
+                    if Instant::now() >= deadline {
+                        return Err(io::Error::other("E_ACCOUNT_OPEN"));
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
             if surface.account.is_none() && surface.diagnostic.settings_available {
                 let settings_opened =
                     self.dom(page, include_str!("dom/open_account_settings.js"), vec![])? == true;
@@ -977,8 +1084,10 @@ impl ManagedBrowser {
                                 )?;
                                 if point["selected"] == true {
                                     navigated = true;
-                                } else if point["x"].is_number() && point["y"].is_number() {
-                                    self.click_point(page, &point)?;
+                                } else if point["focused"] == true {
+                                    for event_type in ["keyDown", "keyUp"] {
+                                        self.call("Input.dispatchKeyEvent", json!({"type":event_type,"key":"Enter","code":"Enter","text":if event_type == "keyDown" {"\r"} else {""},"unmodifiedText":if event_type == "keyDown" {"\r"} else {""},"windowsVirtualKeyCode":13,"nativeVirtualKeyCode":13}), Some(&page.session))?;
+                                    }
                                     navigated = true;
                                 }
                             }
@@ -1014,6 +1123,12 @@ impl ManagedBrowser {
                     }
                 }
             }
+            surface.diagnostic.account_switcher_matches_settings =
+                surface.diagnostic.settings_account_candidates == 1
+                    && switcher_account.is_some()
+                    && surface.account == switcher_account;
+            surface.default_workspace = qualifies_default_context(&surface);
+            surface.diagnostic.default_context_verified = surface.default_workspace;
             Ok(surface)
         })();
         let closed = self.close_model_menu(page);
@@ -1037,7 +1152,9 @@ impl ManagedBrowser {
         expected_label: &str,
         prompt: &str,
         before_send: impl FnOnce() -> io::Result<()>,
+        mut verify_scope: impl FnMut(&mut Self, &ManagedPage) -> io::Result<()>,
     ) -> io::Result<QualificationOutcome> {
+        verify_scope(self, page)?;
         let candidate_label = self
             .select_candidate(page, identity)
             .map_err(|_| io::Error::other("E_QUALIFICATION_SELECT"))?;
@@ -1079,6 +1196,7 @@ impl ManagedBrowser {
             });
             match tracker.observe(observation).map_err(io::Error::other)? {
                 Progress::Completed(response) => {
+                    verify_scope(self, page)?;
                     return Ok(QualificationOutcome {
                         candidate_label,
                         response,
@@ -1404,6 +1522,7 @@ impl ManagedBrowser {
                     intent_called = true;
                     Err(io::Error::other("E_FIXTURE_DURABILITY_FAILURE"))
                 },
+                |_, _| Ok(()),
             );
             if attempt.is_ok()
                 || intent_called == wrong_label
@@ -1419,6 +1538,7 @@ impl ManagedBrowser {
         }
         self.call("Page.setDocumentContent", json!({"frameId":frame["frameTree"]["frame"]["id"],"html":include_str!("dom/fixture.html")}), Some(&page.session))?;
         let mut intents = 0;
+        let mut scope_checks = 0;
         let qualified = self.qualify_page(
             page,
             r#"["reasoning-slider-v2","Fixture text mode",0,1,1]"#,
@@ -1428,9 +1548,47 @@ impl ManagedBrowser {
                 intents += 1;
                 Ok(())
             },
+            |_, _| {
+                scope_checks += 1;
+                Ok(())
+            },
         )?;
-        if intents != 1 || qualified.response != "fixture response" {
+        if intents != 1 || scope_checks != 2 || qualified.response != "fixture response" {
             return Err(io::Error::other("E_QUALIFICATION_FIXTURE"));
+        }
+        // A changed account before submission must send nothing; a change
+        // detected after completion must withhold the response, never resend it.
+        for fail_on_check in [1, 2] {
+            self.call("Page.setDocumentContent", json!({"frameId":frame["frameTree"]["frame"]["id"],"html":include_str!("dom/fixture.html")}), Some(&page.session))?;
+            let mut intents = 0;
+            let mut checks = 0;
+            let result = self.qualify_page(
+                page,
+                r#"["reasoning-slider-v2","Fixture text mode",0,1,0]"#,
+                "Fixture text mode · Standard",
+                "Scope change fixture",
+                || {
+                    intents += 1;
+                    Ok(())
+                },
+                |_, _| {
+                    checks += 1;
+                    if checks == fail_on_check {
+                        Err(io::Error::other("E_SESSION_SCOPE"))
+                    } else {
+                        Ok(())
+                    }
+                },
+            );
+            if result
+                .err()
+                .is_none_or(|error| error.to_string() != "E_SESSION_SCOPE")
+                || checks != fail_on_check
+                || intents != fail_on_check - 1
+                || self.baseline(page)?.ids.len() != if fail_on_check == 1 { 1 } else { 3 }
+            {
+                return Err(io::Error::other("E_SCOPE_GUARD_FIXTURE"));
+            }
         }
         self.call("Page.setDocumentContent", json!({"frameId":frame["frameTree"]["frame"]["id"],"html":include_str!("dom/fixture.html")}), Some(&page.session))?;
         let baseline = self
@@ -1451,8 +1609,16 @@ impl ManagedBrowser {
             || scope.workspace.as_deref() != Some("fixture-workspace")
             || !scope.diagnostic.settings_opened
             || scope.diagnostic.settings_account_candidates != 1
+            || !scope
+                .diagnostic
+                .switcher
+                .as_ref()
+                .is_some_and(|switcher| switcher.submenu_present && switcher.selected_items == 1)
         {
-            return Err(io::Error::other("E_SCOPE_FIXTURE"));
+            return Err(io::Error::other(format!(
+                "E_SCOPE_FIXTURE: {}",
+                serde_json::to_string(&scope.diagnostic)?
+            )));
         }
         if surface.candidates.len() != 4
             || !surface.temporary_chat
@@ -1595,6 +1761,67 @@ impl ManagedBrowser {
     }
 }
 
+/// Qualifies the observed account-switcher variant with no workspace selector.
+/// This does not infer a provider-side personal workspace ID from missing data.
+/// Any workspace control, organization marker or unknown menu layout invalidates
+/// the UI-default scope and requires explicit workspace evidence instead.
+fn qualifies_default_context(surface: &ScopeSurface) -> bool {
+    let d = &surface.diagnostic;
+    let Some(switcher) = &d.switcher else {
+        return false;
+    };
+    let known_menu = d.menu_controls.len() == 6
+        && matches!(
+            d.menu_controls[0].as_str(),
+            "menuitem:other:action" | "menuitem:other:submenu"
+        )
+        && d.menu_controls[1..]
+            == [
+                "menuitem:Personalization:action",
+                "menuitem:other:action",
+                "menuitem:Settings:action",
+                "menuitem:Help:submenu",
+                "menuitem:Log out:action",
+            ];
+    surface.account.is_some()
+        && surface.workspace.is_none()
+        && d.failure.is_none()
+        && d.menu_present
+        && known_menu
+        && d.workspace_candidates == 0
+        && d.selected_workspace_candidates == 0
+        && d.selected_items == 0
+        && !d.has_workspace_id
+        && d.workspace_markers.len() == 1
+        && matches!(d.workspace_markers[0].as_str(), "Pro" | "Plus" | "Free")
+        && d.settings_opened
+        && d.settings_account_selected
+        && d.settings_panel_present
+        && !d.settings_loading
+        && d.settings_account_candidates == 1
+        && d.account_switcher_matches_settings
+        && switcher.available
+        && switcher.expanded
+        && switcher.submenu_present
+        && switcher.account_candidates == 1
+        && matches!(
+            (
+                switcher.account_source.as_deref(),
+                switcher.selected_account_candidates
+            ),
+            (Some("selected_account"), 1) | (Some("account_heading"), 0)
+        )
+        && switcher.workspace_candidates == 0
+        && switcher.selected_items == 1
+        && switcher.public_labels == ["Add account"]
+        && switcher.controls
+            == [
+                "menuitem:other:unselected",
+                "menuitemradio:other:selected",
+                "menuitem:Add account:unselected",
+            ]
+}
+
 fn read_frame(input: &mut impl BufRead) -> io::Result<Vec<u8>> {
     let mut frame = Vec::new();
     loop {
@@ -1621,6 +1848,120 @@ fn read_frame(input: &mut impl BufRead) -> io::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn default_scope() -> ScopeSurface {
+        ScopeSurface {
+            account: Some("fixture@example.invalid".into()),
+            workspace: None,
+            default_workspace: false,
+            diagnostic: ScopeDiagnostic {
+                menu_present: true,
+                menu_controls: [
+                    "menuitem:other:submenu",
+                    "menuitem:Personalization:action",
+                    "menuitem:other:action",
+                    "menuitem:Settings:action",
+                    "menuitem:Help:submenu",
+                    "menuitem:Log out:action",
+                ]
+                .map(String::from)
+                .into(),
+                workspace_markers: vec!["Pro".into()],
+                settings_opened: true,
+                settings_account_selected: true,
+                settings_panel_present: true,
+                settings_account_candidates: 1,
+                account_switcher_matches_settings: true,
+                switcher: Some(AccountSwitcherDiagnostic {
+                    account_source: Some("selected_account".into()),
+                    selected_email_sources: vec![1, 1, 0],
+                    email_controls: vec!["menuitemradio:selected".into()],
+                    available: true,
+                    expanded: true,
+                    submenu_present: true,
+                    account_candidates: 1,
+                    workspace_candidates: 0,
+                    selected_items: 1,
+                    selected_account_candidates: 1,
+                    public_labels: vec!["Add account".into()],
+                    controls: [
+                        "menuitem:other:unselected",
+                        "menuitemradio:other:selected",
+                        "menuitem:Add account:unselected",
+                    ]
+                    .map(String::from)
+                    .into(),
+                }),
+                ..ScopeDiagnostic::default()
+            },
+        }
+    }
+    #[test]
+    fn default_context_requires_corroborated_selected_account_and_known_layout() {
+        assert!(qualifies_default_context(&default_scope()));
+        let mut heading = default_scope();
+        let switcher = heading.diagnostic.switcher.as_mut().unwrap();
+        switcher.account_source = Some("account_heading".into());
+        switcher.selected_account_candidates = 0;
+        assert!(qualifies_default_context(&heading));
+        heading.diagnostic.account_switcher_matches_settings = false;
+        assert!(!qualifies_default_context(&heading));
+        let mutations: &[fn(&mut ScopeSurface)] = &[
+            |s| s.account = None,
+            |s| s.workspace = Some("observed-workspace".into()),
+            |s| s.diagnostic.account_switcher_matches_settings = false,
+            |s| s.diagnostic.settings_account_candidates = 2,
+            |s| s.diagnostic.settings_account_selected = false,
+            |s| s.diagnostic.settings_loading = true,
+            |s| s.diagnostic.settings_panel_present = false,
+            |s| s.diagnostic.failure = Some("E_ACCOUNT_SCOPE".into()),
+            |s| s.diagnostic.menu_controls[2] = "menuitem:Workspaces:submenu".into(),
+            |s| s.diagnostic.workspace_markers = vec!["Business".into()],
+            |s| s.diagnostic.workspace_markers.push("Enterprise".into()),
+            |s| s.diagnostic.workspace_candidates = 1,
+            |s| s.diagnostic.has_workspace_id = true,
+            |s| s.diagnostic.switcher = None,
+            |s| s.diagnostic.switcher.as_mut().unwrap().expanded = false,
+            |s| s.diagnostic.switcher.as_mut().unwrap().account_candidates = 2,
+            |s| {
+                s.diagnostic
+                    .switcher
+                    .as_mut()
+                    .unwrap()
+                    .selected_account_candidates = 0
+            },
+            |s| s.diagnostic.switcher.as_mut().unwrap().workspace_candidates = 1,
+            |s| s.diagnostic.switcher.as_mut().unwrap().selected_items = 2,
+            |s| {
+                s.diagnostic
+                    .switcher
+                    .as_mut()
+                    .unwrap()
+                    .public_labels
+                    .push("Personal workspace".into())
+            },
+            |s| {
+                s.diagnostic.switcher.as_mut().unwrap().controls[1] =
+                    "menuitemradio:other:unselected".into()
+            },
+        ];
+        for (index, mutate) in mutations.iter().enumerate() {
+            let mut surface = default_scope();
+            mutate(&mut surface);
+            assert!(
+                !qualifies_default_context(&surface),
+                "mutation {index} must invalidate qualification"
+            );
+        }
+    }
+    #[test]
+    fn dom_cannot_assert_default_context() {
+        let mut value = json!({"account":"fixture@example.invalid", "workspace":null,
+            "diagnostic":default_scope().diagnostic});
+        let surface: ScopeSurface = serde_json::from_value(value.clone()).unwrap();
+        assert!(!surface.default_workspace);
+        value["default_workspace"] = json!(true);
+        assert!(serde_json::from_value::<ScopeSurface>(value).is_err());
+    }
     #[test]
     #[ignore = "requires an installed Chrome; creates a fresh diagnostic profile"]
     fn managed_browser_loads_http_and_completes_fetch() {

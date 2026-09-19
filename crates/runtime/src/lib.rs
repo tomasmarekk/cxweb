@@ -1,4 +1,6 @@
 //! Isolated G0 diagnostic gateway; production browser routing is not enabled.
+#[cfg(windows)]
+mod browser_scope;
 pub mod catalog_proxy;
 #[cfg(windows)]
 pub mod config_journal;
