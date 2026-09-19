@@ -30,6 +30,35 @@ pub fn encode(
             .collect(),
         ValidatedOutput::Checkpoint(_) => return Err("E_COMPACTION_CODEC_REQUIRED"),
     };
+    encode_items(items, model, response_id, created_at)
+}
+
+/// The caller must supply a locally authenticated token, never model text.
+pub fn encode_checkpoint(
+    encrypted_content: &str,
+    model: &str,
+    response_id: &str,
+    created_at: u64,
+) -> Result<CompletedResponse, &'static str> {
+    if !encrypted_content.starts_with("wbr1:") || encrypted_content.len() <= 5 {
+        return Err("E_COMPACTION_CODEC_REQUIRED");
+    }
+    encode_items(
+        vec![
+            json!({"type":"compaction","id":format!("cmp_cxweb_{response_id}"),"encrypted_content":encrypted_content}),
+        ],
+        model,
+        response_id,
+        created_at,
+    )
+}
+
+fn encode_items(
+    items: Vec<Value>,
+    model: &str,
+    response_id: &str,
+    created_at: u64,
+) -> Result<CompletedResponse, &'static str> {
     let mut response = json!({"id":response_id,"object":"response","created_at":created_at,"status":"in_progress","model":model,"output":[]});
     let mut events = vec![
         json!({"type":"response.created","response":response}),
@@ -39,6 +68,11 @@ pub fn encode(
         let mut initial = item.clone();
         initial["status"] = json!("in_progress");
         match item["type"].as_str() {
+            Some("compaction") => {
+                events.push(
+                    json!({"type":"response.output_item.added","output_index":i,"item":item}),
+                );
+            }
             Some("message") => {
                 initial["content"] = json!([]);
                 events.push(

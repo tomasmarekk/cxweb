@@ -11,15 +11,16 @@ import { approveFixtureRead, approveFixturePatch, fixtureReadCommand } from './p
 
 const executable = process.argv[2];
 const modes = process.argv.slice(3);
-if (!executable || modes.length > 1 || modes.some(mode => !['--live', '--live-read', '--live-patch', '--live-websocket-patch', '--live-search-limit', '--capture-tools', '--compact'].includes(mode))) {
-  throw new Error('Usage: node scripts/probe-client.mjs <absolute codex executable> [--live | --live-read | --live-patch | --live-websocket-patch | --live-search-limit | --capture-tools | --compact]');
+if (!executable || modes.length > 1 || modes.some(mode => !['--live', '--live-read', '--live-patch', '--live-websocket-patch', '--live-search-limit', '--capture-tools', '--compact', '--live-compact', '--live-websocket-compact'].includes(mode))) {
+  throw new Error('Usage: node scripts/probe-client.mjs <absolute codex executable> [--live | --live-read | --live-patch | --live-websocket-patch | --live-search-limit | --capture-tools | --compact | --live-compact | --live-websocket-compact]');
 }
-const compactProbe = modes.includes('--compact');
+const liveCompact = modes.includes('--live-compact') || modes.includes('--live-websocket-compact');
+const compactProbe = modes.includes('--compact') || liveCompact;
 const searchLimitProbe = modes.includes('--live-search-limit');
-const liveWebsocket = modes.includes('--live-websocket-patch');
-const patchProbe = process.argv.includes('--live-patch') || liveWebsocket;
+const liveWebsocket = modes.includes('--live-websocket-patch') || modes.includes('--live-websocket-compact');
+const patchProbe = modes.includes('--live-patch') || modes.includes('--live-websocket-patch');
 const captureTools = process.argv.includes('--capture-tools');
-const readProbe = process.argv.includes('--live-read') || patchProbe;
+const readProbe = process.argv.includes('--live-read') || patchProbe || liveCompact;
 const live = process.argv.includes('--live') || readProbe || searchLimitProbe;
 const root = resolve('.local/probes');
 await mkdir(root, { recursive: true });
@@ -41,7 +42,7 @@ const clientBuild = /^codex-cli (\S+)$/.exec(clientVersion)?.[1];
 assert.ok(clientBuild, 'native client reports its build');
 const catalogArgs = ['--client-build', clientBuild, ...(readProbe || captureTools ? ['--coding'] : [])];
 const diagnosticCatalog = JSON.parse(execFileSync(bridge, ['probe-catalog', ...catalogArgs], { encoding: 'utf8', windowsHide: true }));
-const server = spawn(bridge, live ? ['live-probe', '--output', descriptor, ...catalogArgs, ...(liveWebsocket ? ['--websocket'] : [])] : ['probe', '--output', descriptor, '--tools-output', join(work, 'tools.json'), '--identity-output', join(work, 'identity.json')], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+const server = spawn(bridge, live ? ['live-probe', '--output', descriptor, ...catalogArgs, ...(liveWebsocket ? ['--websocket'] : []), ...(liveCompact ? ['--compaction'] : [])] : ['probe', '--output', descriptor, '--tools-output', join(work, 'tools.json'), '--identity-output', join(work, 'identity.json')], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
 let serverOutput = '', serverError = '';
 server.stdout.on('data', data => { if (serverOutput.length < 16000) serverOutput += data; });
 server.stderr.on('data', data => { if (serverError.length < 16000) serverError += data; });
@@ -131,7 +132,7 @@ try {
   evidence.selectedReasoningEffort = thread.reasoningEffort;
   const expected = searchLimitProbe ? 'Built-in web search is unavailable on this ChatGPT Web route. Use a native Codex model for web search.' : readProbe ? toolMarker : live ? 'cxweb live client round-trip succeeded' : 'cxweb diagnostic round-trip succeeded';
   const prompt = readProbe
-    ? `Use exec_command once to run exactly ${fixtureReadCommand} in the current working directory. ${patchProbe ? 'After reading it, use the apply_patch custom tool once to create probe-output.txt containing that exact line followed by a newline. Wait for the successful patch result before your final answer. Do not modify other files.' : 'This is a read-only fixture test. Do not modify files.'} Do not request elevated permissions or run other commands. Return a final answer containing exactly the single line read from the input file, without extra text.`
+    ? `Use exec_command once to run exactly ${fixtureReadCommand} in the current working directory. ${patchProbe ? 'After reading it, use the apply_patch custom tool once to create probe-output.txt containing that exact line followed by a newline. Wait for the successful patch result before your final answer. Do not modify other files.' : 'This is a read-only fixture test. Do not modify files.'} Do not request elevated permissions or run other commands. Return a final answer containing exactly the single line read from the input file, without extra text.${liveCompact ? " Remember that exact line for a later question. Preserve it verbatim in any task checkpoint; do not read the file again." : ""}`
     : searchLimitProbe ? `Use the built-in hosted web_search tool to check the current stable Rust release. If that hosted tool is unavailable, do not guess or use other tools: return exactly this final text: ${expected}`
     : live ? `Return a final answer with exactly this text: ${expected}` : 'Synthetic diagnostic only. Reply with the diagnostic response.';
   const turn = await rpc('turn/start', { threadId: thread.thread.id, input: [{ type: 'text', text: prompt, text_elements: [] }] });
@@ -181,7 +182,7 @@ try {
     const beforeCompact = notifications.length;
     await rpc('thread/compact/start', { threadId: thread.thread.id });
     let compacted;
-    for (let i = 0; i < 600; i++) {
+    for (let i = 0; i < (live ? 12000 : 600); i++) {
       compacted = notifications.slice(beforeCompact).find(n => n.method === 'item/completed' && n.params?.item?.type === 'contextCompaction');
       if (compacted || notifications.slice(beforeCompact).some(n => n.method === 'turn/completed' && n.params?.turn?.status === 'failed')) break;
       await delay(50);
@@ -192,16 +193,20 @@ try {
       missingCompactionItem: n.method === 'error' ? String(n.params?.message ?? n.params?.error?.message ?? '').includes('expected exactly one compaction output item') : undefined,
     }));
     assert.ok(compacted, 'native backend completes the explicit compact operation');
+    stage = 'checkpoint continuation';
     const beforeResume = notifications.length;
-    const resumed = await rpc('turn/start', { threadId: thread.thread.id, input: [{ type: 'text', text: 'Continue this synthetic diagnostic.', text_elements: [] }] });
-    for (let i = 0; i < 600; i++) {
+    const resumed = await rpc('turn/start', { threadId: thread.thread.id, input: [{ type: 'text', text: liveCompact ? 'Return exactly the single line read earlier from probe-input.txt. Use the task checkpoint, without tools or another file read.' : 'Continue this synthetic diagnostic.', text_elements: [] }] });
+    for (let i = 0; i < (live ? 12000 : 600); i++) {
       if (notifications.slice(beforeResume).some(n => n.method === 'turn/completed' && n.params?.turn?.id === resumed.turn.id)) break;
       await delay(50);
     }
     const continued = notifications.slice(beforeResume);
+    if (liveCompact) {
+      assert.ok(!continued.some(n => ['commandExecution', 'fileChange'].includes(n.params?.item?.type)), 'checkpoint continuation uses no additional tools');
+    }
     assert.equal(continued.find(n => n.method === 'turn/completed' && n.params?.turn?.id === resumed.turn.id)?.params?.turn?.status, 'completed');
-    assert.ok(continued.some(n => n.method === 'item/completed' && n.params?.item?.type === 'agentMessage' && n.params.item.text === 'cxweb diagnostic checkpoint retained'), 'next native request contains the exact synthetic compaction item');
-    evidence.compaction = { output: 'exactly one compaction item over Responses SSE', identityVerified: true, nativeCompleted: true, retainedInNextRequest: true, modelGeneratedSummary: false, encryption: 'NOT TESTED; public synthetic transport fixture only' };
+    assert.ok(continued.some(n => n.method === 'item/completed' && n.params?.item?.type === 'agentMessage' && n.params.item.text === (liveCompact ? toolMarker : 'cxweb diagnostic checkpoint retained')), 'continuation recovers the exact checkpoint fixture');
+    evidence.compaction = { output: liveWebsocket ? 'exactly one compaction item over Responses WebSocket events' : 'exactly one compaction item over Responses SSE', identityVerified: true, nativeCompleted: true, retainedInNextRequest: true, modelGeneratedSummary: liveCompact, summaryRecallsToolResult: liveCompact, continuationUsesNoTools: liveCompact, encryption: liveCompact ? 'AES-256-GCM checkpoint with current-user DPAPI key' : 'NOT TESTED; public synthetic transport fixture only' };
     evidence.events.push('v2 compaction item accepted and retained in next request');
   }
   if (!live) {
@@ -210,7 +215,7 @@ try {
     assert.equal(identity.raw_identifiers_recorded, false);
     evidence.identity = identity;
   }
-  evidence.result = searchLimitProbe ? 'PASS hosted-search limitation returned through native backend' : patchProbe ? 'PASS native function and custom tools through authenticated browser' : readProbe ? 'PASS native read tool through authenticated browser' : live ? 'PASS native backend through authenticated browser' : 'PASS backend-only synthetic test';
+  evidence.result = liveCompact ? 'PASS native compaction and checkpoint continuation through authenticated browser' : searchLimitProbe ? 'PASS hosted-search limitation returned through native backend' : patchProbe ? 'PASS native function and custom tools through authenticated browser' : readProbe ? 'PASS native read tool through authenticated browser' : live ? 'PASS native backend through authenticated browser' : 'PASS backend-only synthetic test';
 } catch (error) {
   evidence.result = 'FAIL';
   evidence.failedStage = stage;
@@ -233,6 +238,11 @@ try {
       try {
         evidence.runtime = JSON.parse(serverOutput);
         assert.deepEqual(evidence.runtime.failures, [], 'no rejected browser requests');
+        if (liveCompact) {
+          assert.equal(evidence.runtime.compaction_requests, 1);
+          assert.equal(evidence.runtime.checkpoint_continuations, 1);
+          assert.equal(evidence.runtime.checkpoint_continuations_with_plaintext_assistant_or_tools, 0);
+        }
         if (liveWebsocket) {
           assert.ok(evidence.runtime.websocket_upgrades > 0);
           assert.equal(evidence.runtime.native_websocket_frames, 0);

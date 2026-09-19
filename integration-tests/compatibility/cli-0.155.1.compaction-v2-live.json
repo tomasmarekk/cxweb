@@ -1,0 +1,92 @@
+{
+  "schema": "cxweb.client-probe.v1",
+  "client": "codex-cli 0.155.1",
+  "synthetic": false,
+  "actualPicker": "NOT RUN",
+  "authentication": "saved cxweb browser session; synthetic native key restricted to loopback",
+  "events": [
+    "model/list accepted owned model",
+    "thread/start selected owned model",
+    "turn/start completed through loopback",
+    "expected browser assistant text received",
+    "v2 compaction item accepted and retained in next request"
+  ],
+  "routeLayout": "subscription backend-api/codex",
+  "catalogCodec": "codex-model-info-0.155.1",
+  "builtinWebSearch": "native default preserved; hosted search explicitly unavailable on this web route",
+  "executableSha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+  "model": {
+    "id": "webbridge/live-probe",
+    "model": "webbridge/live-probe",
+    "displayName": "ChatGPT Web \u00c2\u00b7 Latest \u00c2\u00b7 Extra High",
+    "hidden": false,
+    "defaultReasoningEffort": "xhigh"
+  },
+  "nativeTools": {
+    "fixture": "random marker not supplied in the prompt",
+    "commandCount": 1,
+    "completed": 1,
+    "resultContainsMarker": true,
+    "approvalRequests": 1,
+    "exactReadApprovals": 1,
+    "harnessExecutedTools": false
+  },
+  "compactionNotifications": [
+    {
+      "method": "thread/status/changed"
+    },
+    {
+      "method": "turn/started",
+      "turnStatus": "inProgress"
+    },
+    {
+      "method": "item/started",
+      "itemType": "contextCompaction"
+    },
+    {
+      "method": "thread/tokenUsage/updated"
+    },
+    {
+      "method": "account/rateLimits/updated"
+    },
+    {
+      "method": "item/completed",
+      "itemType": "contextCompaction"
+    },
+    {
+      "method": "thread/status/changed"
+    },
+    {
+      "method": "turn/completed",
+      "turnStatus": "completed"
+    }
+  ],
+  "compaction": {
+    "output": "exactly one compaction item over Responses SSE",
+    "identityVerified": true,
+    "nativeCompleted": true,
+    "retainedInNextRequest": true,
+    "modelGeneratedSummary": true,
+    "summaryRecallsToolResult": true,
+    "encryption": "AES-256-GCM checkpoint with current-user DPAPI key"
+  },
+  "result": "PASS native compaction and checkpoint continuation through authenticated browser",
+  "executableUnchanged": true,
+  "runtime": {
+    "browser_closed": true,
+    "browser_label": "Latest \u00c2\u00b7 Extra High",
+    "checkpoint_continuations": 1,
+    "compaction_requests": 1,
+    "failures": [],
+    "native_upstream": "local rejection stub",
+    "native_websocket_frames": 0,
+    "optional_web_search_requests": 4,
+    "routing_installed": false,
+    "websocket_enabled": false
+  },
+  "qualification_limits": [
+    "One live HTTP example, not route certification or the 200-response corpus.",
+    "Recorded before the additional summary encoding example and passive startup wait.",
+    "Later stronger continuation-shape and no-extra-tools assertions were not present in this first run."
+  ]
+}

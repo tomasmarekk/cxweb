@@ -1,5 +1,6 @@
 pub mod catalog;
 pub mod catalog_codec;
+pub mod compaction;
 pub mod config;
 pub mod envelope;
 mod output_format;

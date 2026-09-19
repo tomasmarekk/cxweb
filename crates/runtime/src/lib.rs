@@ -6,6 +6,8 @@ mod catalog_snapshot;
 #[cfg(windows)]
 pub mod checkpoint;
 #[cfg(windows)]
+mod compaction;
+#[cfg(windows)]
 pub mod config_journal;
 mod context_boundary;
 #[cfg(windows)]

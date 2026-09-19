@@ -34,6 +34,9 @@ struct ProbeProvider {
     output_formats: Arc<Mutex<Vec<Value>>>,
     websocket_requests: Arc<AtomicUsize>,
     warmups: Arc<AtomicUsize>,
+    compaction_requests: Arc<AtomicUsize>,
+    checkpoint_continuations: Arc<AtomicUsize>,
+    checkpoint_plaintext_history: Arc<AtomicUsize>,
 }
 impl crate::gateway::WebProvider for ProbeProvider {
     fn validate_warmup(&self, request: &crate::gateway::WebRequest) -> Result<(), &'static str> {
@@ -41,6 +44,38 @@ impl crate::gateway::WebProvider for ProbeProvider {
         self.provider.validate_warmup(request)
     }
     fn respond(&self, request: crate::gateway::WebRequest) -> crate::gateway::WebFuture {
+        if let Some(input) = request.payload["input"].as_array() {
+            if input
+                .last()
+                .is_some_and(|item| item["type"] == "compaction_trigger")
+            {
+                self.compaction_requests.fetch_add(1, Ordering::Relaxed);
+            }
+            if input.iter().any(|item| {
+                item["type"] == "compaction"
+                    && item["encrypted_content"]
+                        .as_str()
+                        .is_some_and(|s| s.starts_with("wbr1:"))
+            }) {
+                self.checkpoint_continuations
+                    .fetch_add(1, Ordering::Relaxed);
+                if input.iter().any(|item| {
+                    item["role"] == "assistant"
+                        || matches!(
+                            item["type"].as_str(),
+                            Some(
+                                "function_call"
+                                    | "function_call_output"
+                                    | "custom_tool_call"
+                                    | "custom_tool_call_output"
+                            )
+                        )
+                }) {
+                    self.checkpoint_plaintext_history
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }
         if request.transport == crate::gateway::WebTransport::WebSocket {
             self.websocket_requests.fetch_add(1, Ordering::Relaxed);
         }
@@ -96,6 +131,7 @@ pub async fn serve(
     websocket: bool,
     codec: cxweb_codex_adapter::catalog_codec::CatalogCodec,
     coding: bool,
+    compaction: bool,
     stop: impl Future<Output = ()> + Send + 'static,
 ) -> Result<Value, &'static str> {
     if !output.is_absolute() || output.exists() {
@@ -119,11 +155,10 @@ pub async fn serve(
             let observation = browser
                 .login_observation(&page)
                 .map_err(|_| "E_BROWSER_OBSERVATION")?;
-            if observation.login_action || observation.verification_required {
-                return Err("E_LOGIN_REQUIRED");
-            }
             if observation.document_ready
                 && observation.official_page
+                && !observation.login_action
+                && !observation.verification_required
                 && observation.composer
                 && observation.account_surface
                 && browser.baseline(&page).is_ok_and(|baseline| {
@@ -145,7 +180,16 @@ pub async fn serve(
                 break;
             }
             if Instant::now() >= deadline {
-                return Err("E_BROWSER_NOT_READY");
+                // Initial navigation can briefly show the signed-out shell or
+                // an interstitial before ordinary loading completes. Observe
+                // passively; never click a verification challenge or submit login.
+                return Err(if observation.verification_required {
+                    "E_BROWSER_VERIFICATION"
+                } else if observation.login_action {
+                    "E_LOGIN_REQUIRED"
+                } else {
+                    "E_BROWSER_NOT_READY"
+                });
             }
             std::thread::sleep(Duration::from_millis(200));
         }
@@ -208,9 +252,11 @@ pub async fn serve(
     let result = async {
         let ledger = Ledger::open(&directory.join("turns.sqlite")).await?;
         let coordinator = Coordinator::new(ledger, Arc::new(driver.clone()));
-        let provider = CoordinatorProvider::new(coordinator, ProviderScope {
+        let key = if compaction { Some(Arc::new(crate::checkpoint::Codec::load_or_create(&directory.join("checkpoint-key.dpapi"), &installation)?)) } else { None };
+        let mut provider = CoordinatorProvider::new(coordinator, ProviderScope {
             installation, account: scope.account, workspace: scope.workspace, epoch: 0,
         }, vec![ROUTE.into()])?;
+        if let Some(key) = key { provider = provider.with_checkpoints(key, codec)?; }
         let native_listener = TcpListener::bind("127.0.0.1:0").await.map_err(|_| "E_PROBE_LISTENER")?;
         let native_address = native_listener.local_addr().map_err(|_| "E_PROBE_LISTENER")?;
         let native = NativeTransport::new(format!("http://{native_address}"))?;
@@ -259,7 +305,10 @@ pub async fn serve(
         let output_formats = Arc::new(Mutex::new(Vec::new()));
         let websocket_requests = Arc::new(AtomicUsize::new(0));
         let warmups = Arc::new(AtomicUsize::new(0));
-        let gateway = Gateway::new(listener.local_addr().map_err(|_| "E_PROBE_LISTENER")?.port(), native, Arc::new(ProbeProvider { provider, failures: failures.clone(), search_requests: search_requests.clone(), output_formats: output_formats.clone(), websocket_requests: websocket_requests.clone(), warmups: warmups.clone() }));
+        let compaction_requests = Arc::new(AtomicUsize::new(0));
+        let checkpoint_continuations = Arc::new(AtomicUsize::new(0));
+        let checkpoint_plaintext_history = Arc::new(AtomicUsize::new(0));
+        let gateway = Gateway::new(listener.local_addr().map_err(|_| "E_PROBE_LISTENER")?.port(), native, Arc::new(ProbeProvider { provider, failures: failures.clone(), search_requests: search_requests.clone(), output_formats: output_formats.clone(), websocket_requests: websocket_requests.clone(), warmups: warmups.clone(), compaction_requests: compaction_requests.clone(), checkpoint_continuations: checkpoint_continuations.clone(), checkpoint_plaintext_history: checkpoint_plaintext_history.clone() }));
         // Exercise the exact reviewed encoder in isolation; this diagnostic
         // catalog does not publish a production qualification snapshot.
         let model = codec.encode(&cxweb_codex_adapter::catalog_codec::CatalogRoute {
@@ -280,7 +329,7 @@ pub async fn serve(
             }
         }
         let diagnostic = driver.diagnostic().await?;
-        Ok(json!({"live":true,"route":ROUTE,"browser_label":label,"native_upstream":"local rejection stub","routing_installed":false,"diagnostic":diagnostic,"optional_web_search_requests":search_requests.load(Ordering::Relaxed),"output_formats":output_formats.lock().map_err(|_| "E_PROBE_STATE")?.clone(),"failures":failures.lock().map_err(|_| "E_PROBE_STATE")?.clone(),"websocket_enabled":websocket,"websocket_upgrades":socket_upgrades.load(Ordering::Relaxed),"native_websocket_frames":socket_frames.load(Ordering::Relaxed),"websocket_requests":websocket_requests.load(Ordering::Relaxed),"websocket_warmups":warmups.load(Ordering::Relaxed)}))
+        Ok(json!({"live":true,"route":ROUTE,"browser_label":label,"native_upstream":"local rejection stub","routing_installed":false,"diagnostic":diagnostic,"optional_web_search_requests":search_requests.load(Ordering::Relaxed),"output_formats":output_formats.lock().map_err(|_| "E_PROBE_STATE")?.clone(),"failures":failures.lock().map_err(|_| "E_PROBE_STATE")?.clone(),"websocket_enabled":websocket,"websocket_upgrades":socket_upgrades.load(Ordering::Relaxed),"native_websocket_frames":socket_frames.load(Ordering::Relaxed),"websocket_requests":websocket_requests.load(Ordering::Relaxed),"websocket_warmups":warmups.load(Ordering::Relaxed),"compaction_requests":compaction_requests.load(Ordering::Relaxed),"checkpoint_continuations":checkpoint_continuations.load(Ordering::Relaxed),"checkpoint_continuations_with_plaintext_assistant_or_tools":checkpoint_plaintext_history.load(Ordering::Relaxed)}))
     }.await;
     let closed = driver.shutdown().await;
     closed?;

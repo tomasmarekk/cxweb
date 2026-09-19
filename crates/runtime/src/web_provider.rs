@@ -33,6 +33,9 @@ pub(crate) fn web_failure(code: &'static str) -> Response {
         _ if code.starts_with("E_UNSUPPORTED_") || code == "E_NONPORTABLE_CONTEXT" => {
             StatusCode::UNPROCESSABLE_ENTITY
         }
+        _ if code.starts_with("E_CHECKPOINT_") || code == "E_COMPACTION_TRIGGER" => {
+            StatusCode::UNPROCESSABLE_ENTITY
+        }
         _ => StatusCode::BAD_GATEWAY,
     };
     response
@@ -50,6 +53,7 @@ fn digest(parts: &[&[u8]]) -> String {
 #[derive(Clone, PartialEq, Eq)]
 pub struct WebIdentity {
     native_session: String,
+    task: String,
     turn: String,
 }
 impl WebIdentity {
@@ -87,6 +91,7 @@ impl WebIdentity {
         };
         Some(Self {
             native_session: digest(&[session.as_bytes(), thread.as_bytes(), context.as_bytes()]),
+            task: digest(&[session.as_bytes(), thread.as_bytes()]),
             turn: digest(&[turn.as_bytes()]),
         })
     }
@@ -106,6 +111,11 @@ pub struct CoordinatorProvider {
     scope: Arc<ProviderScope>,
     routes: Arc<BTreeSet<String>>,
     catalog: Option<Arc<crate::catalog_snapshot::CatalogSnapshot>>,
+    #[cfg(windows)]
+    checkpoints: Option<(
+        Arc<crate::checkpoint::Codec>,
+        cxweb_codex_adapter::catalog_codec::CatalogCodec,
+    )>,
 }
 impl CoordinatorProvider {
     /// The activation owner supplies only routes whose codec and browser driver
@@ -139,7 +149,61 @@ impl CoordinatorProvider {
             scope: Arc::new(scope),
             routes: Arc::new(routes),
             catalog: None,
+            #[cfg(windows)]
+            checkpoints: None,
         })
+    }
+
+    /// Enable only for an explicitly selected, reviewed v2 client codec.
+    /// Production activation must additionally pass live compaction qualification.
+    #[cfg(windows)]
+    pub fn with_checkpoints(
+        mut self,
+        key: Arc<crate::checkpoint::Codec>,
+        codec: cxweb_codex_adapter::catalog_codec::CatalogCodec,
+    ) -> Result<Self, &'static str> {
+        if self.checkpoints.is_some() {
+            return Err("E_COMPACTION_UNQUALIFIED");
+        }
+        self.checkpoints = Some((key, codec));
+        Ok(self)
+    }
+
+    fn prepare_payload(
+        &self,
+        payload: &mut Value,
+        identity: &WebIdentity,
+    ) -> Result<Option<Arc<dyn crate::turn::CheckpointEncoder>>, &'static str> {
+        #[cfg(windows)]
+        if let Some((key, codec)) = &self.checkpoints {
+            let route = payload["model"]
+                .as_str()
+                .filter(|route| self.routes.contains(*route))
+                .ok_or("E_MODEL_UNAVAILABLE")?;
+            let bound = Arc::new(crate::compaction::BoundCheckpoint {
+                codec: key.clone(),
+                codec_id: format!("{}:compaction-v2-summary-v1", codec.id()),
+                session: SessionKey {
+                    installation: self.scope.installation.clone(),
+                    native_session: identity.task.clone(),
+                    account_scope: self.scope.account.clone(),
+                    workspace_scope: self.scope.workspace.clone(),
+                    route: route.into(),
+                    epoch: self.scope.epoch,
+                },
+            });
+            bound.expand(payload)?;
+            if payload["input"].as_array().is_some_and(|items| {
+                items
+                    .last()
+                    .is_some_and(|item| item["type"] == "compaction_trigger")
+            }) {
+                return Ok(Some(bound));
+            }
+        }
+        #[cfg(not(windows))]
+        let _ = (payload, identity);
+        Ok(None)
     }
 
     /// Publish an immutable, explicitly qualified snapshot for selected clients.
@@ -170,8 +234,13 @@ impl CoordinatorProvider {
         }
         let identity = request.identity.ok_or("E_REQUEST_IDENTITY")?;
         let mut payload = request.payload;
+        let checkpoint = self.prepare_payload(&mut payload, &identity)?;
         let original = serde_json::to_vec(&payload).map_err(|_| "E_INVALID_REQUEST")?;
-        let decoded = CanonicalRequest::decode(&original)?;
+        let decoded = if checkpoint.is_some() {
+            CanonicalRequest::decode_compaction(&original)?
+        } else {
+            CanonicalRequest::decode(&original)?
+        };
         if !self.routes.contains(&decoded.model) {
             return Err("E_MODEL_UNAVAILABLE");
         }
@@ -195,13 +264,14 @@ impl CoordinatorProvider {
         let request_id = digest(&[&scope, identity.turn.as_bytes(), &bytes]);
         let delivery = self
             .coordinator
-            .execute(
+            .execute_with_checkpoint(
                 TurnInput {
                     request_id,
                     session,
                     bytes,
                 },
                 request.cancellation,
+                checkpoint,
             )
             .await?;
         let mut response = Response::builder()
@@ -235,8 +305,12 @@ impl WebProvider for CoordinatorProvider {
         self.catalog.as_ref()?.for_client(codec)
     }
     fn validate_warmup(&self, request: &WebRequest) -> Result<(), &'static str> {
-        request.identity.as_ref().ok_or("E_REQUEST_IDENTITY")?;
-        let bytes = serde_json::to_vec(&request.payload).map_err(|_| "E_INVALID_REQUEST")?;
+        let identity = request.identity.as_ref().ok_or("E_REQUEST_IDENTITY")?;
+        let mut payload = request.payload.clone();
+        if self.prepare_payload(&mut payload, identity)?.is_some() {
+            return Err("E_COMPACTION_TRIGGER");
+        }
+        let bytes = serde_json::to_vec(&payload).map_err(|_| "E_INVALID_REQUEST")?;
         let decoded = CanonicalRequest::decode(&bytes)?;
         if !self.routes.contains(&decoded.model) {
             return Err("E_MODEL_UNAVAILABLE");
@@ -276,6 +350,8 @@ mod tests {
         nonce: Mutex<String>,
         waiting: bool,
         observing: Notify,
+        prompt: Mutex<Value>,
+        compact: std::sync::atomic::AtomicBool,
     }
     impl BrowserDriver for Browser {
         fn verify_completion(&self, _: String) -> BrowserFuture<()> {
@@ -300,6 +376,10 @@ mod tests {
         }
         fn submit(&self, _: String, prompt: String, _: String) -> BrowserFuture<()> {
             self.sends.fetch_add(1, Ordering::SeqCst);
+            self.compact
+                .store(prompt.contains("Use kind=checkpoint."), Ordering::SeqCst);
+            *self.prompt.lock().unwrap() =
+                serde_json::from_str(prompt.split_once("\nCLIENT_DATA_JSON\n").unwrap().1).unwrap();
             for forbidden in [
                 "NATIVE_SECRET",
                 "RAW_SESSION",
@@ -320,7 +400,14 @@ mod tests {
         }
         fn observe(&self, _: String) -> BrowserFuture<Observation> {
             self.observing.notify_one();
-            let text = json!({"protocol":"webbridge.tool.v1","turn_nonce":self.nonce.lock().unwrap().clone(),"kind":"final","text":"fixture answer"}).to_string();
+            let nonce = self.nonce.lock().unwrap().clone();
+            let text = if self.compact.load(Ordering::SeqCst) {
+                let prompt = self.prompt.lock().unwrap();
+                let summary = json!({"goal":"Preserve fixture goal","constraints":["Read only"],"changed_files":[],"decisions":[],"outstanding_work":["Await pending result"],"test_results":["Previous read denied"],"unresolved_tool_ids":prompt["unresolved_tool_ids"]});
+                json!({"protocol":"webbridge.tool.v1","turn_nonce":nonce,"kind":"checkpoint","summary":summary.to_string()}).to_string()
+            } else {
+                json!({"protocol":"webbridge.tool.v1","turn_nonce":nonce,"kind":"final","text":"fixture answer"}).to_string()
+            };
             let waiting = self.waiting;
             Box::pin(async move {
                 Ok(Observation {
@@ -352,6 +439,8 @@ mod tests {
             nonce: Mutex::new(String::new()),
             waiting,
             observing: Notify::new(),
+            prompt: Mutex::new(Value::Null),
+            compact: std::sync::atomic::AtomicBool::new(false),
         });
         let coordinator = Coordinator::new(Ledger::in_memory(), browser.clone());
         let provider = CoordinatorProvider::new(
@@ -366,6 +455,141 @@ mod tests {
         )
         .unwrap();
         (provider, browser)
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn encrypted_compaction_replays_and_restores_pending_calls_across_context_windows() {
+        use crate::gateway::WebTransport;
+        let (provider, browser) = provider_fixture(false);
+        let directory = std::env::temp_dir().join(format!(
+            "cxweb-compaction-flow-{:032x}",
+            rand::random::<u128>()
+        ));
+        cxweb_platform::state::protected_directory(&directory).unwrap();
+        let key_path = directory.join("key.dpapi");
+        let key = Arc::new(
+            crate::checkpoint::Codec::load_or_create(&key_path, "fixture-installation").unwrap(),
+        );
+        let provider = provider
+            .with_checkpoints(
+                key,
+                cxweb_codex_adapter::catalog_codec::CatalogCodec::Cli01551,
+            )
+            .unwrap();
+        let make_request = |payload, turn: &str, context: &str, task: &str| {
+            let (mut parts, _) =
+                request("http://127.0.0.1:12345", turn, context, false).into_parts();
+            parts.headers.insert("thread-id", task.parse().unwrap());
+            parts.headers.insert(
+                "x-codex-turn-metadata",
+                json!({"turn_id":turn,"context_window_id":context})
+                    .to_string()
+                    .parse()
+                    .unwrap(),
+            );
+            WebRequest {
+                payload,
+                identity: WebIdentity::from_headers(&parts.headers),
+                compact: false,
+                cancellation: tokio_util::sync::CancellationToken::new(),
+                transport: WebTransport::Http,
+            }
+        };
+        let pending = json!({"type":"custom_tool_call","name":"apply_patch","call_id":"pending","input":"literal\n🦀"});
+        let compact = json!({"model":"webbridge/test","input":[{"role":"user","content":"Read only"},pending,{"type":"compaction_trigger"}]});
+        let first = provider
+            .execute(make_request(compact.clone(), "compact", "old", "task"))
+            .await
+            .unwrap();
+        let bytes = first.into_body().collect().await.unwrap().to_bytes();
+        let response: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(response["output"].as_array().unwrap().len(), 1);
+        let item = response["output"][0].clone();
+        assert_eq!(item["type"], "compaction");
+        assert!(
+            item["encrypted_content"]
+                .as_str()
+                .unwrap()
+                .starts_with("wbr1:")
+        );
+        assert!(!String::from_utf8_lossy(&bytes).contains("Preserve fixture goal"));
+        let replay = provider
+            .execute(make_request(compact, "compact", "old", "task"))
+            .await
+            .unwrap();
+        assert_eq!(
+            replay.into_body().collect().await.unwrap().to_bytes(),
+            bytes
+        );
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
+        let output =
+            json!({"type":"custom_tool_call_output","call_id":"pending","output":"DENIED"});
+        let continuation = json!({"model":"webbridge/test","instructions":"Current policy","input":[{"role":"user","content":"Read only"},item,output]});
+        let invalid_task = provider
+            .execute(make_request(
+                continuation.clone(),
+                "continue",
+                "new",
+                "different-task",
+            ))
+            .await;
+        assert_eq!(invalid_task.err(), Some("E_NONPORTABLE_CONTEXT"));
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
+        provider
+            .execute(make_request(
+                continuation.clone(),
+                "continue",
+                "new",
+                "task",
+            ))
+            .await
+            .unwrap();
+        let prompt = browser.prompt.lock().unwrap().clone();
+        assert_eq!(prompt["instructions"], "Current policy");
+        assert_eq!(prompt["history"][2], pending);
+        assert_eq!(prompt["history"][3], output);
+        assert!(
+            prompt["history"][1]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("Preserve fixture goal")
+        );
+        // A later compaction authenticates the previous checkpoint, sees the
+        // subsequent denial, and does not carry the resolved call forward again.
+        let mut recompact = continuation.clone();
+        recompact["input"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"type":"compaction_trigger"}));
+        let recompressed = provider
+            .execute(make_request(recompact, "compact-again", "new", "task"))
+            .await
+            .unwrap();
+        let recompressed: Value =
+            serde_json::from_slice(&recompressed.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(recompressed["output"][0]["type"], "compaction");
+        assert_ne!(
+            recompressed["output"][0]["encrypted_content"],
+            item["encrypted_content"]
+        );
+        assert_eq!(
+            browser.prompt.lock().unwrap()["unresolved_tool_ids"],
+            json!([])
+        );
+        let mut corrupted = continuation;
+        corrupted["input"][1]["encrypted_content"] = json!("wbr1:corrupt");
+        assert_eq!(
+            provider
+                .execute(make_request(corrupted, "tampered", "new", "task"))
+                .await
+                .err(),
+            Some("E_NONPORTABLE_CONTEXT")
+        );
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 3);
+        std::fs::remove_file(key_path).unwrap();
+        std::fs::remove_dir(directory).unwrap();
     }
     fn fixture(waiting: bool) -> (Gateway, Arc<Browser>) {
         let (provider, browser) = provider_fixture(waiting);

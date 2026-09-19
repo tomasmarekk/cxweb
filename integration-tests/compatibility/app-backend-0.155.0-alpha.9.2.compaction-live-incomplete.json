@@ -1,0 +1,167 @@
+{
+  "schema": "cxweb.compaction-qualification-incomplete.v1",
+  "production_qualified": false,
+  "attempts": [
+    {
+      "client": "codex-cli 0.155.0-alpha.9.2",
+      "transport": "HTTP",
+      "result": "FAIL",
+      "failed_stage": "v2 compaction transport",
+      "runtime_error": "E_PROBE_RUNTIME",
+      "compaction_notifications": [
+        {
+          "method": "thread/status/changed"
+        },
+        {
+          "method": "turn/started",
+          "turnStatus": "inProgress"
+        },
+        {
+          "method": "item/started",
+          "itemType": "contextCompaction"
+        },
+        {
+          "method": "error",
+          "code": "E_CHECKPOINT_SUMMARY",
+          "missingCompactionItem": false
+        },
+        {
+          "method": "error",
+          "code": "E_REQUEST_ALREADY_ADMITTED",
+          "missingCompactionItem": false
+        },
+        {
+          "method": "thread/status/changed"
+        },
+        {
+          "method": "error",
+          "code": "E_REQUEST_ALREADY_ADMITTED",
+          "missingCompactionItem": false
+        },
+        {
+          "method": "turn/completed",
+          "turnStatus": "failed",
+          "code": "E_REQUEST_ALREADY_ADMITTED"
+        }
+      ],
+      "errors": [
+        "E_CHECKPOINT_SUMMARY",
+        "E_REQUEST_ALREADY_ADMITTED",
+        "E_REQUEST_ALREADY_ADMITTED"
+      ],
+      "browser_closed": true,
+      "output_shape": {
+        "field_count": 4,
+        "json_valid": true,
+        "kind_final": false,
+        "nonce_hex": true,
+        "object": true,
+        "protocol_valid": true,
+        "starts_object": true,
+        "text_object": false,
+        "text_string": false,
+        "title_string": false,
+        "unescaped_nested_text": false,
+        "unicode_quote_escape": true
+      }
+    },
+    {
+      "client": "codex-cli 0.155.0-alpha.9.2",
+      "transport": "WebSocket",
+      "result": "FAIL",
+      "failed_stage": "v2 compaction transport",
+      "runtime_error": "E_PROBE_RUNTIME",
+      "compaction_notifications": [
+        {
+          "method": "thread/status/changed"
+        },
+        {
+          "method": "turn/started",
+          "turnStatus": "inProgress"
+        },
+        {
+          "method": "item/started",
+          "itemType": "contextCompaction"
+        },
+        {
+          "method": "thread/tokenUsage/updated"
+        },
+        {
+          "method": "item/completed",
+          "itemType": "contextCompaction"
+        },
+        {
+          "method": "thread/status/changed"
+        },
+        {
+          "method": "turn/completed",
+          "turnStatus": "completed"
+        }
+      ],
+      "errors": [
+        "E_SESSION_SCOPE",
+        "E_REQUEST_ALREADY_ADMITTED",
+        "E_REQUEST_ALREADY_ADMITTED",
+        "E_REQUEST_ALREADY_ADMITTED",
+        "E_REQUEST_ALREADY_ADMITTED",
+        "E_REQUEST_ALREADY_ADMITTED",
+        "E_REQUEST_ALREADY_ADMITTED",
+        "E_REQUEST_ALREADY_ADMITTED",
+        "E_REQUEST_ALREADY_ADMITTED",
+        "E_REQUEST_ALREADY_ADMITTED",
+        "E_REQUEST_ALREADY_ADMITTED",
+        "E_REQUEST_ALREADY_ADMITTED"
+      ],
+      "browser_closed": true,
+      "output_shape": {
+        "field_count": 4,
+        "json_valid": true,
+        "kind_final": false,
+        "nonce_hex": true,
+        "object": true,
+        "protocol_valid": true,
+        "starts_object": true,
+        "summary_field_count": 7,
+        "summary_goal_string": true,
+        "summary_json_valid": true,
+        "summary_starts_object": true,
+        "summary_string": true,
+        "summary_string_arrays": {
+          "changed_files": true,
+          "constraints": true,
+          "decisions": true,
+          "outstanding_work": true,
+          "test_results": true,
+          "unresolved_tool_ids": true
+        },
+        "text_object": false,
+        "text_string": false,
+        "title_string": false,
+        "unescaped_nested_text": false,
+        "unicode_quote_escape": true
+      }
+    },
+    {
+      "client": "codex-cli 0.155.0-alpha.9.2",
+      "transport": "startup",
+      "result": "FAIL",
+      "failed_stage": "gateway startup",
+      "runtime_error": "E_LOGIN_REQUIRED",
+      "compaction_notifications": [],
+      "errors": [],
+      "browser_closed": null,
+      "output_shape": null
+    },
+    {
+      "client": "codex-cli 0.155.0-alpha.9.2",
+      "transport": "startup",
+      "result": "FAIL",
+      "failed_stage": "gateway startup",
+      "runtime_error": "E_BROWSER_VERIFICATION",
+      "compaction_notifications": [],
+      "errors": [],
+      "browser_closed": null,
+      "output_shape": null
+    }
+  ]
+}

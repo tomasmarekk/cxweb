@@ -21,6 +21,52 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Compaction execution and continuation (2026-09-20)
+
+- Connected the reviewed Responses v2 trigger to a separate tool-disabled browser
+  turn. Its checkpoint is a strict JSON summary containing goal, constraints,
+  reported changed files, decisions, outstanding work, known test results and
+  exactly the unresolved tool IDs measured from canonical history. Function and
+  custom calls that remain unresolved are preserved verbatim in the encrypted
+  payload. Unknown/duplicate/mismatched results and invalid summaries fail closed.
+- Sealing occurs before durable completion and replay caching. Retried requests
+  return the same encrypted response without another browser submission. A failed
+  summary or key operation is terminal, releases the browser lease and cannot
+  manufacture a successful compaction. Native wire output contains exactly one
+  local `wbr1:` compaction item; no fabricated token usage is added.
+- Checkpoints are authenticated against installation, stable native task identity,
+  account, workspace, route, epoch and client/schema codec. Changing the native
+  context-window ID does not change the task binding. Current instructions and
+  native-retained messages remain intact. Expansion restores the historical
+  summary and pending calls; a subsequent result resolves those calls before the
+  next compaction. Foreign/tampered tokens fail before browser preparation.
+- WebSocket compaction clears the connection's previous-response delta cache so
+  the following native context starts from a complete transcript. HTTP/WS native
+  model-switch guards still refuse owned checkpoints before upstream forwarding.
+  Codec enablement is explicit; legacy compact and unqualified providers remain
+  refused. Production activation has not been enabled.
+- Actual CLI 0.155.1 passed one authenticated HTTP read/compact/continue example:
+  a random marker introduced only by a native file-read result survived the
+  encrypted checkpoint. Evidence: `cli-0.155.1.compaction-v2-live.json`. This run
+  predates the additional prompt encoding example and stronger continuation-shape
+  assertions; it is not broad reliability qualification.
+- App backend attempts remain incomplete and are recorded, not counted as passes:
+  one summary failed its inner schema; a later WebSocket attempt completed
+  compaction but continuation stopped on an incomplete account settings panel;
+  subsequent startup attempts encountered browser verification. See
+  `app-backend-0.155.0-alpha.9.2.compaction-live-incomplete.json`.
+- Added content-free summary-shape diagnostics, an explicit encoding example,
+  bounded 15-second settings hydration observation, and passive startup waiting
+  that distinguishes browser verification from login expiry. No challenge is
+  clicked automatically. The ordinary cxweb Chrome profile is currently open for
+  the already-requested user verification; no ChatGPT desktop was launched.
+  Computer Use stopped its own inspection because it could not verify the URL.
+- Verification: the final `cargo test --workspace` passed 182 tests with two
+  opt-in tests ignored. Clippy with warnings denied, formatting/diff checks and
+  release CLI/daemon/desktop builds passed. JavaScript DOM/approval tests passed
+  33 cases. Pending: completed App continuation, final-prompt live requalification,
+  automatic context-budget integration and the full long-conversation corpus.
+
 ## Checkpoint encryption and current-user key protection (2026-09-19)
 
 - Added a bounded `wbr1:` checkpoint codec using AES-256-GCM, a fresh random

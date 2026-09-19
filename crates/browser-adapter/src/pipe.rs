@@ -1077,7 +1077,10 @@ impl ManagedBrowser {
                     self.dom(page, include_str!("dom/open_account_settings.js"), vec![])? == true;
                 surface.diagnostic.settings_opened = settings_opened;
                 if settings_opened {
-                    let deadline = Instant::now() + Duration::from_secs(5);
+                    // The Account tab can mount its Name row before the Email
+                    // row hydrates. Keep observing this read-only panel within
+                    // a bounded window; never treat the partial panel as identity.
+                    let deadline = Instant::now() + Duration::from_secs(15);
                     let mut navigated = false;
                     loop {
                         if let Ok(value) =

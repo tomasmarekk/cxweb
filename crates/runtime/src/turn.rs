@@ -41,6 +41,12 @@ pub struct TurnInput {
     pub session: SessionKey,
     pub bytes: Vec<u8>,
 }
+
+/// Runtime-owned encryption bound to one qualified task and codec. The model
+/// cannot select a key, scope or ciphertext, and sealing precedes durable completion.
+pub(crate) trait CheckpointEncoder: Send + Sync {
+    fn seal(&self, summary: &str, pending: &[serde_json::Value]) -> Result<String, &'static str>;
+}
 #[derive(Clone)]
 pub struct Delivery {
     pub json: String,
@@ -73,12 +79,22 @@ impl Coordinator {
         input: TurnInput,
         cancellation: CancellationToken,
     ) -> Result<Delivery, &'static str> {
+        self.execute_with_checkpoint(input, cancellation, None)
+            .await
+    }
+
+    pub(crate) async fn execute_with_checkpoint(
+        &self,
+        input: TurnInput,
+        cancellation: CancellationToken,
+        checkpoint: Option<Arc<dyn CheckpointEncoder>>,
+    ) -> Result<Delivery, &'static str> {
         let cancel = cancellation.child_token();
         // Dropping the HTTP future signals the background coordinator, which
         // still owns its browser lease and can durably record cancellation.
         let _cancel_on_drop = cancel.clone().drop_guard();
         let coordinator = self.clone();
-        tokio::spawn(async move { coordinator.run(input, cancel).await })
+        tokio::spawn(async move { coordinator.run(input, cancel, checkpoint).await })
             .await
             .map_err(|_| "E_TURN_WORKER")?
     }
@@ -86,8 +102,13 @@ impl Coordinator {
         &self,
         input: TurnInput,
         cancel: CancellationToken,
+        checkpoint: Option<Arc<dyn CheckpointEncoder>>,
     ) -> Result<Delivery, &'static str> {
-        let request = CanonicalRequest::decode(&input.bytes)?;
+        let request = if checkpoint.is_some() {
+            CanonicalRequest::decode_compaction(&input.bytes)?
+        } else {
+            CanonicalRequest::decode(&input.bytes)?
+        };
         if request.model != input.session.route {
             return Err("E_MODEL_FIDELITY");
         }
@@ -138,6 +159,7 @@ impl Coordinator {
                 request,
                 &prepared,
                 &cancel,
+                checkpoint.as_deref(),
             )
             .await;
         // Release occurs on success, validation failure, cancellation and uncertainty.
@@ -158,6 +180,7 @@ impl Coordinator {
         request: CanonicalRequest,
         prepared: &Prepared,
         cancel: &CancellationToken,
+        checkpoint: Option<&dyn CheckpointEncoder>,
     ) -> Result<Delivery, &'static str> {
         if &prepared.verified_session != expected_session {
             self.ledger.transition(id, TurnState::Failed).await?;
@@ -321,7 +344,26 @@ impl Coordinator {
                     .duration_since(UNIX_EPOCH)
                     .map_err(|_| "E_CLOCK")?
                     .as_secs();
-                let encoded = wire::encode(&output, &request.model, &response_id, created_at)?;
+                let encoded = match (&output, checkpoint, request.compaction_pending()) {
+                    (
+                        envelope::ValidatedOutput::Checkpoint(summary),
+                        Some(codec),
+                        Some(pending),
+                    ) => codec.seal(summary, pending).and_then(|token| {
+                        wire::encode_checkpoint(&token, &request.model, &response_id, created_at)
+                    }),
+                    (_, None, None) => {
+                        wire::encode(&output, &request.model, &response_id, created_at)
+                    }
+                    _ => Err("E_COMPACTION_CODEC_REQUIRED"),
+                };
+                let encoded = match encoded {
+                    Ok(encoded) => encoded,
+                    Err(code) => {
+                        self.ledger.transition(id, TurnState::Failed).await?;
+                        return Err(code);
+                    }
+                };
                 self.ledger.transition(id, TurnState::Completed).await?;
                 return Ok(Delivery {
                     json: encoded.response.to_string(),
@@ -371,6 +413,8 @@ mod tests {
         Waiting,
         WrongAssistant,
         ChangedScope,
+        Checkpoint,
+        BadCheckpoint,
     }
     struct MockBrowser {
         mode: Mode,
@@ -444,6 +488,8 @@ mod tests {
             self.observing.notify_one();
             let nonce = self.nonce.lock().unwrap().clone();
             let text = match self.mode {
+                Mode::Checkpoint => json!({"protocol":"webbridge.tool.v1","turn_nonce":nonce,"kind":"checkpoint","summary":json!({"goal":"fixture","constraints":[],"changed_files":[],"decisions":[],"outstanding_work":[],"test_results":[],"unresolved_tool_ids":[]}).to_string()}).to_string(),
+                Mode::BadCheckpoint => json!({"protocol":"webbridge.tool.v1","turn_nonce":nonce,"kind":"checkpoint","summary":"unstructured summary"}).to_string(),
                 Mode::Tool => json!({"protocol":"webbridge.tool.v1","turn_nonce":nonce,"kind":"tool_calls","calls":[{"tool_key":"tool_0001","input":{"path":"source.rs"}}]}).to_string(),
                 Mode::Invalid => "```json\n{}\n```".into(),
                 _ => json!({"protocol":"webbridge.tool.v1","turn_nonce":nonce,"kind":"final","text":"verified mock answer"}).to_string(),
@@ -480,6 +526,63 @@ mod tests {
     }
     fn input() -> TurnInput {
         TurnInput { request_id:"request-1".into(), session:SessionKey { installation:"i".into(),native_session:"s".into(),account_scope:"a".into(),workspace_scope:"w".into(),route:"webbridge/test".into(),epoch:0 }, bytes:json!({"model":"webbridge/test","input":"synthetic task","tools":[{"type":"function","name":"read_file","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}}]}).to_string().into_bytes() }
+    }
+
+    #[tokio::test]
+    async fn invalid_summary_or_failed_encryption_never_completes_or_resubmits() {
+        struct FailingEncoder;
+        impl CheckpointEncoder for FailingEncoder {
+            fn seal(&self, _: &str, _: &[serde_json::Value]) -> Result<String, &'static str> {
+                Err("E_CHECKPOINT_KEY")
+            }
+        }
+        for (mode, expected) in [
+            (Mode::Checkpoint, "E_CHECKPOINT_KEY"),
+            (Mode::BadCheckpoint, "E_CHECKPOINT_SUMMARY"),
+            (Mode::Final, "E_INVALID_TOOL_ENVELOPE"),
+        ] {
+            let browser = MockBrowser::new(mode);
+            let ledger = Ledger::in_memory();
+            let coordinator = Coordinator::new(ledger.clone(), browser.clone());
+            let make_input = || {
+                let mut input = input();
+                input.bytes = json!({"model":"webbridge/test","input":[{"role":"user","content":"fixture"},{"type":"compaction_trigger"}]}).to_string().into_bytes();
+                input
+            };
+            assert_eq!(
+                coordinator
+                    .execute_with_checkpoint(
+                        make_input(),
+                        CancellationToken::new(),
+                        Some(Arc::new(FailingEncoder))
+                    )
+                    .await
+                    .err(),
+                Some(expected)
+            );
+            assert_eq!(
+                coordinator
+                    .execute_with_checkpoint(
+                        make_input(),
+                        CancellationToken::new(),
+                        Some(Arc::new(FailingEncoder))
+                    )
+                    .await
+                    .err(),
+                Some("E_REQUEST_ALREADY_ADMITTED")
+            );
+            let input = make_input();
+            assert_eq!(
+                ledger
+                    .admit(&input.request_id, &input.session, &input.bytes)
+                    .await
+                    .unwrap(),
+                Admission::Existing(TurnState::Failed)
+            );
+            assert!(coordinator.replay.lock().unwrap().is_empty());
+            assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
+            assert_eq!(browser.releases.load(Ordering::SeqCst), 1);
+        }
     }
     #[tokio::test]
     async fn structured_output_violation_is_terminal_without_delivery_or_resubmission() {

@@ -226,7 +226,18 @@ impl Connection {
     }
 
     pub fn complete(&mut self, delivery: Delivery) {
-        self.last = Some(delivery.completed);
+        // Compaction replaces native history and changes context-window identity.
+        // Require its next complete transcript; never append to the trigger input.
+        self.last = if delivery
+            .completed
+            .output
+            .iter()
+            .any(|item| item["type"] == "compaction")
+        {
+            None
+        } else {
+            Some(delivery.completed)
+        };
     }
 }
 
@@ -263,6 +274,10 @@ fn history_item(item: &Value) -> Result<Value, &'static str> {
                 .remove("status");
         }
         Some("custom_tool_call") => (),
+        Some("compaction")
+            if item["encrypted_content"]
+                .as_str()
+                .is_some_and(|s| s.starts_with("wbr1:")) => {}
         _ => return Err("E_WEB_DELIVERY"),
     }
     Ok(item)
@@ -303,14 +318,29 @@ mod tests {
         }
         fn respond(&self, request: WebRequest) -> WebFuture {
             self.calls.fetch_add(1, Ordering::SeqCst);
+            let compact = request.payload["input"].as_array().is_some_and(|input| {
+                input
+                    .last()
+                    .is_some_and(|item| item["type"] == "compaction_trigger")
+            });
             self.inputs.lock().unwrap().push(request.payload);
-            Box::pin(async {
-                let encoded = wire::encode(
-                    &ValidatedOutput::Final("fixed answer".into()),
-                    "webbridge/test",
-                    "resp_cxweb_fixture",
-                    1,
-                )
+            Box::pin(async move {
+                let encoded = if compact {
+                    // Public fixture only: this test exercises WS framing/cache.
+                    wire::encode_checkpoint(
+                        "wbr1:synthetic-ws-fixture",
+                        "webbridge/test",
+                        "resp_cxweb_compact",
+                        1,
+                    )
+                } else {
+                    wire::encode(
+                        &ValidatedOutput::Final("fixed answer".into()),
+                        "webbridge/test",
+                        "resp_cxweb_fixture",
+                        1,
+                    )
+                }
                 .unwrap();
                 Response::new(Body::from(encoded.sse()))
             })
@@ -339,6 +369,41 @@ mod tests {
 
     fn frame(turn: &str) -> Value {
         json!({"type":"response.create","model":"webbridge/test","input":[],"client_metadata":{"session_id":"fixture-session","thread_id":"fixture-thread","turn_id":turn,"x-codex-turn-metadata":json!({"turn_id":turn,"context_window_id":"fixture-context"}).to_string(),"extra":"PRIVATE_TRACE"}})
+    }
+
+    #[tokio::test]
+    async fn compaction_output_clears_delta_history_and_accepts_a_fresh_context() {
+        let (mut connection, provider) = fixture();
+        let mut request = frame("compact");
+        request["input"] = json!([{"type":"compaction_trigger"}]);
+        let delivery = connection
+            .deliver(connection.prepare(request).unwrap())
+            .await
+            .unwrap();
+        let output = delivery.completed.output.clone();
+        assert_eq!(output.len(), 1);
+        assert_eq!(output[0]["type"], "compaction");
+        let response = &delivery.events.last().unwrap()["response"];
+        assert!(response.get("usage").is_none());
+        assert!(response["output"][0].get("status").is_none());
+        connection.complete(delivery);
+        let mut request = frame("next");
+        request["previous_response_id"] = json!("resp_cxweb_compact");
+        assert_eq!(
+            connection.prepare(request.clone()).err(),
+            Some("E_NONPORTABLE_CONTEXT")
+        );
+        request
+            .as_object_mut()
+            .unwrap()
+            .remove("previous_response_id");
+        request["client_metadata"]["x-codex-turn-metadata"] =
+            json!(json!({"turn_id":"next","context_window_id":"new-context"}).to_string());
+        request["input"] = json!(output);
+        let prepared = connection.prepare(request).unwrap();
+        assert_eq!(prepared.payload["input"], json!(output));
+        connection.deliver(prepared).await.unwrap();
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]

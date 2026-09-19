@@ -29,6 +29,8 @@ enum Command {
         client_build: String,
         #[arg(long)]
         coding: bool,
+        #[arg(long)]
+        compaction: bool,
     },
     /// Invoke a fixed operation through the same private runtime as the desktop.
     BrowserControl {
@@ -109,12 +111,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             websocket,
             client_build,
             coding,
+            compaction,
         } => {
             let codec = cxweb_codex_adapter::catalog_codec::CatalogCodec::for_build(&client_build)
                 .ok_or("E_CATALOG_CLIENT_BUILD")?;
             #[cfg(windows)]
             {
-                let report = cxweb_runtime::live_probe::serve(&output, websocket, codec, coding, async {
+                let report = cxweb_runtime::live_probe::serve(&output, websocket, codec, coding, compaction, async {
                     use tokio::io::AsyncReadExt;
                     let mut stdin = tokio::io::stdin();
                     let mut byte = [0];
@@ -124,7 +127,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             #[cfg(not(windows))]
             {
-                let _ = (output, websocket, codec, coding);
+                let _ = (output, websocket, codec, coding, compaction);
                 return Err("live browser qualification requires Windows".into());
             }
         }

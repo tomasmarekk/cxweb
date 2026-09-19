@@ -349,6 +349,30 @@ fn summarize_output_shape(text: &str) -> serde_json::Value {
     use serde_json::json;
     let parsed = cxweb_codex_adapter::strict_json::parse(text.as_bytes(), 8 * 1024 * 1024).ok();
     let object = parsed.as_ref().and_then(serde_json::Value::as_object);
+    let summary_text = parsed.as_ref().and_then(|value| value["summary"].as_str());
+    let summary = summary_text
+        .and_then(|text| cxweb_codex_adapter::strict_json::parse(text.as_bytes(), 256 * 1024).ok());
+    let summary_fields = [
+        "constraints",
+        "changed_files",
+        "decisions",
+        "outstanding_work",
+        "test_results",
+        "unresolved_tool_ids",
+    ]
+    .into_iter()
+    .map(|field| {
+        (
+            field.to_string(),
+            json!(
+                summary
+                    .as_ref()
+                    .and_then(|value| value[field].as_array())
+                    .is_some_and(|items| items.iter().all(serde_json::Value::is_string))
+            ),
+        )
+    })
+    .collect::<serde_json::Map<_, _>>();
     json!({
         "json_valid":parsed.is_some(),
         "starts_object":text.trim_start().starts_with('{'),
@@ -361,6 +385,12 @@ fn summarize_output_shape(text: &str) -> serde_json::Value {
         "text_string":parsed.as_ref().is_some_and(|value| value["text"].is_string()),
         "text_object":parsed.as_ref().is_some_and(|value| value["text"].is_object()),
         "title_string":parsed.as_ref().is_some_and(|value| value["title"].is_string()),
+        "summary_string":summary_text.is_some(),
+        "summary_json_valid":summary.is_some(),
+        "summary_starts_object":summary_text.is_some_and(|text| text.trim_start().starts_with('{')),
+        "summary_field_count":summary.as_ref().and_then(serde_json::Value::as_object).map(|object| object.len()),
+        "summary_goal_string":summary.as_ref().is_some_and(|value| value["goal"].is_string()),
+        "summary_string_arrays":summary_fields,
         "nonce_hex":parsed.as_ref().and_then(|value| value["turn_nonce"].as_str()).is_some_and(|value| value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit())),
     })
 }
@@ -398,6 +428,12 @@ mod tests {
         assert_eq!(observed["title_string"], true);
         assert_eq!(observed["field_count"], 2);
         assert_eq!(observed["protocol_valid"], false);
+        assert!(!observed.to_string().contains("PRIVATE"));
+        let observed = summarize_output_shape(&serde_json::json!({"kind":"checkpoint","summary":serde_json::json!({"goal":"PRIVATE_GOAL","PRIVATE_FIELD":"PRIVATE_DATA","decisions":["PRIVATE_DECISION"]}).to_string()}).to_string());
+        assert_eq!(observed["summary_json_valid"], true);
+        assert_eq!(observed["summary_field_count"], 3);
+        assert_eq!(observed["summary_string_arrays"]["decisions"], true);
+        assert_eq!(observed["summary_string_arrays"]["constraints"], false);
         assert!(!observed.to_string().contains("PRIVATE"));
         assert_eq!(
             summarize_output_shape("PRIVATE_NON_JSON")["json_valid"],
