@@ -34,6 +34,8 @@ pub struct ControlStatus {
     pub qualification_evidence: Option<String>,
     #[serde(default)]
     pub qualification_diagnostic: Option<QualificationDiagnostic>,
+    #[serde(default)]
+    pub scope_diagnostic: Option<cxweb_browser_adapter::ScopeDiagnostic>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,6 +60,7 @@ impl Default for ControlStatus {
             tool_qualified_model: None,
             qualification_evidence: None,
             qualification_diagnostic: None,
+            scope_diagnostic: None,
         }
     }
 }
@@ -248,25 +251,67 @@ impl Control {
                                                 .filter(|candidate| candidate.selected)
                                                 .cloned()
                                                 .collect::<Vec<_>>();
-                                            if selected.len() != 1
-                                                || !matches!(
-                                                    browser.select_candidate(
-                                                        page,
-                                                        &selected[0].identity
-                                                    ),
-                                                    Ok(label) if label == selected[0].label
-                                                )
-                                            {
+                                            let selection = if selected.len() == 1 {
+                                                match browser
+                                                    .select_candidate(page, &selected[0].identity)
+                                                {
+                                                    Ok(label) if label == selected[0].label => {
+                                                        Ok(())
+                                                    }
+                                                    Ok(_) => Err("E_MODEL_LABEL"),
+                                                    Err(error) => {
+                                                        Err(match error.to_string().as_str() {
+                                                            "E_MODEL_OPEN" => "E_MODEL_OPEN",
+                                                            "E_MODEL_SELECT" => "E_MODEL_SELECT",
+                                                            "E_MODEL_CLOSE" => "E_MODEL_CLOSE",
+                                                            _ => "E_MODEL_SELECTION",
+                                                        })
+                                                    }
+                                                }
+                                            } else {
+                                                Err("E_MODEL_SELECTION")
+                                            };
+                                            if let Err(code) = selection {
                                                 observed_routes.clear();
                                                 status.candidate_models.clear();
                                                 status.temporary_chat_available = None;
                                                 status.model_discovery_diagnostic =
                                                     Some(surface.diagnostic);
-                                                let _ = reply.send(Err("E_MODEL_SELECTION"));
+                                                let _ = reply.send(Err(code));
                                                 continue;
                                             }
                                             let temporary_chat =
                                                 browser.verify_temporary_chat().unwrap_or(false);
+                                            status.scope_diagnostic =
+                                                Some(match browser.account_scope(page) {
+                                                    Ok(scope) => scope.diagnostic,
+                                                    Err(error) => {
+                                                        cxweb_browser_adapter::ScopeDiagnostic {
+                                                            failure: Some(
+                                                                match error.to_string().as_str() {
+                                                                    "E_ACCOUNT_OPEN" => {
+                                                                        "E_ACCOUNT_OPEN"
+                                                                    }
+                                                                    "E_ACCOUNT_MISSING" => {
+                                                                        "E_ACCOUNT_MISSING"
+                                                                    }
+                                                                    "E_ACCOUNT_AMBIGUOUS" => {
+                                                                        "E_ACCOUNT_AMBIGUOUS"
+                                                                    }
+                                                                    "E_ACCOUNT_READ" => {
+                                                                        "E_ACCOUNT_READ"
+                                                                    }
+                                                                    "E_ACCOUNT_PARSE" => {
+                                                                        "E_ACCOUNT_PARSE"
+                                                                    }
+                                                                    _ => "E_ACCOUNT_SCOPE",
+                                                                }
+                                                                .into(),
+                                                            ),
+                                                            ..Default::default()
+                                                        }
+                                                    }
+                                                });
                                             observed_routes = surface
                                                 .candidates
                                                 .into_iter()

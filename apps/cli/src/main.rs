@@ -83,6 +83,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "tool_protocol_verified": status.tool_qualified_model.is_some(),
                     "routing_installed": status.routing_installed,
                     "qualification_diagnostic": status.qualification_diagnostic,
+                    "scope_diagnostic": status.scope_diagnostic,
+                    "model_discovery_diagnostic": status.model_discovery_diagnostic,
+                    "language": status.observation.as_ref().map(|observation| serde_json::json!({
+                        "browser": observation.browser_language, "page": observation.page_language,
+                    })),
                 }));
             }
             #[cfg(not(windows))]
@@ -110,6 +115,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .args([
                         "--no-first-run",
                         "--no-default-browser-check",
+                        "--lang=en-US",
+                        "--accept-lang=en-US,en",
                         "https://chatgpt.com/",
                     ])
                     .creation_flags(0x08000000) // CREATE_NO_WINDOW hides console, not browser UI.

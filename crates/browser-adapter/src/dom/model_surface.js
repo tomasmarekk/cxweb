@@ -27,7 +27,12 @@ function () {
     && Number.isSafeInteger(min) && Number.isSafeInteger(max) && Number.isSafeInteger(value)
     && min <= value && value <= max && max - min >= 0 && max - min < 5;
   if (rangeValid) {
-    const control = document.querySelector('[data-testid="model-switcher-dropdown-button"], button[aria-haspopup="menu"][data-tone="neutral"]');
+    const composers = [...document.querySelectorAll('[data-testid="prompt-textarea"], #prompt-textarea, [contenteditable="true"][data-lexical-editor="true"]')].filter(visible);
+    if (composers.length !== 1) throw new Error('E_MODEL_MENU');
+    const form = composers[0].closest('form');
+    const controls = form ? [...form.querySelectorAll('button[aria-haspopup="menu"][data-tone="neutral"], button[data-testid="model-switcher-dropdown-button"][aria-haspopup="menu"]')].filter(visible) : [];
+    const control = controls.at(-1);
+    if (!control) throw new Error('E_MODEL_MENU');
     const selectedLabel = (control?.textContent ?? 'ChatGPT route').replace(/\s+/g, ' ').trim().slice(0, 90) || 'ChatGPT route';
     candidates = Array.from({ length: max - min + 1 }, (_, index) => ({
       label: `${selectedLabel} · effort ${index + 1}`.slice(0, 120),
@@ -53,6 +58,12 @@ function () {
   }
   const roles = [...roleCounts].sort(([a], [b]) => a.localeCompare(b)).slice(0, 32)
     .map(([role, count]) => `${role}:${count}`);
+  const composer = [...document.querySelectorAll('#prompt-textarea')].filter(visible)[0];
+  const composerControls = [...(composer?.closest('form')?.querySelectorAll('button[aria-haspopup="menu"]') ?? [])]
+    .filter(visible).slice(0, 8).map(node => [
+      node.textContent.replace(/\s+/g, ' ').trim().slice(0, 60),
+      node.getAttribute('data-tone') ?? '', node.getAttribute('aria-expanded') ?? ''
+    ].join(' | ').slice(0, 120));
   return {
     candidates: unique,
     temporary_chat: temporary,
@@ -61,6 +72,7 @@ function () {
       visible_roots: roots.length,
       candidate_nodes: nodes.length,
       model_testids: testids,
+      composer_controls: composerControls,
       visible_roles: roles
     }
   };

@@ -17,6 +17,31 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## English browser locale and menu interaction (2026-09-19)
+
+- Managed and manual-comparison browser launches now request English UI and
+  Accept-Language. The existing authenticated profile reported browser and page
+  language `en-US`, and its actual picker reported `Thinking effort`. No account
+  credentials, personal browser settings or Codex authentication were modified.
+- Discovery labels now come from the same composer control as selection. Menu
+  input checks the hit target, sends a full pointer button sequence, and waits
+  for visible menu closure. A Chrome fixture with delayed closure exposed the
+  previous race and now passes. Hidden CSS menus no longer block completion.
+- Responsive profile entry points are checked for actionability. Scope discovery
+  opens the actual account menu and exports bounded structural diagnostics only.
+  The live menu contains no unique email or selected workspace ID, so account and
+  workspace identity remain unqualified; routing remains disabled.
+- All workspace tests, 13 browser DOM unit tests, Clippy for affected crates and
+  format/diff checks passed. The opt-in real Chrome network test passed, including
+  English Accept-Language. Its HTTP fixture ignores unused preconnected sockets.
+- User requirement: only authentication/verification may require a visible
+  browser window. Closing that window must preserve background operation. This
+  behavior is not yet certified. Investigating Chromium's documented hidden
+  targets without account rotation, copied credentials or private web APIs.
+- References: [Chromium language switch](https://chromium.googlesource.com/chromium/src/+/70c2ca2727df7b8cdfca66990e671c9df7ae0afc/chrome/common/chrome_switches.cc),
+  [Playwright Chromium input events](https://github.com/microsoft/playwright/blob/main/packages/playwright-core/src/server/chromium/crInput.ts),
+  [Chromium hidden target contract](https://github.com/ChromeDevTools/devtools-protocol/blob/master/pdl/domains/Target.pdl).
+
 ## Composer integrity correction (2026-09-18)
 
 - Added an explicit `browser-control test-tools` operation through the same

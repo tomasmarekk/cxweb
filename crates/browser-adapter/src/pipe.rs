@@ -19,6 +19,10 @@ pub struct ManagedPage {
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LoginObservation {
+    #[serde(default)]
+    pub browser_language: Option<String>,
+    #[serde(default)]
+    pub page_language: Option<String>,
     pub official_page: bool,
     pub composer: bool,
     pub account_surface: bool,
@@ -45,6 +49,8 @@ pub struct ModelSurface {
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelSurfaceDiagnostic {
+    #[serde(default)]
+    pub composer_controls: Vec<String>,
     pub switcher_expanded: Option<bool>,
     pub visible_roots: usize,
     pub candidate_nodes: usize,
@@ -56,6 +62,32 @@ pub struct ModelSurfaceDiagnostic {
 pub struct QualificationOutcome {
     pub candidate_label: String,
     pub response: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScopeDiagnostic {
+    #[serde(default)]
+    pub failure: Option<String>,
+    #[serde(default)]
+    pub profile_control_tags: Vec<String>,
+    pub menu_present: bool,
+    pub account_candidates: usize,
+    pub workspace_candidates: usize,
+    pub selected_workspace_candidates: usize,
+    pub menu_items: usize,
+    pub selected_items: usize,
+    pub has_account_id: bool,
+    pub has_workspace_id: bool,
+}
+
+// Identifiers stay in memory for comparison/hashing, never diagnostic output.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScopeSurface {
+    pub account: Option<String>,
+    pub workspace: Option<String>,
+    pub diagnostic: ScopeDiagnostic,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -216,6 +248,8 @@ impl ManagedBrowser {
             .is_some_and(|url| url.starts_with("https://chatgpt.com/"))
         {
             return Ok(LoginObservation {
+                browser_language: None,
+                page_language: None,
                 official_page: false,
                 composer: false,
                 account_surface: false,
@@ -278,11 +312,13 @@ impl ManagedBrowser {
             })
             || surface.diagnostic.model_testids.len() > 32
             || surface.diagnostic.visible_roles.len() > 32
+            || surface.diagnostic.composer_controls.len() > 8
             || surface
                 .diagnostic
                 .model_testids
                 .iter()
                 .chain(&surface.diagnostic.visible_roles)
+                .chain(&surface.diagnostic.composer_controls)
                 .any(|value| {
                     value.is_empty() || value.len() > 120 || value.chars().any(char::is_control)
                 })
@@ -342,10 +378,11 @@ impl ManagedBrowser {
                     "ArrowLeft"
                 };
                 previous = Some(current);
-                for event_type in ["keyDown", "keyUp"] {
+                for event_type in ["rawKeyDown", "keyUp"] {
                     self.call(
                         "Input.dispatchKeyEvent",
-                        json!({"type":event_type,"key":key,"code":key}),
+                        json!({"type":event_type,"key":key,"code":key,
+                            "windowsVirtualKeyCode":if target > current {39} else {37}}),
                         Some(&page.session),
                     )?;
                 }
@@ -401,6 +438,62 @@ impl ManagedBrowser {
 
     pub fn qualification_diagnostic(&self) -> Option<QualificationDiagnostic> {
         self.qualification_diagnostic.clone()
+    }
+
+    pub fn account_scope(&mut self, page: &ManagedPage) -> io::Result<ScopeSurface> {
+        self.call("Page.bringToFront", json!({}), Some(&page.session))?;
+        let opened = self
+            .dom(page, include_str!("dom/open_account.js"), vec![])
+            .map_err(|_| io::Error::other("E_ACCOUNT_OPEN"))?;
+        if opened["x"].is_number() && opened["y"].is_number() {
+            self.click_point(page, &opened)
+                .map_err(|_| io::Error::other("E_ACCOUNT_OPEN"))?;
+        } else if opened != true {
+            let failure = match opened["failure"].as_str() {
+                Some("E_ACCOUNT_MISSING") => "E_ACCOUNT_MISSING",
+                Some("E_ACCOUNT_AMBIGUOUS") => "E_ACCOUNT_AMBIGUOUS",
+                _ => "E_ACCOUNT_OPEN",
+            };
+            let tags = opened["control_tags"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .take(8)
+                .filter(|tag| {
+                    tag.len() <= 32
+                        && tag.chars().all(|c| {
+                            c.is_ascii_uppercase() || c.is_ascii_digit() || matches!(c, ':' | '-')
+                        })
+                })
+                .map(str::to_owned)
+                .collect();
+            return Ok(ScopeSurface {
+                account: None,
+                workspace: None,
+                diagnostic: ScopeDiagnostic {
+                    failure: Some(failure.into()),
+                    profile_control_tags: tags,
+                    ..Default::default()
+                },
+            });
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let result = loop {
+            match self.dom(page, include_str!("dom/account_scope.js"), vec![]) {
+                Ok(value) if !value.is_null() => {
+                    break serde_json::from_value(value)
+                        .map_err(|_| io::Error::other("E_ACCOUNT_PARSE"));
+                }
+                Err(_) => break Err(io::Error::other("E_ACCOUNT_READ")),
+                _ if Instant::now() >= deadline => break Err(io::Error::other("E_ACCOUNT_SCOPE")),
+                _ => std::thread::sleep(Duration::from_millis(100)),
+            }
+        };
+        let closed = self.close_model_menu(page);
+        let surface = result?;
+        closed?;
+        Ok(surface)
     }
 
     fn qualify_page(
@@ -500,6 +593,7 @@ impl ManagedBrowser {
     }
 
     fn click_model_switcher(&mut self, page: &ManagedPage) -> io::Result<()> {
+        self.call("Page.bringToFront", json!({}), Some(&page.session))?;
         let deadline = Instant::now() + Duration::from_secs(5);
         let point = loop {
             if let Ok(point) = self.dom(page, include_str!("dom/open_models.js"), vec![]) {
@@ -510,6 +604,13 @@ impl ManagedBrowser {
             }
             std::thread::sleep(Duration::from_millis(100));
         };
+        if point["expanded"] == true {
+            return Ok(());
+        }
+        self.click_point(page, &point)
+    }
+
+    fn click_point(&mut self, page: &ManagedPage, point: &Value) -> io::Result<()> {
         let (Some(x), Some(y)) = (point["x"].as_f64(), point["y"].as_f64()) else {
             return Err(io::Error::other("E_MODEL_MENU"));
         };
@@ -520,21 +621,24 @@ impl ManagedBrowser {
         {
             return Err(io::Error::other("E_MODEL_MENU"));
         }
-        self.call(
-            "Input.dispatchMouseEvent",
-            json!({"type":"mousePressed","x":x,"y":y,"button":"left","clickCount":1}),
-            Some(&page.session),
-        )?;
-        self.call(
-            "Input.dispatchMouseEvent",
-            json!({"type":"mouseReleased","x":x,"y":y,"button":"left","clickCount":1}),
-            Some(&page.session),
-        )?;
+        for (event_type, button, buttons) in [
+            ("mouseMoved", "none", 0),
+            ("mousePressed", "left", 1),
+            ("mouseReleased", "left", 0),
+        ] {
+            self.call(
+                "Input.dispatchMouseEvent",
+                json!({
+                    "type":event_type,"x":x,"y":y,"button":button,"buttons":buttons,"clickCount":1
+                }),
+                Some(&page.session),
+            )?;
+        }
         Ok(())
     }
 
     fn close_model_menu(&mut self, page: &ManagedPage) -> io::Result<()> {
-        for event_type in ["keyDown", "keyUp"] {
+        for event_type in ["rawKeyDown", "keyUp"] {
             self.call(
                 "Input.dispatchKeyEvent",
                 json!({
@@ -547,7 +651,16 @@ impl ManagedBrowser {
                 Some(&page.session),
             )?;
         }
-        Ok(())
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if self.dom(page, include_str!("dom/menus_closed.js"), vec![])? == true {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(io::Error::other("E_MODEL_CLOSE"));
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
     }
 
     pub fn insert_prompt(&mut self, page: &ManagedPage, prompt: &str) -> io::Result<()> {
@@ -683,7 +796,12 @@ impl ManagedBrowser {
                 || intent_called == wrong_label
                 || self.baseline(page)?.ids != ["old-assistant"]
             {
-                return Err(io::Error::other("E_QUALIFICATION_GUARD_FIXTURE"));
+                return Err(io::Error::other(format!(
+                    "E_QUALIFICATION_GUARD_FIXTURE: {}",
+                    attempt
+                        .err()
+                        .map_or_else(|| "unexpected success".into(), |error| error.to_string())
+                )));
             }
         }
         self.call("Page.setDocumentContent", json!({"frameId":frame["frameTree"]["frame"]["id"],"html":include_str!("dom/fixture.html")}), Some(&page.session))?;
@@ -715,6 +833,12 @@ impl ManagedBrowser {
         let surface = self
             .discover_models(page)
             .map_err(|_| io::Error::other("E_FIXTURE_DISCOVERY"))?;
+        let scope = self.account_scope(page)?;
+        if scope.account.as_deref() != Some("fixture@example.invalid")
+            || scope.workspace.as_deref() != Some("fixture-workspace")
+        {
+            return Err(io::Error::other("E_SCOPE_FIXTURE"));
+        }
         if surface.candidates.len() != 2
             || !surface.temporary_chat
             || surface
@@ -879,7 +1003,23 @@ mod tests {
                     }
                     request.push(byte[0]);
                 }
+                // Chromium can preconnect without sending an HTTP request.
+                if !request.ends_with(b"\r\n\r\n") {
+                    continue;
+                }
                 let fetch = request.starts_with(b"GET /fetch ");
+                let request_text = String::from_utf8_lossy(&request).to_ascii_lowercase();
+                let language = request_text
+                    .lines()
+                    .find_map(|line| line.strip_prefix("accept-language:"))
+                    .map(str::trim);
+                assert!(
+                    language.is_some_and(|value| matches!(
+                        value.split([',', ';']).next(),
+                        Some("en" | "en-us")
+                    )),
+                    "managed browser must negotiate English independently of the OS language: {language:?}"
+                );
                 let body = if fetch {
                     "network-fixture-ok"
                 } else {

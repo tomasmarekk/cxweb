@@ -146,7 +146,7 @@ pub fn launch(executable: &Path, profile: &Path, visible: bool) -> io::Result<Br
     let mut handles = [child_in.as_raw_handle(), child_out.as_raw_handle()];
     let mut attributes = Attributes::new(&mut handles)?;
     let command = format!(
-        "\"{exe_string}\" --user-data-dir=\"{profile_string}\" --remote-debugging-pipe --remote-debugging-io-pipes={},{} --no-first-run --no-default-browser-check --no-startup-window",
+        "\"{exe_string}\" --user-data-dir=\"{profile_string}\" --remote-debugging-pipe --remote-debugging-io-pipes={},{} --no-first-run --no-default-browser-check --no-startup-window --lang=en-US --accept-lang=en-US,en",
         handles[0] as usize as u32, handles[1] as usize as u32
     );
     let mut command = wide(command.as_ref())?;

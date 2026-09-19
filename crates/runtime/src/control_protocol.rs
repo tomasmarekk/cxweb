@@ -142,6 +142,8 @@ pub(crate) fn login_error(code: &str) -> &'static str {
         "E_QUALIFICATION_INSERT" => "E_QUALIFICATION_INSERT",
         "E_QUALIFICATION_OBSERVE" => "E_QUALIFICATION_OBSERVE",
         "E_MODEL_SELECTION" => "E_MODEL_SELECTION",
+        "E_MODEL_SELECT" => "E_MODEL_SELECT",
+        "E_MODEL_LABEL" => "E_MODEL_LABEL",
         "E_QUALIFICATION_PROTOCOL" => "E_QUALIFICATION_PROTOCOL",
         "E_MODEL_OPEN" => "E_MODEL_OPEN",
         "E_MODEL_READ" => "E_MODEL_READ",
