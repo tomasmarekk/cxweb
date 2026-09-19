@@ -5,7 +5,7 @@ use cxweb_codex_adapter::{
     preflight::{Assessment, assess},
     strict_json,
 };
-use cxweb_platform::atomic_file::Snapshot;
+use cxweb_platform::{atomic_file::Snapshot, target_path::TargetPathGuard};
 use serde::Serialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -25,6 +25,7 @@ pub struct Report {
     pub assessment: Assessment,
     pub user_config_unchanged: bool,
     pub selected_config_and_parent_access_verified: bool,
+    pub target_path_identity_verified: bool,
     pub executable_unchanged: bool,
     pub model_requests: u32,
     pub activation_eligible: bool,
@@ -153,6 +154,17 @@ pub async fn inspect(client: &Path, home: &Path, cwd: &Path) -> Result<Report, &
     if !client.is_absolute() || !home.is_absolute() || !cwd.is_absolute() {
         return Err("E_PREFLIGHT_TARGET");
     }
+    // Preserve original path provenance: canonicalization would hide junctions.
+    // Keep all guards alive until the inspected child has stopped.
+    let targets = [
+        TargetPathGuard::capture(client, false),
+        TargetPathGuard::capture(home, true),
+        TargetPathGuard::capture(cwd, true),
+    ];
+    let targets = targets
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| "E_PREFLIGHT_TARGET_IDENTITY")?;
     let client = client.canonicalize().map_err(|_| "E_PREFLIGHT_TARGET")?;
     let home = home.canonicalize().map_err(|_| "E_PREFLIGHT_TARGET")?;
     let cwd = cwd.canonicalize().map_err(|_| "E_PREFLIGHT_TARGET")?;
@@ -177,6 +189,11 @@ pub async fn inspect(client: &Path, home: &Path, cwd: &Path) -> Result<Report, &
         .stderr(Stdio::null())
         .kill_on_drop(true);
     command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    for target in &targets {
+        target
+            .verify_unchanged()
+            .map_err(|_| "E_PREFLIGHT_TARGET_CHANGED")?;
+    }
     let mut child = command.spawn().map_err(|_| "E_PREFLIGHT_START")?;
     let mut input = child.stdin.take().ok_or("E_PREFLIGHT_START")?;
     let mut output = BufReader::new(child.stdout.take().ok_or("E_PREFLIGHT_START")?);
@@ -227,6 +244,11 @@ pub async fn inspect(client: &Path, home: &Path, cwd: &Path) -> Result<Report, &
     original
         .verify_unchanged()
         .map_err(|_| "E_PREFLIGHT_CONFIG_CHANGED")?;
+    for target in &targets {
+        target
+            .verify_unchanged()
+            .map_err(|_| "E_PREFLIGHT_TARGET_CHANGED")?;
+    }
     if fingerprint(&client).await? != hash {
         return Err("E_PREFLIGHT_EXECUTABLE_CHANGED");
     }
@@ -237,11 +259,12 @@ pub async fn inspect(client: &Path, home: &Path, cwd: &Path) -> Result<Report, &
         assessment: result?,
         user_config_unchanged: true,
         selected_config_and_parent_access_verified: true,
+        target_path_identity_verified: true,
         executable_unchanged: true,
         model_requests: 0,
         activation_eligible: false,
         remaining_checks: vec![
-            "target path ancestry and client target qualification",
+            "ancestor permissions and client target qualification",
             "actual client picker and native coexistence",
             "browser route and coding qualification",
         ],

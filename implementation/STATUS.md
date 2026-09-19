@@ -21,6 +21,38 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Original target path identity in native preflight (2026-09-20)
+
+- Native inspection now checks the original executable, home and workspace paths
+  before canonicalization can erase a junction or symbolic-link ancestor. Each
+  component is opened with reparse processing disabled and its object type and
+  volume/file identity are checked. Only drive-absolute paths are supported;
+  parent traversal, alternate streams, trailing-dot/space aliases and network or
+  device namespaces are refused. The executable also rejects hard links.
+- Handles remain alive through inspection, excluding ancestor rename/delete and
+  executable writers. Both held objects and path resolutions are rechecked before
+  child launch and after shutdown. A regression caught that metadata-only file
+  access did not exclude writers; the executable guard now requests read access,
+  and the test verifies that an actual overwrite fails while the guard is held.
+- This verifies identity during read-only inspection, not ancestor ACL trust,
+  future configuration transaction atomicity or another client's effective target.
+  In-place directory changes are checked at the stated boundaries; no filesystem
+  CAS guarantee is made. Production activation remains disabled, and remaining
+  checks explicitly retain ancestor permissions and client target qualification.
+- Both actual backend versions passed fourteen isolated preflight cases each,
+  including home, workspace and executable-parent junctions refused before backend
+  launch. The fresh home/workspace remained empty in all three rejection cases.
+  Selected configuration bytes and executable fingerprints stayed unchanged in
+  accepted cases. No real account, user configuration or desktop UI was used.
+- Reports: `integration-tests/compatibility/cli-0.155.1.preflight-targets.json`
+  and `app-backend-0.155.0-alpha.9.2.preflight-targets.json`. Reproduce with
+  `node scripts/probe-preflight.mjs <reviewed backend> target/release/cxweb.exe`.
+- Validation: workspace tests passed 192 tests with four opt-in tests ignored;
+  the final preflight tests also passed after adding the immediate pre-launch
+  recheck. Workspace Clippy with warnings denied, formatting, JavaScript syntax
+  and diff checks passed. Release CLI, daemon and desktop builds succeeded.
+- Windows contract: [CreateFile access, sharing and reparse flags](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew).
+
 ## Terminal web failures without native retry loops (2026-09-20)
 
 - Actual native tests confirmed that the prior HTTP 422/409 mapping retried a

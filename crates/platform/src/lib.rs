@@ -17,3 +17,5 @@ pub mod scheduled_runtime;
 pub mod secret;
 #[cfg(windows)]
 pub mod state;
+#[cfg(windows)]
+pub mod target_path;

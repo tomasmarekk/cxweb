@@ -1,7 +1,7 @@
 // Exercise native configuration inspection with disposable homes and no account.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, writeFile, access, readdir } from 'node:fs/promises';
-import { resolve, join, isAbsolute } from 'node:path';
+import { mkdir, mkdtemp, readFile, writeFile, access, readdir, symlink, unlink } from 'node:fs/promises';
+import { resolve, join, isAbsolute, dirname, basename } from 'node:path';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 
@@ -64,6 +64,7 @@ try {
     assert.equal(report.model_requests, 0);
     assert.equal(report.user_config_unchanged, true);
     assert.equal(report.selected_config_and_parent_access_verified, true);
+    assert.equal(report.target_path_identity_verified, true);
     assert.equal(report.executable_unchanged, true);
     assert.ok(!JSON.stringify(report).includes('PRIVATE_'));
     for (const [file, content] of files) assert.equal(digest(await readFile(file)), digest(content), 'fixture bytes preserved');
@@ -85,6 +86,31 @@ try {
   assert.match(denied.stderr, /E_PREFLIGHT_CONFIG_PERMISSIONS/);
   assert.deepEqual(await readdir(foreign), [], 'native backend must not start in exposed home');
   evidence.cases.push({ name: 'foreign-read-grant', result: 'PASS refused before backend launch; home unchanged' });
+  // Junctions are deliberately tested in the original input, before any
+  // canonicalization. Each link is ours; its target is never modified/deleted.
+  const targetFixture = join(work, 'target-identity');
+  await mkdir(targetFixture);
+  const targetHome = join(targetFixture, 'home'), targetCwd = join(targetFixture, 'workspace');
+  await mkdir(targetHome); await mkdir(targetCwd);
+  for (const kind of ['home', 'workspace', 'client']) {
+    const link = join(targetFixture, `${kind}-junction`);
+    const target = kind === 'home' ? targetHome : kind === 'workspace' ? targetCwd : dirname(client);
+    await symlink(target, link, 'junction');
+    try {
+      const denied = spawnSync(bridge, ['native-preflight',
+        '--client', kind === 'client' ? join(link, basename(client)) : client,
+        '--home', kind === 'home' ? link : targetHome,
+        '--cwd', kind === 'workspace' ? link : targetCwd,
+      ], { env, encoding: 'utf8', windowsHide: true, timeout: 10000 });
+      assert.notEqual(denied.status, 0);
+      assert.match(denied.stderr, /E_PREFLIGHT_TARGET_IDENTITY/);
+      assert.deepEqual(await readdir(targetHome), [], 'reparse target rejected before backend launch');
+      assert.deepEqual(await readdir(targetCwd), [], 'workspace remains empty');
+      evidence.cases.push({ name: `${kind}-junction`, result: 'PASS refused before backend launch; fixture unchanged' });
+    } finally {
+      await unlink(link);
+    }
+  }
   evidence.result = 'PASS';
 } catch (error) {
   evidence.result = 'FAIL';

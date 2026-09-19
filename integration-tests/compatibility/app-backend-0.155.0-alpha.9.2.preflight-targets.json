@@ -1,0 +1,323 @@
+{
+  "schema": "cxweb.preflight-probe.v1",
+  "client": "codex-cli 0.155.0-alpha.9.2",
+  "authentication": "signed-out and synthetic API-key fixtures only",
+  "managedRoutingDetection": "unit RPC fixtures only; real system/cloud policy was not modified",
+  "modelRequests": 0,
+  "cases": [
+    {
+      "name": "signed-out",
+      "result": "PASS",
+      "report": {
+        "activation_eligible": false,
+        "assessment": {
+          "active_layers": [
+            "system",
+            "user"
+          ],
+          "auth_mode": "signed_out",
+          "configuration_compatible": false,
+          "conflicts": [
+            "subscription_auth_required"
+          ],
+          "disabled_layer_count": 0
+        },
+        "catalog_codec": "codex-model-info-0.155.0-alpha.9.2",
+        "client_build": "0.155.0-alpha.9.2",
+        "executable_sha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+        "executable_unchanged": true,
+        "model_requests": 0,
+        "remaining_checks": [
+          "ancestor permissions and client target qualification",
+          "actual client picker and native coexistence",
+          "browser route and coding qualification"
+        ],
+        "selected_config_and_parent_access_verified": true,
+        "target_path_identity_verified": true,
+        "user_config_unchanged": true
+      }
+    },
+    {
+      "name": "synthetic-api-key",
+      "result": "PASS",
+      "report": {
+        "activation_eligible": false,
+        "assessment": {
+          "active_layers": [
+            "system",
+            "user"
+          ],
+          "auth_mode": "api_key",
+          "configuration_compatible": false,
+          "conflicts": [
+            "subscription_auth_required"
+          ],
+          "disabled_layer_count": 0
+        },
+        "catalog_codec": "codex-model-info-0.155.0-alpha.9.2",
+        "client_build": "0.155.0-alpha.9.2",
+        "executable_sha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+        "executable_unchanged": true,
+        "model_requests": 0,
+        "remaining_checks": [
+          "ancestor permissions and client target qualification",
+          "actual client picker and native coexistence",
+          "browser route and coding qualification"
+        ],
+        "selected_config_and_parent_access_verified": true,
+        "target_path_identity_verified": true,
+        "user_config_unchanged": true
+      }
+    },
+    {
+      "name": "environment-auth",
+      "result": "PASS",
+      "report": {
+        "activation_eligible": false,
+        "assessment": {
+          "active_layers": [
+            "system",
+            "user"
+          ],
+          "auth_mode": "signed_out",
+          "configuration_compatible": false,
+          "conflicts": [
+            "environment_auth",
+            "subscription_auth_required"
+          ],
+          "disabled_layer_count": 0
+        },
+        "catalog_codec": "codex-model-info-0.155.0-alpha.9.2",
+        "client_build": "0.155.0-alpha.9.2",
+        "executable_sha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+        "executable_unchanged": true,
+        "model_requests": 0,
+        "remaining_checks": [
+          "ancestor permissions and client target qualification",
+          "actual client picker and native coexistence",
+          "browser route and coding qualification"
+        ],
+        "selected_config_and_parent_access_verified": true,
+        "target_path_identity_verified": true,
+        "user_config_unchanged": true
+      }
+    },
+    {
+      "name": "unowned-route",
+      "result": "PASS",
+      "report": {
+        "activation_eligible": false,
+        "assessment": {
+          "active_layers": [
+            "system",
+            "user"
+          ],
+          "auth_mode": "signed_out",
+          "configuration_compatible": false,
+          "conflicts": [
+            "openai_base_url",
+            "subscription_auth_required"
+          ],
+          "disabled_layer_count": 0
+        },
+        "catalog_codec": "codex-model-info-0.155.0-alpha.9.2",
+        "client_build": "0.155.0-alpha.9.2",
+        "executable_sha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+        "executable_unchanged": true,
+        "model_requests": 0,
+        "remaining_checks": [
+          "ancestor permissions and client target qualification",
+          "actual client picker and native coexistence",
+          "browser route and coding qualification"
+        ],
+        "selected_config_and_parent_access_verified": true,
+        "target_path_identity_verified": true,
+        "user_config_unchanged": true
+      }
+    },
+    {
+      "name": "environment-route",
+      "result": "PASS",
+      "report": {
+        "activation_eligible": false,
+        "assessment": {
+          "active_layers": [
+            "system",
+            "user"
+          ],
+          "auth_mode": "signed_out",
+          "configuration_compatible": false,
+          "conflicts": [
+            "environment_route",
+            "subscription_auth_required"
+          ],
+          "disabled_layer_count": 0
+        },
+        "catalog_codec": "codex-model-info-0.155.0-alpha.9.2",
+        "client_build": "0.155.0-alpha.9.2",
+        "executable_sha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+        "executable_unchanged": true,
+        "model_requests": 0,
+        "remaining_checks": [
+          "ancestor permissions and client target qualification",
+          "actual client picker and native coexistence",
+          "browser route and coding qualification"
+        ],
+        "selected_config_and_parent_access_verified": true,
+        "target_path_identity_verified": true,
+        "user_config_unchanged": true
+      }
+    },
+    {
+      "name": "custom-provider",
+      "result": "PASS",
+      "report": {
+        "activation_eligible": false,
+        "assessment": {
+          "active_layers": [
+            "system",
+            "user"
+          ],
+          "auth_mode": "signed_out",
+          "configuration_compatible": false,
+          "conflicts": [
+            "model_provider",
+            "subscription_auth_required"
+          ],
+          "disabled_layer_count": 0
+        },
+        "catalog_codec": "codex-model-info-0.155.0-alpha.9.2",
+        "client_build": "0.155.0-alpha.9.2",
+        "executable_sha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+        "executable_unchanged": true,
+        "model_requests": 0,
+        "remaining_checks": [
+          "ancestor permissions and client target qualification",
+          "actual client picker and native coexistence",
+          "browser route and coding qualification"
+        ],
+        "selected_config_and_parent_access_verified": true,
+        "target_path_identity_verified": true,
+        "user_config_unchanged": true
+      }
+    },
+    {
+      "name": "ignored-legacy-home-policy",
+      "result": "PASS",
+      "report": {
+        "activation_eligible": false,
+        "assessment": {
+          "active_layers": [
+            "system",
+            "user"
+          ],
+          "auth_mode": "signed_out",
+          "configuration_compatible": false,
+          "conflicts": [
+            "subscription_auth_required"
+          ],
+          "disabled_layer_count": 0
+        },
+        "catalog_codec": "codex-model-info-0.155.0-alpha.9.2",
+        "client_build": "0.155.0-alpha.9.2",
+        "executable_sha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+        "executable_unchanged": true,
+        "model_requests": 0,
+        "remaining_checks": [
+          "ancestor permissions and client target qualification",
+          "actual client picker and native coexistence",
+          "browser route and coding qualification"
+        ],
+        "selected_config_and_parent_access_verified": true,
+        "target_path_identity_verified": true,
+        "user_config_unchanged": true
+      }
+    },
+    {
+      "name": "static-catalog",
+      "result": "PASS",
+      "report": {
+        "activation_eligible": false,
+        "assessment": {
+          "active_layers": [
+            "system",
+            "user"
+          ],
+          "auth_mode": "signed_out",
+          "configuration_compatible": false,
+          "conflicts": [
+            "model_catalog_json",
+            "subscription_auth_required"
+          ],
+          "disabled_layer_count": 0
+        },
+        "catalog_codec": "codex-model-info-0.155.0-alpha.9.2",
+        "client_build": "0.155.0-alpha.9.2",
+        "executable_sha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+        "executable_unchanged": true,
+        "model_requests": 0,
+        "remaining_checks": [
+          "ancestor permissions and client target qualification",
+          "actual client picker and native coexistence",
+          "browser route and coding qualification"
+        ],
+        "selected_config_and_parent_access_verified": true,
+        "target_path_identity_verified": true,
+        "user_config_unchanged": true
+      }
+    },
+    {
+      "name": "disabled-project",
+      "result": "PASS",
+      "report": {
+        "activation_eligible": false,
+        "assessment": {
+          "active_layers": [
+            "system",
+            "user"
+          ],
+          "auth_mode": "signed_out",
+          "configuration_compatible": false,
+          "conflicts": [
+            "subscription_auth_required"
+          ],
+          "disabled_layer_count": 1
+        },
+        "catalog_codec": "codex-model-info-0.155.0-alpha.9.2",
+        "client_build": "0.155.0-alpha.9.2",
+        "executable_sha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+        "executable_unchanged": true,
+        "model_requests": 0,
+        "remaining_checks": [
+          "ancestor permissions and client target qualification",
+          "actual client picker and native coexistence",
+          "browser route and coding qualification"
+        ],
+        "selected_config_and_parent_access_verified": true,
+        "target_path_identity_verified": true,
+        "user_config_unchanged": true
+      }
+    },
+    {
+      "name": "unreviewed-executable",
+      "result": "PASS refused before execution"
+    },
+    {
+      "name": "foreign-read-grant",
+      "result": "PASS refused before backend launch; home unchanged"
+    },
+    {
+      "name": "home-junction",
+      "result": "PASS refused before backend launch; fixture unchanged"
+    },
+    {
+      "name": "workspace-junction",
+      "result": "PASS refused before backend launch; fixture unchanged"
+    },
+    {
+      "name": "client-junction",
+      "result": "PASS refused before backend launch; fixture unchanged"
+    }
+  ],
+  "result": "PASS"
+}
