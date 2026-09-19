@@ -1,7 +1,7 @@
 <!doctype html><html><head><meta charset="utf-8"><title>cxweb synthetic fixture</title>
 <style>@keyframes fixture-progress { from { opacity: 0; } to { opacity: 1; } } #fixture-animation { animation: fixture-progress 100ms linear forwards; }</style>
 </head><body><div id="fixture-animation">Animation fixture</div>
-<form><button type="button" data-testid="model-switcher-dropdown-button" aria-haspopup="menu" style="width:340px">Fixture text mode</button>
+<form><button type="button" data-testid="model-switcher-dropdown-button" aria-haspopup="menu" aria-expanded="false" style="width:340px">Fixture text mode</button>
 <button type="button" data-testid="accounts-profile-button" aria-controls="account-menu" aria-expanded="false">Fixture account</button>
 <div id="account-menu" role="menu" hidden><button type="button" role="menuitem" id="fixture-settings">Settings</button><div role="menuitemradio" aria-checked="true" data-workspace-id="fixture-workspace">Fixture workspace</div></div>
 <div role="dialog" id="fixture-account-settings" hidden>
@@ -12,13 +12,30 @@
 </div>
 <button data-testid="temporary-chat-button">Temporary chat</button>
 <div id="model-menu" role="group" data-testid="composer-intelligence-picker-content" hidden>
-  <button role="menuitemradio" data-testid="model-fixture-text" aria-checked="true">Fixture text mode</button>
-  <button role="menuitemradio" data-testid="model-fixture-reasoning" aria-checked="false">Fixture reasoning mode</button>
-  <div data-testid="composer-model-picker-slider-simple-view"><span id="fixture-effort-label">Standard, 1 of 2.</span><div data-model-reasoning-effort-slider><input role="slider" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0"></div></div>
+  <div data-testid="composer-model-picker-slider-advanced-view" hidden>
+    <button type="button" role="menuitemradio" data-testid="model-fixture-text" aria-checked="true">Fixture text mode</button>
+    <button type="button" role="menuitemradio" data-testid="model-fixture-reasoning" aria-checked="false">Fixture reasoning mode</button>
+    <button type="button" role="menuitemradio" aria-checked="false" aria-disabled="true">Fixture unavailable</button>
+  </div>
+  <div data-testid="composer-model-picker-slider-simple-view"><span id="fixture-effort-label" style="display:block">Standard, 1 of 2.</span><button type="button" role="menuitem" aria-label="Select model">Choose family</button><div data-model-reasoning-effort-slider><input role="slider" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0"></div></div>
 </div>
 <div data-turn-id-container="old-assistant"><section data-testid="conversation-turn-old" data-turn-id="old-assistant" data-turn="assistant"><div data-message-author-role="assistant"><div class="markdown">historical message must not be returned</div></div><button data-testid="copy-turn-action-button">Copy</button></section></div>
 <div id="prompt-textarea" contenteditable="true"></div><button type="button" data-testid="send-button">Send</button></form>
 <script>
+document.querySelector('[aria-label="Select model"]').onclick = () => {
+  document.querySelector('[data-testid="composer-model-picker-slider-simple-view"]').hidden = true;
+  document.querySelector('[data-testid="composer-model-picker-slider-advanced-view"]').hidden = false;
+};
+for (const option of document.querySelectorAll('[data-testid="composer-model-picker-slider-advanced-view"] [role="menuitemradio"]')) {
+  option.onclick = () => {
+    setTimeout(() => {
+      for (const item of option.parentElement.children) item.setAttribute('aria-checked', String(item === option));
+      option.parentElement.hidden = true;
+      document.querySelector('[data-testid="composer-model-picker-slider-simple-view"]').hidden = false;
+      document.querySelector('[data-testid="model-switcher-dropdown-button"]').textContent = option.textContent;
+    }, 40);
+  };
+}
 document.querySelector('#fixture-settings').onclick = () => {
   document.querySelector('#account-menu').hidden = true;
   document.querySelector('[data-testid="accounts-profile-button"]').setAttribute('aria-expanded', 'false');
@@ -40,7 +57,10 @@ document.querySelector('[data-testid="accounts-profile-button"]').onkeydown = ev
   if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.click(); }
 };
 document.querySelector('[data-testid="model-switcher-dropdown-button"]').onclick = () => {
-  const menu = document.querySelector('#model-menu'); setTimeout(() => { menu.hidden = !menu.hidden; }, 40);
+  const menu = document.querySelector('#model-menu'); setTimeout(() => {
+    menu.hidden = !menu.hidden;
+    document.querySelector('[data-testid="model-switcher-dropdown-button"]').setAttribute('aria-expanded', String(!menu.hidden));
+  }, 40);
 };
 document.querySelector('[data-testid="model-switcher-dropdown-button"]').onmouseenter = event => {
   event.currentTarget.style.width = '100px';
@@ -53,7 +73,10 @@ document.querySelector('[data-testid="model-switcher-dropdown-button"]').onkeydo
 };
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !document.querySelector('#model-menu').hidden) {
-    setTimeout(() => { document.querySelector('#model-menu').hidden = true; }, 80);
+    setTimeout(() => {
+      document.querySelector('#model-menu').hidden = true;
+      document.querySelector('[data-testid="model-switcher-dropdown-button"]').setAttribute('aria-expanded', 'false');
+    }, 80);
   }
   if (event.key === 'Escape') {
     document.querySelector('#fixture-account-settings').hidden = true;
@@ -68,7 +91,8 @@ document.addEventListener('keydown', event => {
       slider.setAttribute('aria-valuenow', String(next));
       // Delayed accessible text must not be paired with the new numeric value.
       setTimeout(() => {
-        document.querySelector('#fixture-effort-label').textContent = next === 1 && document.body.dataset.fixtureEffortFailure === 'true'
+        const family = document.querySelector('[data-testid="composer-model-picker-slider-advanced-view"] [aria-checked="true"]').textContent;
+        document.querySelector('#fixture-effort-label').textContent = next === 1 && document.body.dataset.fixtureEffortFailure === family
           ? 'Unqualified label' : `${next === 0 ? 'Standard' : 'Extended'}, ${next + 1} of 2.`;
       }, 40);
     }, 40);

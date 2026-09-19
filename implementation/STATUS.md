@@ -148,6 +148,54 @@ entry was visible, which is the expected evidence while activation remains absen
   Production integration remains disabled; workspace scope, model-family binding,
   actual App/CLI integration and all remaining PRD gates are still open.
 
+## Model family and effort identity (2026-09-19)
+
+- Model candidates now include both the observed checked model family and the
+  exact effort position/range in a versioned structured identity. A bare slider
+  position can no longer select or qualify a different family. Display labels
+  use the family name and actual effort name; secondary availability notes are
+  excluded from the family name. The Latest selector remains explicitly Latest,
+  without inventing the underlying server model.
+- Discovery uses the normal Select model control and actionable radio options,
+  verifies checked state, scans each available family's effort positions, then
+  restores the original family/effort. Disabled options are skipped. Restoration
+  is attempted even after a later family fails. Missing/ambiguous checked state
+  fails explicitly; no unobserved family names are hardcoded in the adapter.
+- Live background discovery observed 15 combinations: Latest, GPT-5.6 Sol and
+  GPT-5.5, each with Instant, Medium, High, Extra High and Pro. The original
+  Latest / Extra High selection was restored. These remain unadvertised candidate
+  routes; selecting the controls does not establish every route's coding ability.
+- Qualification and the managed generation driver now perform a read-only check
+  of the full route after filling the composer and before Send. A same-effort
+  wrong-family selection is rejected without changing it or sending the draft.
+  The qualification preflight also verifies only the chosen route instead of
+  traversing the entire model inventory before every test.
+- The Chrome fixture passed multiple families, disabled options, delayed menu
+  opening, restoration after failure in the second family, and wrong-family
+  refusal with a populated composer. It exposed and fixed a race where reading
+  retained checked state before the menu appeared could close the menu too soon.
+- Reopening the live menu also exposed a pointer activation that completed its
+  input sequence without actually opening the menu. The composer model button
+  now uses verified focus plus ordinary CDP Enter input, followed by an expanded
+  state check. No synthetic DOM keyboard events or model-state writes are used.
+  One final live tool-envelope qualification passed on Latest / Extra High in
+  background mode, including exact message attribution and a completed response.
+  This verifies function/custom envelopes, not execution by a real Codex client.
+  Earlier failing preflight checks stopped before the submission intent.
+- Extended discovery exposed a false receipt timeout: the browser worker could
+  finish successfully after the control wrapper had marked it failed at 30 seconds.
+  Accepted operations now retain their actual worker outcome; client observation
+  deadlines remain separate. Discovery has a longer client observation window.
+  A paused-clock regression proves that queued/active operations are still pending
+  after both former deadlines, then return the actual worker result. Tokio's
+  existing test-only feature provides the virtual clock; no version changed.
+- All 83 browser-adapter/runtime tests passed (one opt-in ignored), all 34 browser
+  and desktop JavaScript tests passed, affected-crate Clippy with warnings denied
+  and format/diff checks passed. Release CLI, daemon and desktop builds succeeded.
+- Account/workspace binding, actual Codex execution/pickers, initial shell-window
+  exposure and the remaining release gates remain incomplete. Production routing
+  stays disabled and native Codex configuration/authentication remain unchanged.
+
 ## Composer integrity correction (2026-09-18)
 
 - Added an explicit `browser-control test-tools` operation through the same

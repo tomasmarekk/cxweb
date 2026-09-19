@@ -143,6 +143,8 @@ impl RemoteControl {
         let deadline = tokio::time::Instant::now()
             + if matches!(action, LoginAction::QualifyText | LoginAction::QualifyTools) {
                 Duration::from_secs(335)
+            } else if action == LoginAction::Qualify {
+                Duration::from_secs(125)
             } else {
                 Duration::from_secs(35)
             };

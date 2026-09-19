@@ -1,10 +1,10 @@
 function (expectedIdentity) {
   const visible = element => element instanceof HTMLElement && element.getClientRects().length > 0;
-  const match = /^reasoning-slider:(-?\d+):(-?\d+):(-?\d+)$/.exec(expectedIdentity);
-  if (!match) throw new Error('E_MODEL_IDENTITY');
-  const expectedMin = Number(match[1]);
-  const expectedMax = Number(match[2]);
-  const target = Number(match[3]);
+  const route = JSON.parse(expectedIdentity);
+  if (!Array.isArray(route) || route.length !== 5 || route[0] !== 'reasoning-slider-v2') throw new Error('E_MODEL_IDENTITY');
+  const [, expectedFamily, expectedMin, expectedMax, target] = route;
+  const family = readModelFamilies().find(item => item.selected);
+  if (family.identity !== expectedFamily) throw new Error('E_MODEL_FAMILY');
   const containers = [...document.querySelectorAll('[data-model-reasoning-effort-slider]')].filter(visible);
   if (containers.length !== 1) throw new Error('E_MODEL_SLIDER');
   const sliders = [...containers[0].querySelectorAll('[role="slider"]')];
@@ -22,7 +22,8 @@ function (expectedIdentity) {
   const composer = document.querySelector('[data-testid="prompt-textarea"], #prompt-textarea, [contenteditable="true"][data-lexical-editor="true"]');
   const form = composer?.closest('form');
   const controls = form ? [...form.querySelectorAll('button[aria-haspopup="menu"][data-tone="neutral"], button[data-testid="model-switcher-dropdown-button"][aria-haspopup="menu"]')].filter(visible) : [];
-  const label = (controls.at(-1)?.textContent ?? 'ChatGPT route').replace(/\s+/g, ' ').trim().slice(0, 90) || 'ChatGPT route';
+  if (!controls.length) throw new Error('E_MODEL_MENU');
+  const label = family.label;
   let effortLabel = null;
   try { effortLabel = readEffortLabel(slider, min, max, current); } catch { /* The label may hydrate after the numeric value. */ }
   return { min, max, current, target, label, candidate_label: effortLabel ? `${label} · ${effortLabel}` : null };

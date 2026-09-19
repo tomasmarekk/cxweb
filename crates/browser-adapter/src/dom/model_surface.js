@@ -28,16 +28,16 @@ function () {
     && Number.isSafeInteger(min) && Number.isSafeInteger(max) && Number.isSafeInteger(value)
     && min <= value && value <= max && max - min >= 0 && max - min < 5;
   if (rangeValid) {
+    const family = readModelFamilies().find(item => item.selected);
     const composers = [...document.querySelectorAll('[data-testid="prompt-textarea"], #prompt-textarea, [contenteditable="true"][data-lexical-editor="true"]')].filter(visible);
     if (composers.length !== 1) throw new Error('E_MODEL_MENU');
     const form = composers[0].closest('form');
     const controls = form ? [...form.querySelectorAll('button[aria-haspopup="menu"][data-tone="neutral"], button[data-testid="model-switcher-dropdown-button"][aria-haspopup="menu"]')].filter(visible) : [];
     const control = controls.at(-1);
     if (!control) throw new Error('E_MODEL_MENU');
-    const selectedLabel = (control?.textContent ?? 'ChatGPT route').replace(/\s+/g, ' ').trim().slice(0, 90) || 'ChatGPT route';
     candidates = [{
-      label: `${selectedLabel} · ${readEffortLabel(slider, min, max, value)}`,
-      identity: `reasoning-slider:${min}:${max}:${value}`,
+      label: `${family.label} · ${readEffortLabel(slider, min, max, value)}`,
+      identity: JSON.stringify(['reasoning-slider-v2', family.identity, min, max, value]),
       selected: true
     }];
   }
@@ -71,6 +71,7 @@ function () {
     diagnostic: {
       menu_options: menuOptions,
       effort_range: rangeValid ? { min, max, current: value } : null,
+      families: rangeValid ? readModelFamilies() : [],
       switcher_expanded: expanded === 'true' ? true : expanded === 'false' ? false : null,
       visible_roots: roots.length,
       candidate_nodes: nodes.length,

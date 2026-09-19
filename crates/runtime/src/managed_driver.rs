@@ -210,6 +210,10 @@ impl ManagedDriver {
                                 browser
                                     .insert_prompt(&lease.page, &prompt)
                                     .map_err(|_| "E_COMPOSER_INSERT")?;
+                                let route = binding.route(&lease.session)?;
+                                browser
+                                    .verify_candidate(&lease.page, &route.identity, &route.label)
+                                    .map_err(|_| "E_MODEL_SELECTION")?;
                                 lease.prompt = Some(prompt);
                                 browser
                                     .press_send(

@@ -57,9 +57,13 @@ pub struct ModelSurface {
     pub diagnostic: ModelSurfaceDiagnostic,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelSurfaceDiagnostic {
+    #[serde(default)]
+    pub read_failure: Option<String>,
+    #[serde(default)]
+    pub families: Vec<ModelFamily>,
     #[serde(default)]
     pub menu_options: Vec<ModelCandidate>,
     #[serde(default)]
@@ -75,6 +79,15 @@ pub struct ModelSurfaceDiagnostic {
     pub candidate_nodes: usize,
     pub model_testids: Vec<String>,
     pub visible_roles: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelFamily {
+    pub label: String,
+    pub identity: String,
+    pub selected: bool,
+    pub disabled: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -409,10 +422,11 @@ impl ManagedBrowser {
         let object = root["result"]["objectId"]
             .as_str()
             .ok_or_else(|| io::Error::other("missing page global"))?;
-        // Both functions are reviewed bundled sources, never IPC/model data.
+        // All functions are reviewed bundled sources, never IPC/model data.
         let effort_label = include_str!("dom/effort_label.js");
+        let model_families = include_str!("dom/model_families.js");
         let guarded = format!(
-            "function(expectedOrigin, args) {{ if (location.origin !== expectedOrigin || (expectedOrigin === 'null' && location.href !== 'about:blank')) throw new Error('E_OFFICIAL_ORIGIN_REQUIRED'); const readEffortLabel = ({effort_label}); return ({function})(...args); }}"
+            "function(expectedOrigin, args) {{ if (location.origin !== expectedOrigin || (expectedOrigin === 'null' && location.href !== 'about:blank')) throw new Error('E_OFFICIAL_ORIGIN_REQUIRED'); const readEffortLabel = ({effort_label}); const readModelFamilies = ({model_families}); return ({function})(...args); }}"
         );
         let result = self.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":guarded,"arguments":[{"value":if page.fixture {"null"} else {"https://chatgpt.com"}},{"value":arguments}],"returnByValue":true}), Some(&page.session));
         let _ = self.call(
@@ -422,6 +436,20 @@ impl ManagedBrowser {
         );
         let result = result?;
         if result.get("exceptionDetails").is_some() {
+            let first_line = result["exceptionDetails"]["exception"]["description"]
+                .as_str()
+                .and_then(|text| text.lines().next());
+            for code in [
+                "E_MODEL_FAMILY",
+                "E_MODEL_EFFORT_LABEL",
+                "E_MODEL_MENU",
+                "E_MODEL_SLIDER",
+                "E_MODEL_FOCUS",
+            ] {
+                if first_line == Some(format!("Error: {code}").as_str()) {
+                    return Err(io::Error::other(code));
+                }
+            }
             return Err(io::Error::other("E_BROWSER_ADAPTER"));
         }
         result["result"]
@@ -462,6 +490,50 @@ impl ManagedBrowser {
     /// Opens the ordinary model menu, observes its currently rendered choices,
     /// then closes it. This is non-generative and never reads cookies or auth data.
     pub fn discover_models(&mut self, page: &ManagedPage) -> io::Result<ModelSurface> {
+        let mut surface = self.discover_family_routes(page)?;
+        let original = surface
+            .candidates
+            .iter()
+            .find(|candidate| candidate.selected)
+            .ok_or_else(|| io::Error::other("E_MODEL_SELECTION"))?
+            .clone();
+        let families = surface.diagnostic.families.clone();
+        let scanned = (|| {
+            for family in families
+                .iter()
+                .filter(|family| !family.selected && !family.disabled)
+            {
+                self.select_family(page, &family.identity)?;
+                let mut next = self.discover_family_routes(page)?;
+                if !next
+                    .diagnostic
+                    .families
+                    .iter()
+                    .any(|observed| observed.selected && observed.identity == family.identity)
+                {
+                    return Err(io::Error::other("E_MODEL_FAMILY"));
+                }
+                for candidate in &mut next.candidates {
+                    candidate.selected = false;
+                }
+                surface.candidates.extend(next.candidates);
+                if surface.candidates.len() > 64 {
+                    return Err(io::Error::other("E_MODEL_RESULT"));
+                }
+            }
+            Ok(())
+        })();
+        if !self
+            .select_candidate(page, &original.identity)
+            .is_ok_and(|label| label == original.label)
+        {
+            return Err(io::Error::other("E_MODEL_RESTORE"));
+        }
+        scanned?;
+        Ok(surface)
+    }
+
+    fn discover_family_routes(&mut self, page: &ManagedPage) -> io::Result<ModelSurface> {
         self.model_diagnostic = None;
         if !page.fixture {
             let login = self.login_observation(page)?;
@@ -478,7 +550,7 @@ impl ManagedBrowser {
         if !baseline.composer_empty || baseline.generating {
             return Err(io::Error::other("E_BROWSER_BUSY"));
         }
-        self.click_model_switcher(page)
+        self.open_model_menu(page)
             .map_err(|_| io::Error::other("E_MODEL_OPEN"))?;
         let deadline = Instant::now() + Duration::from_secs(5);
         let observed = loop {
@@ -504,7 +576,14 @@ impl ManagedBrowser {
         closed?;
         let mut surface: ModelSurface =
             serde_json::from_value(value).map_err(|_| io::Error::other("E_MODEL_PARSE"))?;
+        self.model_diagnostic = Some(surface.diagnostic.clone());
         if let Some(range) = &surface.diagnostic.effort_range {
+            let family = surface
+                .diagnostic
+                .families
+                .iter()
+                .find(|family| family.selected)
+                .ok_or_else(|| io::Error::other("E_MODEL_FAMILY"))?;
             let original = surface
                 .candidates
                 .first()
@@ -525,7 +604,13 @@ impl ManagedBrowser {
             let scanned = (|| {
                 let mut candidates = Vec::new();
                 for value in range.min..=range.max {
-                    let identity = format!("reasoning-slider:{}:{}:{value}", range.min, range.max);
+                    let identity = serde_json::to_string(&(
+                        "reasoning-slider-v2",
+                        &family.identity,
+                        range.min,
+                        range.max,
+                        value,
+                    ))?;
                     let selected = value == range.current;
                     let label = if selected {
                         original.label.clone()
@@ -579,7 +664,19 @@ impl ManagedBrowser {
         if identity.len() > 240 || identity.chars().any(char::is_control) {
             return Err(io::Error::other("E_MODEL_IDENTITY"));
         }
-        self.click_model_switcher(page)
+        let (kind, family, min, max, target): (String, String, i64, i64, i64) =
+            serde_json::from_str(identity).map_err(|_| io::Error::other("E_MODEL_IDENTITY"))?;
+        if kind != "reasoning-slider-v2"
+            || family.is_empty()
+            || family.len() > 80
+            || min > target
+            || target > max
+            || max.checked_sub(min).is_none_or(|width| width >= 5)
+        {
+            return Err(io::Error::other("E_MODEL_IDENTITY"));
+        }
+        self.select_family(page, &family)?;
+        self.open_model_menu(page)
             .map_err(|_| io::Error::other("E_MODEL_OPEN"))?;
         let selected = (|| {
             let mut previous = None;
@@ -641,6 +738,108 @@ impl ManagedBrowser {
         let selected = selected?;
         closed?;
         Ok(selected)
+    }
+
+    fn select_family(&mut self, page: &ManagedPage, identity: &str) -> io::Result<()> {
+        self.open_model_menu(page)
+            .map_err(|_| io::Error::other("E_MODEL_OPEN"))?;
+        let selected = (|| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut opened = false;
+            let mut clicked = false;
+            loop {
+                let state = self
+                    .dom(
+                        page,
+                        include_str!("dom/select_family.js"),
+                        vec![json!(identity), json!(opened), json!(clicked)],
+                    )
+                    .unwrap_or(Value::Null);
+                if state["selected"] == true {
+                    return Ok(());
+                }
+                if state["x"].is_number() && state["y"].is_number() {
+                    self.click_point(page, &state)?;
+                    match state["action"].as_str() {
+                        Some("open") => opened = true,
+                        Some("select") => clicked = true,
+                        _ => return Err(io::Error::other("E_MODEL_FAMILY")),
+                    }
+                }
+                if Instant::now() >= deadline {
+                    return Err(io::Error::other("E_MODEL_FAMILY"));
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        })();
+        let closed = self.close_model_menu(page);
+        selected?;
+        closed
+    }
+
+    /// Checks the complete family/effort route without changing it. This may be
+    /// used with a populated composer immediately before the submission intent.
+    pub fn verify_candidate(
+        &mut self,
+        page: &ManagedPage,
+        identity: &str,
+        label: &str,
+    ) -> io::Result<()> {
+        self.qualification_diagnostic = Some(QualificationDiagnostic {
+            expected_model_label: label.to_owned(),
+            observed_model_label: String::new(),
+            user_present: false,
+            user_matches: false,
+            assistant_present: false,
+            generating: false,
+        });
+        self.open_model_menu(page)?;
+        let verified = (|| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut last_failure = "E_MODEL_SELECTION";
+            loop {
+                let observation = self.dom(page, include_str!("dom/model_surface.js"), vec![]);
+                if let Err(error) = &observation {
+                    last_failure = match error.to_string().as_str() {
+                        "E_MODEL_FAMILY" => "E_MODEL_FAMILY",
+                        "E_MODEL_EFFORT_LABEL" => "E_MODEL_EFFORT_LABEL",
+                        "E_MODEL_MENU" => "E_MODEL_MENU",
+                        _ => "E_MODEL_READ",
+                    };
+                }
+                if let Ok(value) = observation
+                    && let Ok(surface) = serde_json::from_value::<ModelSurface>(value)
+                {
+                    self.model_diagnostic = Some(surface.diagnostic.clone());
+                    let selected = surface
+                        .candidates
+                        .iter()
+                        .filter(|item| item.selected)
+                        .collect::<Vec<_>>();
+                    if selected.len() == 1 {
+                        self.qualification_diagnostic
+                            .as_mut()
+                            .unwrap()
+                            .observed_model_label = selected[0].label.clone();
+                        return if selected[0].identity == identity && selected[0].label == label {
+                            Ok(())
+                        } else {
+                            Err(io::Error::other("E_MODEL_SELECTION"))
+                        };
+                    }
+                }
+                if Instant::now() >= deadline {
+                    if let Some(diagnostic) = self.model_diagnostic.as_mut() {
+                        diagnostic.read_failure = Some(last_failure.into());
+                    }
+                    return Err(io::Error::other("E_MODEL_SELECTION"));
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        })();
+        let closed = self.close_model_menu(page);
+        verified?;
+        closed
     }
 
     /// Opens an owned, isolated tab at ChatGPT's explicit Temporary Chat URL,
@@ -852,6 +1051,7 @@ impl ManagedBrowser {
             .map_err(io::Error::other)?;
         self.insert_prompt(page, prompt)
             .map_err(|_| io::Error::other("E_QUALIFICATION_INSERT"))?;
+        self.verify_candidate(page, identity, expected_label)?;
         before_send()?;
         tracker.begin_submission().map_err(io::Error::other)?;
         if let Err(error) = self.press_send(page, prompt, &baseline.selected_model) {
@@ -912,11 +1112,26 @@ impl ManagedBrowser {
         }
     }
 
-    fn click_model_switcher(&mut self, page: &ManagedPage) -> io::Result<()> {
+    fn open_model_menu(&mut self, page: &ManagedPage) -> io::Result<()> {
+        let result = self.open_model_menu_inner(page);
+        if result.is_err()
+            && let Ok(value) = self.dom(page, include_str!("dom/model_open_state.js"), vec![])
+            && let Ok(state) =
+                serde_json::from_value::<std::collections::BTreeMap<String, bool>>(value)
+        {
+            self.model_diagnostic
+                .get_or_insert_with(Default::default)
+                .interaction_state
+                .extend(state);
+        }
+        result
+    }
+
+    fn open_model_menu_inner(&mut self, page: &ManagedPage) -> io::Result<()> {
         self.prepare_page(page)?;
         let deadline = Instant::now() + Duration::from_secs(5);
         let point = loop {
-            if let Ok(point) = self.dom(page, include_str!("dom/open_models.js"), vec![]) {
+            if let Ok(point) = self.dom(page, include_str!("dom/focus_models.js"), vec![]) {
                 break point;
             }
             if Instant::now() >= deadline {
@@ -927,19 +1142,22 @@ impl ManagedBrowser {
         if point["expanded"] == true {
             return Ok(());
         }
-        let (x, y) = Self::point_coordinates(&point)?;
-        self.call(
-            "Input.dispatchMouseEvent",
-            json!({"type":"mouseMoved","x":x,"y":y,"button":"none","buttons":0}),
-            Some(&page.session),
-        )?;
-        // Hover can change the label and width. Re-observe the actual hit
-        // target before pressing; never click a stale pre-hover coordinate.
-        let point = self.dom(page, include_str!("dom/open_models.js"), vec![])?;
-        if point["expanded"] == true {
-            return Ok(());
+        for event_type in ["rawKeyDown", "keyUp"] {
+            self.call("Input.dispatchKeyEvent", json!({"type":event_type,"key":"Enter","code":"Enter","windowsVirtualKeyCode":13,"nativeVirtualKeyCode":13}), Some(&page.session))?;
         }
-        self.click_point(page, &point)
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if self
+                .dom(page, include_str!("dom/focus_models.js"), vec![])
+                .is_ok_and(|value| value["expanded"] == true)
+            {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(io::Error::other("E_MODEL_OPEN"));
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
     }
 
     fn prepare_page(&mut self, page: &ManagedPage) -> io::Result<()> {
@@ -1179,7 +1397,7 @@ impl ManagedBrowser {
             let mut intent_called = false;
             let attempt = self.qualify_page(
                 page,
-                "reasoning-slider:0:1:0",
+                r#"["reasoning-slider-v2","Fixture text mode",0,1,0]"#,
                 label,
                 "Never submit this fixture",
                 || {
@@ -1203,7 +1421,7 @@ impl ManagedBrowser {
         let mut intents = 0;
         let qualified = self.qualify_page(
             page,
-            "reasoning-slider:0:1:1",
+            r#"["reasoning-slider-v2","Fixture text mode",0,1,1]"#,
             "Fixture text mode · Extended",
             "Fixture qualification",
             || {
@@ -1236,7 +1454,7 @@ impl ManagedBrowser {
         {
             return Err(io::Error::other("E_SCOPE_FIXTURE"));
         }
-        if surface.candidates.len() != 2
+        if surface.candidates.len() != 4
             || !surface.temporary_chat
             || surface
                 .candidates
@@ -1287,15 +1505,30 @@ impl ManagedBrowser {
             Progress::Completed(text) if text == "fixture response" => {
                 self.call("Page.setDocumentContent", json!({"frameId":frame["frameTree"]["frame"]["id"],"html":include_str!("dom/fixture.html")}), Some(&page.session))?;
                 self.insert_prompt(page, "Unsent fixture draft")?;
+                if self
+                    .verify_candidate(
+                        page,
+                        r#"["reasoning-slider-v2","Fixture reasoning mode",0,1,0]"#,
+                        "Fixture reasoning mode · Standard",
+                    )
+                    .is_ok()
+                {
+                    return Err(io::Error::other("E_FAMILY_VERIFY_FIXTURE"));
+                }
+                self.verify_candidate(
+                    page,
+                    r#"["reasoning-slider-v2","Fixture text mode",0,1,0]"#,
+                    "Fixture text mode · Standard",
+                )?;
                 if self.discover_models(page).err().map(|error| error.to_string()).as_deref() != Some("E_BROWSER_BUSY")
                     || self.dom(page, "function () { return document.querySelector('#prompt-textarea').textContent === 'Unsent fixture draft' && document.querySelector('[role=slider]').getAttribute('aria-valuenow') === '0'; }", vec![])? != true
                 {
                     return Err(io::Error::other("E_DISCOVERY_BUSY_FIXTURE"));
                 }
                 self.call("Page.setDocumentContent", json!({"frameId":frame["frameTree"]["frame"]["id"],"html":include_str!("dom/fixture.html")}), Some(&page.session))?;
-                self.dom(page, "function () { document.body.dataset.fixtureEffortFailure = 'true'; return true; }", vec![])?;
+                self.dom(page, "function () { document.body.dataset.fixtureEffortFailure = 'Fixture reasoning mode'; return true; }", vec![])?;
                 if self.discover_models(page).is_ok()
-                    || self.dom(page, "function () { return document.querySelector('[role=slider]').getAttribute('aria-valuenow') === '0' && document.querySelector('#fixture-effort-label').textContent === 'Standard, 1 of 2.'; }", vec![])? != true
+                    || self.dom(page, "function () { return document.querySelector('[role=slider]').getAttribute('aria-valuenow') === '0' && document.querySelector('#fixture-effort-label').textContent === 'Standard, 1 of 2.' && document.querySelector('[data-testid=model-fixture-text]').getAttribute('aria-checked') === 'true'; }", vec![])? != true
                     || self.baseline(page)?.ids != ["old-assistant"]
                 {
                     return Err(io::Error::other("E_EFFORT_RESTORE_FIXTURE"));
@@ -1309,7 +1542,7 @@ impl ManagedBrowser {
                     return Err(io::Error::other("E_SELECTOR_DRIFT_FIXTURE"));
                 }
                 Ok(
-                    json!({"result":"PASS","evidence":"synthetic DOM only","model_selection_verified":true,"effort_restore_on_failure":true,"stable_turn_identity_verified":true,"literal_prompt":true,"historical_message_excluded":true,"completion_attributed":true,"stop_control":true,"selector_drift_rejected":true}),
+                    json!({"result":"PASS","evidence":"synthetic DOM only","model_selection_verified":true,"family_selection_verified":true,"wrong_family_rejected":true,"effort_restore_on_failure":true,"stable_turn_identity_verified":true,"literal_prompt":true,"historical_message_excluded":true,"completion_attributed":true,"stop_control":true,"selector_drift_rejected":true}),
                 )
             }
             _ => Err(io::Error::other("E_DOM_FIXTURE")),

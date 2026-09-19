@@ -32,6 +32,7 @@ function sliderSurface({ composerCount = 1, hasControl = true, announcement = 'E
   container.querySelector = () => slider;
   container.querySelectorAll = () => [];
   return vm.runInNewContext(`(() => { const readEffortLabel = (${labelSource}); return (${source}); })()`, {
+    readModelFamilies: () => [{ label: 'Fixture family', identity: 'Fixture family', selected: true, disabled: false }],
     HTMLElement: Element,
     document: {
       querySelector: () => unrelated,
@@ -45,12 +46,12 @@ function sliderSurface({ composerCount = 1, hasControl = true, announcement = 'E
   });
 }
 
-test('slider discovery labels come from the same composer control used for selection', () => {
+test('slider discovery binds the checked family and effort independently of composer hover text', () => {
   const surface = sliderSurface()();
   assert.equal(surface.candidates.length, 1);
-  assert.equal(surface.candidates[0].label, 'Composer route · Extra High');
+  assert.equal(surface.candidates[0].label, 'Fixture family · Extra High');
   assert.equal(surface.candidates[0].selected, true);
-  assert.equal(surface.candidates[0].identity, 'reasoning-slider:0:4:3');
+  assert.equal(surface.candidates[0].identity, '["reasoning-slider-v2","Fixture family",0,4,3]');
   assert.equal(surface.diagnostic.effort_range.max, 4);
 });
 
@@ -58,7 +59,7 @@ test('effort discovery requires a hydrated label matching both position and rang
   for (const announcement of ['', 'High, 3 of 5.', 'Extra High, 4 of 6.', 'Extra High', '4 of 5.']) {
     assert.throws(sliderSurface({ announcement }), /E_MODEL_EFFORT_LABEL/);
   }
-  assert.equal(sliderSurface({ announcement: 'Extended, 4 of 5.\nUse arrow keys.' })().candidates[0].label, 'Composer route · Extended');
+  assert.equal(sliderSurface({ announcement: 'Extended, 4 of 5.\nUse arrow keys.' })().candidates[0].label, 'Fixture family · Extended');
 });
 
 test('slider discovery refuses missing or ambiguous composer controls', () => {

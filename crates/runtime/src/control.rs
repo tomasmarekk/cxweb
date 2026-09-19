@@ -9,7 +9,6 @@ use cxweb_domain::{SessionKey, TurnState};
 use cxweb_platform::state::{StatePaths, installed_browser};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,6 +91,44 @@ fn qualification_failure_state(submission_intent: bool, error: &str) -> TurnStat
 #[cfg(test)]
 mod qualification_tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn accepted_browser_operations_wait_for_the_worker_instead_of_fabricating_timeout_receipts()
+     {
+        let (commands, mut incoming) = mpsc::channel(8);
+        let control = Control { commands };
+        let mut tasks = Vec::new();
+        for action in 0..5 {
+            let control = control.clone();
+            tasks.push(tokio::spawn(async move {
+                match action {
+                    0 => control.background().await,
+                    1 => control.connect().await,
+                    2 => control.status().await,
+                    3 => control.qualify().await,
+                    _ => control.qualify_tools().await,
+                }
+            }));
+        }
+        let mut pending = Vec::new();
+        for _ in 0..5 {
+            pending.push(incoming.recv().await.unwrap());
+        }
+        tokio::time::advance(std::time::Duration::from_secs(400)).await;
+        tokio::task::yield_now().await;
+        assert!(tasks.iter().all(|task| !task.is_finished()));
+        for command in pending {
+            let (WorkerCommand::Background(reply)
+            | WorkerCommand::Connect(reply)
+            | WorkerCommand::Status(reply)
+            | WorkerCommand::Qualify(reply)
+            | WorkerCommand::QualifyTurn(_, reply)) = command;
+            reply.send(Ok(ControlStatus::default())).unwrap();
+        }
+        for task in tasks {
+            assert!(task.await.unwrap().is_ok());
+        }
+    }
 
     #[test]
     fn verification_challenge_cannot_qualify_a_stale_authenticated_surface() {
@@ -503,6 +540,9 @@ impl Control {
                                                 "E_MODEL_PARSE" => "E_MODEL_PARSE",
                                                 "E_MODEL_RESULT" => "E_MODEL_RESULT",
                                                 "E_MODEL_RESTORE" => "E_MODEL_RESTORE",
+                                                "E_MODEL_FAMILY" => "E_MODEL_FAMILY",
+                                                "E_MODEL_SELECT" => "E_MODEL_SELECT",
+                                                "E_MODEL_SELECTION" => "E_MODEL_SELECTION",
                                                 "E_BROWSER_BUSY" => "E_BROWSER_BUSY",
                                                 _ => "E_MODEL_DISCOVERY",
                                             };
@@ -526,34 +566,14 @@ impl Control {
                                         continue;
                                     }
                                     let (model, identity) = selected[0];
-                                    let fresh = browser.discover_models(page);
-                                    if let Ok(surface) = &fresh {
-                                        status.model_discovery_diagnostic =
-                                            Some(surface.diagnostic.clone());
-                                        status.qualification_diagnostic =
-                                            Some(cxweb_browser_adapter::QualificationDiagnostic {
-                                                expected_model_label: model.label.clone(),
-                                                observed_model_label: surface
-                                                    .candidates
-                                                    .iter()
-                                                    .find(|candidate| candidate.selected)
-                                                    .map(|candidate| candidate.label.clone())
-                                                    .unwrap_or_default(),
-                                                user_present: false,
-                                                user_matches: false,
-                                                assistant_present: false,
-                                                generating: false,
-                                            });
-                                    }
-                                    if !fresh.is_ok_and(|surface| {
-                                        surface.candidates.iter().filter(|c| c.selected).count()
-                                            == 1
-                                            && surface.candidates.iter().any(|c| {
-                                                c.selected
-                                                    && c.identity == *identity
-                                                    && c.label == model.label
-                                            })
-                                    }) {
+                                    // Recheck the chosen route without traversing or changing
+                                    // every other family immediately before a generation.
+                                    let verified =
+                                        browser.verify_candidate(page, identity, &model.label);
+                                    status.model_discovery_diagnostic = browser.model_diagnostic();
+                                    status.qualification_diagnostic =
+                                        browser.qualification_diagnostic();
+                                    if verified.is_err() {
                                         let _ = reply.send(Err("E_MODEL_SELECTION"));
                                         continue;
                                     }
@@ -624,6 +644,7 @@ impl Control {
                                     );
                                     status.qualification_diagnostic =
                                         browser.qualification_diagnostic();
+                                    status.model_discovery_diagnostic = browser.model_diagnostic();
                                     let outcome = match result {
                                         Ok(outcome) if outcome.candidate_label == model.label => {
                                             outcome
@@ -762,10 +783,10 @@ impl Control {
         self.commands
             .try_send(WorkerCommand::Background(reply))
             .map_err(|_| "E_CONTROL_BUSY")?;
-        tokio::time::timeout(Duration::from_secs(30), receive)
-            .await
-            .map_err(|_| "E_CONTROL_TIMEOUT")?
-            .map_err(|_| "E_CONTROL_CLOSED")?
+        // The accepted operation owns its receipt until the worker actually
+        // finishes. A caller's observation deadline must not mark running work
+        // failed while the browser continues changing selections in the queue.
+        receive.await.map_err(|_| "E_CONTROL_CLOSED")?
     }
     pub async fn status(&self) -> Result<ControlStatus, &'static str> {
         self.request(false).await
@@ -775,10 +796,7 @@ impl Control {
         self.commands
             .try_send(WorkerCommand::Qualify(reply))
             .map_err(|_| "E_CONTROL_BUSY")?;
-        tokio::time::timeout(Duration::from_secs(30), receive)
-            .await
-            .map_err(|_| "E_CONTROL_TIMEOUT")?
-            .map_err(|_| "E_CONTROL_CLOSED")?
+        receive.await.map_err(|_| "E_CONTROL_CLOSED")?
     }
     pub async fn qualify_text(&self) -> Result<ControlStatus, &'static str> {
         self.qualify_turn(Kind::Text).await
@@ -791,10 +809,7 @@ impl Control {
         self.commands
             .try_send(WorkerCommand::QualifyTurn(kind, reply))
             .map_err(|_| "E_CONTROL_BUSY")?;
-        tokio::time::timeout(Duration::from_secs(330), receive)
-            .await
-            .map_err(|_| "E_CONTROL_TIMEOUT")?
-            .map_err(|_| "E_CONTROL_CLOSED")?
+        receive.await.map_err(|_| "E_CONTROL_CLOSED")?
     }
     async fn request(&self, connect: bool) -> Result<ControlStatus, &'static str> {
         let (reply, receive) = oneshot::channel();
@@ -805,9 +820,6 @@ impl Control {
                 WorkerCommand::Status(reply)
             })
             .map_err(|_| "E_CONTROL_BUSY")?;
-        tokio::time::timeout(Duration::from_secs(30), receive)
-            .await
-            .map_err(|_| "E_CONTROL_TIMEOUT")?
-            .map_err(|_| "E_CONTROL_CLOSED")?
+        receive.await.map_err(|_| "E_CONTROL_CLOSED")?
     }
 }
