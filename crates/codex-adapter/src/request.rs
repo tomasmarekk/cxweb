@@ -73,6 +73,9 @@ impl CanonicalRequest {
         for item in &history {
             validate_item(item)?;
         }
+        // Requests carry complete history: a result must resolve one preceding
+        // call of the same wire kind, even if its tool is no longer available.
+        crate::compaction::pending_calls(&history).map_err(|_| "E_TOOL_RESULT_HISTORY")?;
         let definitions = match value.get("tools") {
             None => &[][..],
             Some(Value::Array(tools)) if tools.len() <= 256 => tools.as_slice(),
@@ -166,8 +169,13 @@ impl CanonicalRequest {
         // The summary purpose cannot execute tools or produce a client final.
         value["tool_choice"] = json!("none");
         value["parallel_tool_calls"] = json!(false);
-        let mut request =
-            Self::decode(&serde_json::to_vec(&value).map_err(|_| "E_INVALID_REQUEST")?)?;
+        let mut request = Self::decode(
+            &serde_json::to_vec(&value).map_err(|_| "E_INVALID_REQUEST")?,
+        )
+        .map_err(|code| match code {
+            "E_TOOL_RESULT_HISTORY" => "E_CHECKPOINT_PENDING_TOOLS",
+            other => other,
+        })?;
         request.compaction_pending = Some(crate::compaction::pending_calls(&request.history)?);
         Ok(request)
     }
@@ -390,6 +398,39 @@ fn validate_item(item: &Value) -> Result<(), &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_history_requires_unique_matching_calls_without_reordering_results() {
+        let function = json!({"type":"function_call","name":"read","namespace":"files","call_id":"read-1","arguments":"{}"});
+        let custom = json!({"type":"custom_tool_call","name":"patch","namespace":"files","call_id":"patch-1","input":"literal patch"});
+        let read = json!({"type":"function_call_output","call_id":"read-1","output":"exit code 1: failed"});
+        let patch = json!({"type":"custom_tool_call_output","call_id":"patch-1","output":"DENIED"});
+        // Parallel calls may complete in the reverse order. Historical tools do
+        // not need to be in the current request's registry.
+        let history = json!([function, custom, patch, read]);
+        let decode = |history| {
+            CanonicalRequest::decode(
+                json!({"model":"webbridge/test","input":history})
+                    .to_string()
+                    .as_bytes(),
+            )
+        };
+        let request = decode(history.clone()).unwrap();
+        let prompt = request.browser_prompt(NONCE, 100000).unwrap();
+        let data: Value =
+            serde_json::from_str(prompt.split_once("\nCLIENT_DATA_JSON\n").unwrap().1).unwrap();
+        assert_eq!(data["history"], history);
+        assert!(decode(json!([function, custom, read])).is_ok());
+        for history in [
+            json!([read]),
+            json!([function, read, read]),
+            json!([function, function, read]),
+            json!([read, function]),
+            json!([custom, {"type":"function_call_output","call_id":"patch-1","output":"SUCCESS"}]),
+        ] {
+            assert_eq!(decode(history).err(), Some("E_TOOL_RESULT_HISTORY"));
+        }
+    }
 
     #[test]
     fn checkpoint_prompt_example_preserves_both_json_layers() {

@@ -1663,6 +1663,9 @@ mod tests {
                     assert_eq!(request.uri().path(), format!("/wb/{route}/responses"));
                     for header in ["authorization", "chatgpt-account-id", "cookie"] { assert!(!request.headers().contains_key(header)); }
                     let body = to_bytes(request.into_body(), 8 * 1024 * 1024).await.unwrap();
+                    // Exercise the production decoder on each actual native
+                    // request, including ordered function/custom result history.
+                    cxweb_codex_adapter::request::CanonicalRequest::decode(&body).unwrap();
                     let payload = strict_json::parse(&body, 8 * 1024 * 1024).unwrap();
                     let index = count.fetch_add(1, Ordering::SeqCst);
                     let name = if index == 0 || (fixture.repair && matches!(index, 1 | 3)) || (!fixture.repair && index == 2 && fixture.test) { "exec_command" } else { "apply_patch" };

@@ -1,0 +1,64 @@
+{
+  "schema": "cxweb.native-history-validation.v1",
+  "evidence_level": "mock_integration",
+  "observed_at": "2026-09-20T18:55:29.0863115Z",
+  "os_version": "Microsoft Windows NT 10.0.26100.0",
+  "production_daemon_sha256": "11f8a96d75ecbaf5908e959d2e067a4d5dd8e7faef6d580190ed4d32bcb7a6d8",
+  "command": "CXWEB_NATIVE_PROBE_BACKEND=<reviewed executable> cargo test --locked -p cxweb-runtime actual_native_backend_executes_guarded_tools_and_denial_fixtures -- --ignored --nocapture",
+  "backends": [
+    {
+      "scenarios": 6,
+      "result": "PASS",
+      "decoded_native_requests": 23,
+      "elapsed_seconds": 68.15,
+      "executable_sha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+      "build": "0.155.1"
+    },
+    {
+      "scenarios": 6,
+      "result": "PASS",
+      "decoded_native_requests": 23,
+      "elapsed_seconds": 70.03,
+      "executable_sha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+      "build": "0.155.0-alpha.9.2"
+    }
+  ],
+  "cases": [
+    "read and custom patch",
+    "denied read",
+    "read, patch and passing test",
+    "corrupted output: fabricated success rejected",
+    "failed test, real repair and successful retest",
+    "corrupted repair: fabricated success rejected"
+  ],
+  "checks": {
+    "executable_hash_preserved": true,
+    "actual_unmodified_native_execution": true,
+    "exact_tool_approval_policy": true,
+    "production_request_decoder_on_every_model_request": true,
+    "isolated_signed_out_native_home": true,
+    "no_browser_or_account_generation": true
+  },
+  "regressions": {
+    "real_denial_and_failure_content_preserved": true,
+    "checkpoint_unknown_result_reproduced_before_fix": true,
+    "ordinary_orphan_result_reproduced_before_fix": true,
+    "historical_tools_without_current_registry_preserved": true,
+    "reverse_parallel_completion_preserved": true,
+    "duplicate_and_wrong_kind_results_rejected": true
+  },
+  "verification": {
+    "workspace_passed": 296,
+    "clippy": "PASS",
+    "additional_native_tests_passed": 2,
+    "workspace_ignored": 18,
+    "release_build": "PASS",
+    "formatting": "PASS"
+  },
+  "limitations": [
+    "Synthetic local model responses; not live ChatGPT quality evidence.",
+    "Does not qualify pending native processes surviving compaction.",
+    "App checkpoint recall on the revised prompt remains incomplete after the recorded browser rate limits.",
+    "No GUI picker interaction is claimed by this run."
+  ]
+}

@@ -23,6 +23,36 @@ English. The complete installed CLI and App-backend read/patch/final scenarios
 now pass. A fixed message sent from the actual GUI also passed with the owned
 model and effort corroborated by the native turn context.
 
+## Full-history tool-result validation (2026-09-20)
+
+- The ordinary request decoder had the same missing call/result relationship
+  check: a standalone result with no preceding call passed validation. A new
+  regression reproduced that failure before the fix.
+- Complete request histories now require unique call IDs and exactly matched
+  function/custom results in causal order. Unknown, duplicate, wrong-kind and
+  prematurely ordered results fail with `E_TOOL_RESULT_HISTORY`. Compaction keeps
+  its existing `E_CHECKPOINT_PENDING_TOOLS` error contract.
+- Valid parallel calls may still complete in reverse order. Pending calls remain
+  pending, historical tools need not appear in the current registry, and real
+  denial/failure strings are preserved byte for byte in the serialized history.
+- The isolated actual-native tool fixture now passes every native request through
+  the production decoder, including read/patch, denial, test failure, repair and
+  deliberate false-success rejection. This uses a synthetic local model server,
+  not ChatGPT; it does not claim live model quality.
+- Validation: 296 workspace tests passed (18 opt-in tests ignored); Clippy with
+  warnings denied, formatting and the release CLI/daemon build passed.
+  `actual_native_backend_executes_guarded_tools_and_denial_fixtures --ignored`
+  also passed separately for reviewed CLI 0.155.1 and App backend
+  0.155.0-alpha.9.2. Each ran six scenarios and 23 actual native requests through
+  the decoder, with real file/tool execution and synthetic model responses.
+  This does not contribute to the live model response-quality denominator.
+- The release daemon SHA-256 is
+  `11f8a96d75ecbaf5908e959d2e067a4d5dd8e7faef6d580190ed4d32bcb7a6d8`.
+  After the second confirmed ChatGPT rate-limit failure, avoid another live
+  generation before 19:03 UTC on 2026-09-20. Independent local implementation and
+  testing can continue; this is a diagnostic backoff, not a paused goal or an
+  automatic retry of a failed turn.
+
 ## Late tool-result validation after checkpoint restoration (2026-09-20)
 
 - Found and reproduced a real gap in authenticated checkpoint continuation:
