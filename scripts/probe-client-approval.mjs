@@ -70,6 +70,25 @@ export function approveFixtureCommand(params, cwd, hostShellExecutables, expecte
   return ['', '-NoProfile', '-NoLogo -NoProfile', '-NoProfile -NonInteractive'].includes(argv.slice(1, -2).join(' '));
 }
 
+// Content-free diagnosis only: this never relaxes command approval. In
+// particular, a syntactically similar command remains a failed fixture action.
+export function fixtureCommandDiagnostic(params, cwd, expected) {
+  const command = typeof params?.command === 'string' ? params.command : '';
+  const argv = words(command);
+  const wrapped = argv?.at(-2) === '-Command';
+  const payload = wrapped ? argv.at(-1) : command;
+  let difference = 'other';
+  if (payload === expected) difference = 'exact';
+  else if (payload.trim() === expected) difference = 'outer-whitespace';
+  else if (payload.replaceAll('\\', '/') === expected.replaceAll('\\', '/')) difference = 'path-separators';
+  else if (payload === expected.replaceAll('\\', '\\\\')) difference = 'doubled-backslashes';
+  return {
+    cwdMatches: typeof params?.cwd === 'string' && resolve(params.cwd).toLowerCase() === resolve(cwd).toLowerCase(),
+    shellWrapped: Boolean(wrapped), payloadDifference: difference,
+    payloadLength: payload.length, expectedLength: expected.length,
+  };
+}
+
 function exactRepair(item, cwd, marker) {
   const changes = item?.changes;
   if (item?.type !== 'fileChange' || !Array.isArray(changes) || changes.length !== 1) return false;

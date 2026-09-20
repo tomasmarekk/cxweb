@@ -16,7 +16,7 @@ import { createInterface } from 'node:readline';
 import assert from 'node:assert/strict';
 import { approveFixtureRead, approveFixturePatch, completedFixtureRead, completedFixtureDenial, fixtureReadCommand } from './probe-client-approval.mjs';
 import { approveFixtureTest, approveFixtureRepair, fixtureRepairProgress, fixtureTestCommand, fixtureTestPassed, fixtureTestFailed, fixtureBrokenOutput } from './probe-client-approval.mjs';
-import { approveFixtureCommand } from './probe-client-approval.mjs';
+import { approveFixtureCommand, fixtureCommandDiagnostic } from './probe-client-approval.mjs';
 import { cases as codingCases, fixtureFiles, fingerprint as codingFingerprint, version as codingVersion } from './coding-fixture.mjs';
 import codingRunner from './coding-fixture-runner.cjs';
 import * as codingApproval from './coding-fixture-approval.mjs';
@@ -65,6 +65,7 @@ lines.on('line', line => {
         phase: progress, command, patch,
         exactRead: approveFixtureCommand(params, cwd, shells, codingApproval.readCommand),
         exactTest: approveFixtureCommand(params, cwd, shells, toolRun.testCommand),
+        testCommandDiagnostic: command ? fixtureCommandDiagnostic(params, cwd, toolRun.testCommand) : null,
         kindIsCommand: params.kind == null || params.kind === 'command',
         extraPermissions: params.additionalPermissions != null,
         explicitLocalEnvironment: params.environmentId === 'local',

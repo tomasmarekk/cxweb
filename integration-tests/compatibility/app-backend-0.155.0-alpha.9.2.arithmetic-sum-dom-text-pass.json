@@ -1,0 +1,99 @@
+{
+  "schema": "cxweb.installed-client.v1",
+  "startedAt": "2026-09-20T21:03:00.874Z",
+  "build": "0.155.0-alpha.9.2",
+  "executableSha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+  "synthetic": false,
+  "configurationOverride": false,
+  "actualGuiPicker": "not observed",
+  "text": "not requested",
+  "installedLoopbackRoute": true,
+  "subscriptionAuthentication": true,
+  "models": [
+    {
+      "id": "gpt-6-astra",
+      "name": "GPT-6-Astra"
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "name": "GPT-5.6-Sol"
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "name": "GPT-5.6-Terra"
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "name": "GPT-5.6-Luna"
+    },
+    {
+      "id": "gpt-daybreak-blue-latest",
+      "name": "Daybreak Blue"
+    },
+    {
+      "id": "gpt-5.5",
+      "name": "GPT-5.5"
+    },
+    {
+      "id": "webbridge/402f0b19d5610fcbee25b681",
+      "name": "ChatGPT Web · Latest"
+    }
+  ],
+  "selectedEffort": "xhigh",
+  "reasoningChoices": [
+    {
+      "reasoningEffort": "low",
+      "description": "Instant"
+    },
+    {
+      "reasoningEffort": "medium",
+      "description": "Medium"
+    },
+    {
+      "reasoningEffort": "high",
+      "description": "High"
+    },
+    {
+      "reasoningEffort": "xhigh",
+      "description": "Extra High"
+    },
+    {
+      "reasoningEffort": "max",
+      "description": "Pro"
+    }
+  ],
+  "ownedAndNativeCatalog": true,
+  "nativeCoding": {
+    "result": "passed",
+    "case": "sum",
+    "corpusVersion": "cxweb.arithmetic-repairs.v1",
+    "corpusSha256": "b073abc6cc040afaf32f3b72621c5aaf8ec73c07682a086ec774744e05291af5",
+    "testRunnerSha256": "6ec042e52764680f0bc881cfac4668ddc46435db00571f7c01667e30cb780478",
+    "nodeVersion": "v26.2.0",
+    "nodeExecutableSha256": "96f768b95e8e9d443f5eead1cb2d199744923320bb8240d2c3129362e7ae2a5d",
+    "harnessExecutedNativeTools": false,
+    "actualNativeProcess": true,
+    "before": {
+      "total": 4,
+      "passed": 1,
+      "failed": 3
+    },
+    "actualRead": true,
+    "realTestFailed": true,
+    "boundedPatch": true,
+    "realRetestPassed": true,
+    "finalAfterRetest": true,
+    "testInputsUnchanged": true,
+    "finalSourceSha256": "dd9cf22d6f747cadcfec30f129a097f0de643a96e4b2f9288c9581fe322addf4",
+    "approvedSteps": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  "result": "PASS",
+  "configUnchanged": true,
+  "executableUnchanged": true,
+  "observedAt": "2026-09-20T21:05:19.926Z"
+}

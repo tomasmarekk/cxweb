@@ -1,6 +1,6 @@
 # Native arithmetic repair exercises
 
-Status: **account-live execution IN PROGRESS; no live exercise passed yet**. These four exercises are
+Status: **account-live execution IN PROGRESS; CLI and App sum passed**. These four exercises are
 a subset of coding acceptance, not the complete 20-exercise G2 suite and not
 additional protocol-corpus samples.
 
@@ -44,11 +44,13 @@ in its unique local workspace. Native source/test artifacts are synthetic fixtur
 data. Broader sequence journaling, cancellation/concurrency exercises and the
 remaining coding scenarios still require separate acceptance work.
 
-Local validation: all 16 fixture/approval tests passed, including a real local
+Local validation: all 18 fixture/approval tests passed, including a real local
 Node process exiting 1 before repair, 0 after repair and 2 for rejected source.
 The standalone probe-arithmetic-patch.mjs also passed on actual CLI 0.155.1 and
 App backend 0.155.0-alpha.9.2 using a synthetic loopback model and isolated native
-homes. Both emitted and applied the exact attributed source patch. These are
+homes. Both emitted and applied the exact attributed source patch. The later
+--repair mode also passed read/fail/patch/pass on both clients with four scoped
+approvals and five synthetic model responses. These are
 native-client mock integration results, not account-live successes.
 
 ## Live observations and harness correction
@@ -70,8 +72,49 @@ native-client mock integration results, not account-live successes.
   not yet established whether the model or rendered-text extraction changed
   that whitespace. No test acceptance was weakened to claim success.
 
-All four failed live observations remain archived separately. They are excluded
+The first four failed live observations remain archived separately. They are excluded
 from success claims, not erased or replaced. Neither unattempted remaining case
 nor either native client is qualified by this small exploratory set. The native
 schemas also use move_path for file moves; both spelling variants are explicitly
 denied by repair approval, with regression coverage.
+
+## DOM projection follow-up
+
+A real-Chrome regression subsequently demonstrated that innerText folds repeated
+spaces within JSON strings. Bounded DOM text projection now preserves those
+spaces, and the regression passes. This establishes an adapter defect without
+claiming the unavailable pre-rendered bytes of the earlier App attempt.
+
+- CLI sum ended at 20:49:10 UTC on daemon 8c508b932b023172a1da40cc175fcf539ca5eee1f36898cc415286eb709b46b8.
+  The actual patch preserved both indentation spaces and produced the correct
+  function. Its native retest exited 1; a subsequent direct local test passed.
+  Numeric retest results were not retained by that harness version. The cause
+  remains unknown. The runner now reports VM failures separately from wrong
+  arithmetic instead of swallowing them, without increasing its deadline.
+- App sum ended at 20:55:51 UTC on daemon 0fc921ba774a4f5c53fb53f862bc04d8fa070efea3763830bd8077aee533d041.
+  The read, initial failing test and admissible patch completed. The next command
+  did not match the exact permitted test action and was declined. Its precise
+  mismatch was not retained. The harness now classifies command payload and
+  working-directory differences without retaining command contents or changing
+  approval criteria.
+
+These two failures are archived as each client's arithmetic-dom-text-first.json.
+No failed observation is replaced by a subsequent attempt. Offline diagnostic
+success does not qualify an account-live coding route.
+
+CLI 0.155.1 subsequently passed sum at 21:02:06 UTC on daemon
+0fc921ba774a4f5c53fb53f862bc04d8fa070efea3763830bd8077aee533d041
+with runner SHA-256 6ec042e52764680f0bc881cfac4668ddc46435db00571f7c01667e30cb780478.
+The actual client read the files, observed 3/4 failing cases, applied an admissible
+patch, observed all four passing and only then acknowledged completion. Tests,
+cases, native configuration and executable remained unchanged. The independent
+attempt is archived as cli-0.155.1.arithmetic-sum-dom-text-pass.json. It does not
+erase the earlier failures or qualify unattempted cases.
+
+App backend 0.155.0-alpha.9.2 also passed sum at 21:05:19 UTC on the same daemon
+and runner. The actual read, failing tests, source correction, passing retest and
+final-answer order were verified, with tests, cases, config and executable
+unchanged. Its separate report is
+app-backend-0.155.0-alpha.9.2.arithmetic-sum-dom-text-pass.json.
+Both reports include all five qualified reasoning choices; this particular coding
+exercise used xhigh. These backend runs are not fresh GUI picker observations.

@@ -23,6 +23,30 @@ English. The complete installed CLI and App-backend read/patch/final scenarios
 now pass. A fixed message sent from the actual GUI also passed with the owned
 model and effort corroborated by the native turn context.
 
+## Actual arithmetic repair recovery (2026-09-20)
+
+- CLI 0.155.1 and App backend 0.155.0-alpha.9.2 passed the account-live sum
+  exercise at 21:02:06 and 21:05:19 UTC respectively on daemon
+  0fc921ba774a4f5c53fb53f862bc04d8fa070efea3763830bd8077aee533d041.
+  Each actual native process read the files, observed 3/4 failing cases, applied
+  the correct two-space-indented patch, observed all four cases passing and only
+  then returned its final acknowledgement. Tests, inputs, native config and
+  executables remained unchanged. The reports are arithmetic-sum-dom-text-pass.json
+  under each client prefix. This is a live coding success, not full G2 acceptance.
+- The earlier App attempt at 20:55:51 UTC completed read/fail/patch but proposed
+  a nonmatching retest action. It remains archived as arithmetic-dom-text-first.json;
+  its precise command difference was not retained. Added bounded content-free
+  payload/cwd diagnostics without relaxing approval. All 18 fixture/approval
+  tests now pass; probe syntax and diff checks also pass.
+- All five reasoning choices remain in both actual native catalogs. These sum
+  exercises used xhigh and do not replace earlier all-effort or actual GUI tests.
+- Follow-up: finish the remaining arithmetic and broader coding scenarios. The
+  installed health tracker also needs independently verified config/native
+  upstream observations: it currently leaves those dimensions unknown and keeps
+  idle overall state at preflight, even after successful native web requests.
+  Inspect lifecycle::routing_installed, ConfigJournal::recovery and RoutePatch::can_resume
+  when implementing this; unrelated config edits must not become false conflicts.
+
 ## Visible DOM whitespace projection (2026-09-20)
 
 - A controlled real-Chrome regression proved that innerText collapses two and

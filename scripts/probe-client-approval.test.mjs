@@ -2,7 +2,30 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { approveFixtureRead, approveFixturePatch, completedFixtureRead, completedFixtureDenial, fixtureReadCommand } from './probe-client-approval.mjs';
+import { approveFixtureCommand, fixtureCommandDiagnostic } from './probe-client-approval.mjs';
 import { approveFixtureTest, approveFixtureRepair, fixtureRepairProgress, fixtureTestCommand, fixtureTestPassed, fixtureTestFailed, fixtureBrokenOutput } from './probe-client-approval.mjs';
+
+test('command diagnostics distinguish metadata and payload without granting similar commands or retaining content', () => {
+  const directory = resolve('.local/diagnostic');
+  const expected = "& 'C:\\fixture\\node.exe' './tests.cjs'";
+  for (const [command, difference] of [
+    [expected, 'exact'], [expected + ' ', 'outer-whitespace'],
+    [expected.replaceAll('\\', '/'), 'path-separators'],
+    [expected.replaceAll('\\', '\\\\'), 'doubled-backslashes'], ['private-unexpected-command', 'other'],
+  ]) {
+    const params = { cwd: directory, command };
+    const diagnosis = fixtureCommandDiagnostic(params, directory, expected);
+    assert.equal(diagnosis.payloadDifference, difference);
+    assert.equal(diagnosis.cwdMatches, true);
+    assert.equal(approveFixtureCommand(params, directory, [], expected), difference === 'exact');
+    assert.equal(JSON.stringify(diagnosis).includes('private-unexpected-command'), false);
+  }
+  const command = `'C:\\Program Files\\PowerShell\\7\\pwsh.exe' -NoProfile -Command '${expected.replaceAll("'", "'\"'\"'")}'`;
+  const diagnosis = fixtureCommandDiagnostic({ cwd: resolve(directory, '..'), command }, directory, expected);
+  assert.equal(diagnosis.cwdMatches, false);
+  assert.equal(diagnosis.shellWrapped, true);
+  assert.equal(diagnosis.payloadDifference, 'exact');
+});
 
 const cwd = resolve('.local/probes/approval-fixture/workspace');
 function repairEvents() {
