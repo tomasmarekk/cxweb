@@ -173,8 +173,8 @@ test('background retry is explicit, instance-bound and single while status check
   assert.equal(ui.nodes.get('installed-app').textContent, 'Unverified');
 });
 
-test('login, compatibility, cleanup and active work do not offer background retry', async () => {
-  for (const code of ['E_LOGIN_REQUIRED', 'E_SESSION_SCOPE', 'E_BROWSER_VERSION_CHANGED', 'E_BROWSER_LANGUAGE', 'E_WEB_RECOVERY_CLEANUP']) {
+test('login, rate limits, compatibility, cleanup and active work do not offer background retry', async () => {
+  for (const code of ['E_LOGIN_REQUIRED', 'E_BROWSER_RATE_LIMITED', 'E_SESSION_SCOPE', 'E_BROWSER_VERSION_CHANGED', 'E_BROWSER_LANGUAGE', 'E_WEB_RECOVERY_CLEANUP']) {
     const ui = panel(async command => command === 'installed_list' ? list() : transient(code));
     await flush(); await ui.nodes.get('installed-retry').click();
     assert.equal(ui.nodes.get('installed-retry').hidden, true);
@@ -187,6 +187,17 @@ test('login, compatibility, cleanup and active work do not offer background retr
     const ui = panel(async command => command === 'installed_list' ? list() : value);
     await flush(); assert.equal(ui.nodes.get('installed-retry').hidden, true);
   }
+});
+
+test('service limit asks the user to wait without restarting the browser or signing in', async () => {
+  const value = transient('E_BROWSER_RATE_LIMITED'); value.health.overall = 'rate_limited';
+  const ui = panel(async command => command === 'installed_list' ? list() : value);
+  await flush();
+  assert.equal(ui.nodes.get('installed-heading').textContent, 'ChatGPT limit reached');
+  assert.match(ui.nodes.get('installed-description').textContent, /Wait a few minutes/);
+  assert.match(ui.nodes.get('installed-description').textContent, /signing in again is not required/);
+  assert.equal(ui.nodes.get('installed-retry').hidden, true);
+  assert.deepEqual(ui.calls.map(call=>call.command), ['installed_list','installed_check']);
 });
 
 test('failed retry clears stale status and never targets a restarted runtime automatically', async () => {

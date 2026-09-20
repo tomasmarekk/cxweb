@@ -866,6 +866,7 @@ mod tests {
     #[tokio::test]
     async fn terminal_errors_preserve_codes_and_only_queue_refusals_allow_retries() {
         for code in [
+            "E_BROWSER_RATE_LIMITED",
             "E_MODEL_FIDELITY",
             "E_SUBMISSION_UNCERTAIN",
             "E_CONTEXT_BUDGET",

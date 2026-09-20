@@ -1,0 +1,71 @@
+{
+  "browser_scope": {
+    "account_candidates": 0,
+    "account_switcher_matches_settings": false,
+    "default_context_verified": false,
+    "dismissal": null,
+    "failure": "E_ACCOUNT_OPEN",
+    "has_account_id": false,
+    "has_workspace_id": false,
+    "menu_controls": [],
+    "menu_items": 0,
+    "menu_present": false,
+    "profile_control_tags": [
+      "DIV:0"
+    ],
+    "selected_items": 0,
+    "selected_workspace_candidates": 0,
+    "settings_account_candidates": 0,
+    "settings_account_selected": false,
+    "settings_available": false,
+    "settings_controls": [],
+    "settings_fields": [],
+    "settings_loading": false,
+    "settings_opened": false,
+    "settings_panel_present": false,
+    "switcher": null,
+    "workspace_candidates": 0,
+    "workspace_markers": []
+  },
+  "catalog_codec": "codex-model-info-0.155.0-alpha.9.2",
+  "cleanup_confirmed": true,
+  "client_build": "0.155.0-alpha.9.2",
+  "completed": false,
+  "executable_sha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+  "failure": "E_NATIVE_PROBE_GENERATION",
+  "isolated_native_home": true,
+  "native_tools_executed": 0,
+  "observed_at": "2026-09-20T16:39:39.173Z",
+  "production_capability_published": false,
+  "saved_browser_reused": true,
+  "schema": "cxweb.native-checkpoint.v1",
+  "stage": "failed",
+  "transport": {
+    "checkpoint_continuations": 1,
+    "checkpoint_continuations_with_plaintext_assistant_or_tools": 0,
+    "compaction_requests": 1,
+    "failures": [
+      "E_SESSION_SCOPE"
+    ],
+    "native_websocket_frames": 0,
+    "websocket_requests": 3
+  },
+  "websocket": true,
+  "daemon_sha256": "57123c27c7b96dfb81ae0b3eddc03bab6dceb7a3c6b5a33fbc25d1f37fa18c87",
+  "browser_version": "Chrome/153.0.8010.48",
+  "os_version": "Microsoft Windows NT 10.0.26100.0",
+  "selected_reasoning_effort": "xhigh",
+  "evidence_level": "account_live",
+  "limitations": [
+    "The actual native executable used an isolated signed-out diagnostic home and loopback gateway, borrowing the installed authenticated browser.",
+    "The test exercises explicit text compaction and exact recall, not automatic long-history recovery or outstanding tool-state preservation.",
+    "Only the Extra High reasoning choice is exercised; production checkpoint capability remains unpublished."
+  ],
+  "private_failure_capture_review": {
+    "service_dialog": "Too many requests",
+    "access_temporarily_limited": true,
+    "service_advice": "Wait a few minutes before trying again.",
+    "screenshot_published": false,
+    "interpretation": "The service dialog covers the account control. The old E_SESSION_SCOPE mapping obscured this cause; this run remains failed."
+  }
+}

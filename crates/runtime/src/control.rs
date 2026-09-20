@@ -1025,6 +1025,9 @@ impl Control {
                                             let surface =
                                                 browser.account_scope(page).map_err(|error| {
                                                     let code = match error.to_string().as_str() {
+                                                        "E_BROWSER_RATE_LIMITED" => {
+                                                            "E_BROWSER_RATE_LIMITED"
+                                                        }
                                                         "E_ACCOUNT_OPEN" => "E_ACCOUNT_OPEN",
                                                         "E_ACCOUNT_SCOPE" => "E_ACCOUNT_SCOPE",
                                                         "E_ACCOUNT_READ" => "E_ACCOUNT_READ",
@@ -1041,7 +1044,12 @@ impl Control {
                                                             ..Default::default()
                                                         },
                                                     );
-                                                    std::io::Error::other("E_SESSION_SCOPE")
+                                                    std::io::Error::other(
+                                                        crate::managed_driver::browser_error(
+                                                            &error,
+                                                            "E_SESSION_SCOPE",
+                                                        ),
+                                                    )
                                                 })?;
                                             let current = BrowserScope::from_surface(
                                                 &scope_installation,
@@ -1089,6 +1097,9 @@ impl Control {
                                                 }
                                                 "E_TEMPORARY_CHAT" => "E_TEMPORARY_CHAT",
                                                 "E_SESSION_SCOPE" => "E_SESSION_SCOPE",
+                                                "E_BROWSER_RATE_LIMITED" => {
+                                                    "E_BROWSER_RATE_LIMITED"
+                                                }
                                                 "E_SEND_SURFACE" => "E_SEND_SURFACE",
                                                 "E_SEND_DISABLED" => "E_SEND_DISABLED",
                                                 "E_COMPOSER_MISMATCH" => "E_COMPOSER_MISMATCH",

@@ -268,8 +268,17 @@ type ScopeVerifier = Box<
 type Reply<T> = oneshot::Sender<Result<T, &'static str>>;
 
 // Browser errors can contain transport text. Export only reviewed fixed codes.
+pub(crate) fn browser_error(error: &std::io::Error, fallback: &'static str) -> &'static str {
+    if error.to_string() == "E_BROWSER_RATE_LIMITED" {
+        "E_BROWSER_RATE_LIMITED"
+    } else {
+        fallback
+    }
+}
+
 pub(crate) fn temporary_chat_error(code: &str) -> &'static str {
     match code {
+        "E_BROWSER_RATE_LIMITED" => "E_BROWSER_RATE_LIMITED",
         "E_HIDDEN_TARGET" | "E_BROWSER_TEMPORARY_TARGET" => "E_BROWSER_TEMPORARY_TARGET",
         "E_BACKGROUND_WINDOW" | "E_BROWSER_TEMPORARY_WINDOW" => "E_BROWSER_TEMPORARY_WINDOW",
         "E_BACKGROUND_NAVIGATION" | "E_BROWSER_TEMPORARY_NAVIGATION" => {
@@ -349,7 +358,9 @@ impl ManagedDriver {
         binding.validate()?;
         let installation = binding.installation.clone();
         let mut verify: ScopeVerifier = Box::new(move |browser, page| {
-            let surface = browser.account_scope(page).map_err(|_| "E_SESSION_SCOPE")?;
+            let surface = browser
+                .account_scope(page)
+                .map_err(|error| browser_error(&error, "E_SESSION_SCOPE"))?;
             let scope = BrowserScope::from_surface(&installation, &surface)?;
             Ok((scope.account, scope.workspace))
         });
@@ -444,7 +455,7 @@ impl ManagedDriver {
                                     check_scope(&mut browser, &page, &mut verify)?;
                                     let label = browser
                                         .select_candidate(&page, &selection.identity)
-                                        .map_err(|_| "E_MODEL_SELECTION")?;
+                                        .map_err(|error| browser_error(&error, "E_MODEL_SELECTION"))?;
                                     if label != selection.label {
                                         return Err("E_MODEL_SELECTION");
                                     }
@@ -510,11 +521,11 @@ impl ManagedDriver {
                                 }
                                 browser
                                     .insert_prompt(&lease.page, &prompt)
-                                    .map_err(|_| "E_COMPOSER_INSERT")?;
+                                    .map_err(|error| browser_error(&error, "E_COMPOSER_INSERT"))?;
                                 binding.route(&lease.session)?;
                                 browser
                                     .verify_candidate(&lease.page, &lease.selection.identity, &lease.selection.label)
-                                    .map_err(|_| "E_MODEL_SELECTION")?;
+                                    .map_err(|error| browser_error(&error, "E_MODEL_SELECTION"))?;
                                 lease.prompt = Some(prompt);
                                 browser
                                     .press_send(
@@ -522,7 +533,7 @@ impl ManagedDriver {
                                         lease.prompt.as_ref().unwrap(),
                                         &selected_model,
                                     )
-                                    .map_err(|_| "E_SUBMISSION_UNCERTAIN")
+                                    .map_err(|error| browser_error(&error, "E_SUBMISSION_UNCERTAIN"))
                             })();
                             let _ = reply.send(result);
                         }
@@ -538,7 +549,7 @@ impl ManagedDriver {
                                         &lease.baseline,
                                         lease.prompt.as_ref().ok_or("E_TURN_STATE")?,
                                     )
-                                    .map_err(|_| "E_BROWSER_OBSERVATION")
+                                    .map_err(|error| browser_error(&error, "E_BROWSER_OBSERVATION"))
                             })();
                             if let Ok(observation) = &result {
                                 output_shape = summarize_output_shape(&observation.text);
@@ -723,6 +734,22 @@ mod tests {
 
     #[test]
     fn temporary_chat_errors_preserve_fixed_causes_only() {
+        let limited = std::io::Error::other("E_BROWSER_RATE_LIMITED");
+        assert_eq!(
+            browser_error(&limited, "E_SESSION_SCOPE"),
+            "E_BROWSER_RATE_LIMITED"
+        );
+        assert_eq!(
+            temporary_chat_error(&limited.to_string()),
+            "E_BROWSER_RATE_LIMITED"
+        );
+        assert_eq!(
+            browser_error(
+                &std::io::Error::other("E_BROWSER_RATE_LIMITED private data"),
+                "E_SESSION_SCOPE"
+            ),
+            "E_SESSION_SCOPE"
+        );
         assert_eq!(
             temporary_chat_error("E_HIDDEN_TARGET"),
             "E_BROWSER_TEMPORARY_TARGET"

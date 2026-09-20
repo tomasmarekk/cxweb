@@ -12,6 +12,7 @@ const MAX_FRAME: usize = 8 * 1024 * 1024;
 
 fn scope_error(code: &str) -> &'static str {
     match code {
+        "E_BROWSER_RATE_LIMITED" => "E_BROWSER_RATE_LIMITED",
         "E_ACCOUNT_OPEN" => "E_ACCOUNT_OPEN",
         "E_ACCOUNT_READ" => "E_ACCOUNT_READ",
         "E_ACCOUNT_SCOPE" => "E_ACCOUNT_SCOPE",
@@ -27,6 +28,38 @@ pub struct ManagedPage {
     session: String,
     fixture: bool,
     hidden: bool,
+}
+
+static FAILURE_CAPTURE: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
+
+/// Explicit local development diagnostic. Never enabled by normal browser work.
+/// The private image is not included in public reports or telemetry.
+pub struct FailureCapture;
+impl FailureCapture {
+    pub fn enable(path: std::path::PathBuf) -> io::Result<Self> {
+        if !path.is_absolute() || path.exists() {
+            return Err(io::Error::other("E_CAPTURE_PATH"));
+        }
+        cxweb_platform::state::protected_directory(
+            path.parent()
+                .ok_or_else(|| io::Error::other("E_CAPTURE_PATH"))?,
+        )?;
+        let mut slot = FAILURE_CAPTURE
+            .lock()
+            .map_err(|_| io::Error::other("E_CAPTURE_STATE"))?;
+        if slot.is_some() {
+            return Err(io::Error::other("E_CAPTURE_BUSY"));
+        }
+        *slot = Some(path);
+        Ok(Self)
+    }
+}
+impl Drop for FailureCapture {
+    fn drop(&mut self) {
+        if let Ok(mut slot) = FAILURE_CAPTURE.lock() {
+            *slot = None;
+        }
+    }
 }
 
 impl ManagedPage {
@@ -119,6 +152,8 @@ pub struct QualificationOutcome {
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScopeDiagnostic {
+    #[serde(default)]
+    pub dismissal: Option<Value>,
     #[serde(default)]
     pub default_context_verified: bool,
     #[serde(default)]
@@ -1023,7 +1058,18 @@ impl ManagedBrowser {
 
     pub fn account_scope(&mut self, page: &ManagedPage) -> io::Result<ScopeSurface> {
         self.scope_diagnostic = None;
-        let result = self.account_scope_inner(page);
+        let result = self
+            .check_service_limit(page)
+            .and_then(|()| self.account_scope_inner(page));
+        // The dialog can arrive while account settings are being inspected.
+        let result = match self.check_service_limit(page) {
+            Err(error) if error.to_string() == "E_BROWSER_RATE_LIMITED" => Err(error),
+            _ => result,
+        };
+        let dismissal = self
+            .scope_diagnostic
+            .take()
+            .and_then(|diagnostic| diagnostic.dismissal);
         self.scope_diagnostic = Some(match &result {
             Ok(scope) => scope.diagnostic.clone(),
             Err(error) => ScopeDiagnostic {
@@ -1031,6 +1077,36 @@ impl ManagedBrowser {
                 ..Default::default()
             },
         });
+        if let Some(diagnostic) = &mut self.scope_diagnostic {
+            diagnostic.dismissal = dismissal;
+        }
+        if self
+            .scope_diagnostic
+            .as_ref()
+            .is_some_and(|diagnostic| diagnostic.failure.is_some())
+        {
+            let path = FAILURE_CAPTURE.lock().ok().and_then(|slot| slot.clone());
+            if let Some(path) = path
+                && !path.exists()
+            {
+                use base64::Engine;
+                if let Ok(image) = self.call(
+                    "Page.captureScreenshot",
+                    json!({"format":"png","captureBeyondViewport":false}),
+                    Some(&page.session),
+                ) && let Some(data) = image["data"]
+                    .as_str()
+                    .filter(|data| data.len() < 16 * 1024 * 1024)
+                    && let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data)
+                    && let Ok(mut file) = std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(path)
+                {
+                    let _ = file.write_all(&bytes);
+                }
+            }
+        }
         result
     }
 
@@ -1252,7 +1328,7 @@ impl ManagedBrowser {
             surface.diagnostic.default_context_verified = surface.default_workspace;
             Ok(surface)
         })();
-        let closed = self.close_model_menu(page);
+        let closed = self.close_menus(page, true);
         closed?;
         {
             let deadline = Instant::now() + Duration::from_secs(5);
@@ -1364,6 +1440,12 @@ impl ManagedBrowser {
         let page = self.open_hidden_page("https://chatgpt.com/?temporary-chat=true", false)?;
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
+            if let Err(error) = self.check_service_limit(&page)
+                && error.to_string() == "E_BROWSER_RATE_LIMITED"
+            {
+                self.close_page(page)?;
+                return Err(error);
+            }
             let observation = self.dom(&page, include_str!("dom/temporary_chat.js"), vec![]);
             let code = match observation.as_ref().ok().and_then(Value::as_str) {
                 Some("ready") => return Ok(page),
@@ -1439,6 +1521,13 @@ impl ManagedBrowser {
         Ok(())
     }
 
+    fn check_service_limit(&mut self, page: &ManagedPage) -> io::Result<()> {
+        if self.dom(page, include_str!("dom/rate_limit.js"), vec![])? == true {
+            return Err(io::Error::other("E_BROWSER_RATE_LIMITED"));
+        }
+        Ok(())
+    }
+
     fn point_coordinates(point: &Value) -> io::Result<(f64, f64)> {
         let (Some(x), Some(y)) = (point["x"].as_f64(), point["y"].as_f64()) else {
             return Err(io::Error::other("E_MODEL_MENU"));
@@ -1472,36 +1561,70 @@ impl ManagedBrowser {
     }
 
     fn close_model_menu(&mut self, page: &ManagedPage) -> io::Result<()> {
-        for event_type in ["rawKeyDown", "keyUp"] {
-            self.call(
-                "Input.dispatchKeyEvent",
-                json!({
-                    "type":event_type,
-                    "key":"Escape",
-                    "code":"Escape",
-                    "windowsVirtualKeyCode":27,
-                    "nativeVirtualKeyCode":27
-                }),
-                Some(&page.session),
-            )?;
-        }
+        self.close_menus(page, false)
+    }
+
+    fn close_menus(&mut self, page: &ManagedPage, include_settings: bool) -> io::Result<()> {
+        // Leave submenu hover targets before dismissing their stacked portals.
+        // One Escape can close only the inner menu and leave its parent open.
+        self.call(
+            "Input.dispatchMouseEvent",
+            json!({"type":"mouseMoved","x":10,"y":10,"button":"none","buttons":0}),
+            Some(&page.session),
+        )?;
         let deadline = Instant::now() + Duration::from_secs(5);
+        let mut next_dismissal = Instant::now();
+        let mut attempts = 0;
+        let mut settings_clicked = false;
         loop {
-            if self.dom(page, include_str!("dom/menus_closed.js"), vec![])? == true {
+            self.check_service_limit(page)?;
+            if attempts > 0
+                && self.dom(page, include_str!("dom/menus_closed.js"), vec![])? == true
+                && (!include_settings
+                    || self.dom(page, include_str!("dom/settings_closed.js"), vec![])? == true)
+            {
                 return Ok(());
+            }
+            if include_settings
+                && attempts > 0
+                && !settings_clicked
+                && let Ok(point) =
+                    self.dom(page, include_str!("dom/close_account_settings.js"), vec![])
+            {
+                if point["x"].is_number() && point["y"].is_number() {
+                    self.click_point(page, &point)?;
+                    settings_clicked = true;
+                }
+                self.scope_diagnostic
+                    .get_or_insert_with(ScopeDiagnostic::default)
+                    .dismissal = Some(
+                    json!({"control":point["diagnostic"],"escape_attempts":attempts,"clicked":settings_clicked}),
+                );
+            }
+            if attempts < 3 && Instant::now() >= next_dismissal {
+                for event_type in ["rawKeyDown", "keyUp"] {
+                    self.call("Input.dispatchKeyEvent", json!({"type":event_type,"key":"Escape","code":"Escape","windowsVirtualKeyCode":27,"nativeVirtualKeyCode":27}), Some(&page.session))?;
+                }
+                attempts += 1;
+                next_dismissal = Instant::now() + Duration::from_millis(250);
             }
             if Instant::now() >= deadline {
                 if let Ok(value) = self.dom(page, include_str!("dom/model_surface.js"), vec![]) {
                     self.model_diagnostic =
                         serde_json::from_value(value["diagnostic"].clone()).ok();
                 }
-                return Err(io::Error::other("E_MODEL_CLOSE"));
+                return Err(io::Error::other(if include_settings {
+                    "E_ACCOUNT_SETTINGS_CLOSE"
+                } else {
+                    "E_MODEL_CLOSE"
+                }));
             }
             std::thread::sleep(Duration::from_millis(50));
         }
     }
 
     pub fn insert_prompt(&mut self, page: &ManagedPage, prompt: &str) -> io::Result<()> {
+        self.check_service_limit(page)?;
         if prompt.len() > 512 * 1024 {
             return Err(io::Error::other("E_CONTEXT_BUDGET"));
         }
@@ -1529,6 +1652,7 @@ impl ManagedBrowser {
         prompt: &str,
         selected_model: &str,
     ) -> io::Result<()> {
+        self.check_service_limit(page)?;
         let outcome = self.dom(
             page,
             include_str!("dom/send.js"),
@@ -1557,6 +1681,7 @@ impl ManagedBrowser {
         baseline: &Baseline,
         prompt: &str,
     ) -> io::Result<Observation> {
+        self.check_service_limit(page)?;
         let mut value = self.dom(
             page,
             include_str!("dom/observe.js"),
@@ -2200,6 +2325,118 @@ mod tests {
             },
         }
     }
+    #[test]
+    fn failure_capture_is_explicit_exclusive_and_scoped() {
+        let directory = std::env::temp_dir().join(format!(
+            "cxweb-capture-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        cxweb_platform::state::protected_directory(&directory).unwrap();
+        let path = directory.join("failure.png");
+        assert!(FailureCapture::enable("relative.png".into()).is_err());
+        let guard = FailureCapture::enable(path.clone()).unwrap();
+        assert!(FailureCapture::enable(directory.join("other.png")).is_err());
+        assert_eq!(FAILURE_CAPTURE.lock().unwrap().as_ref(), Some(&path));
+        drop(guard);
+        assert!(FAILURE_CAPTURE.lock().unwrap().is_none());
+        assert!(!path.exists());
+        std::fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires installed Chrome; uses a fresh offscreen fixture profile"]
+    fn rate_limit_stops_account_checks_and_send_without_dismissing_dialog() {
+        let executable = cxweb_platform::state::installed_browser().unwrap();
+        let profile = std::env::temp_dir().join(format!(
+            "cxweb-rate-limit-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        cxweb_platform::state::protected_directory(&profile).unwrap();
+        let mut browser = ManagedBrowser::launch_offscreen(&executable, &profile).unwrap();
+        let page = browser.open_hidden_page("about:blank", true).unwrap();
+        let frame = browser
+            .call("Page.getFrameTree", json!({}), Some(&page.session))
+            .unwrap();
+        let html = r#"<!doctype html><textarea id="prompt-textarea">untouched draft</textarea><div role="dialog"><h2>Too many requests</h2><p>You're making requests too quickly. We've temporarily limited access to your conversations to protect your data.</p><p>Please wait a few minutes before trying again.</p><button onclick="this.parentElement.remove()">Got it</button></div><script>window.actions=0;document.addEventListener('click',()=>window.actions++);document.addEventListener('keydown',()=>window.actions++);</script>"#;
+        browser
+            .call(
+                "Page.setDocumentContent",
+                json!({"frameId":frame["frameTree"]["frame"]["id"],"html":html}),
+                Some(&page.session),
+            )
+            .unwrap();
+        let baseline = Baseline {
+            ids: vec![],
+            selected_model: "Fixture".into(),
+            composer_empty: false,
+            generating: false,
+        };
+        let failures = [
+            browser.account_scope(&page).err(),
+            browser.insert_prompt(&page, "replacement").err(),
+            browser
+                .press_send(&page, "untouched draft", "Fixture")
+                .err(),
+            browser.observe(&page, &baseline, "fixture").err(),
+            browser.close_menus(&page, true).err(),
+        ];
+        let intact = browser.dom(&page, "function () { return window.actions === 0 && document.querySelector('#prompt-textarea').value === 'untouched draft' && !!document.querySelector('[role=dialog]'); }", vec![]).unwrap();
+        browser.close_page_checked(&page).unwrap();
+        browser.close().unwrap();
+        for failure in failures {
+            assert_eq!(failure.unwrap().to_string(), "E_BROWSER_RATE_LIMITED");
+        }
+        assert_eq!(intact, true);
+    }
+
+    #[test]
+    #[ignore = "requires installed Chrome; uses a fresh offscreen fixture profile"]
+    fn nested_menus_close_without_touching_a_draft() {
+        let executable = cxweb_platform::state::installed_browser().unwrap();
+        let profile = std::env::temp_dir().join(format!(
+            "cxweb-menu-dismiss-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        cxweb_platform::state::protected_directory(&profile).unwrap();
+        let mut browser = ManagedBrowser::launch_offscreen(&executable, &profile).unwrap();
+        let page = browser.open_hidden_page("about:blank", true).unwrap();
+        let frame = browser
+            .call("Page.getFrameTree", json!({}), Some(&page.session))
+            .unwrap();
+        let mut results = Vec::new();
+        for include_settings in [false, true] {
+            let html = r#"<!doctype html><textarea id="draft">untouched draft</textarea><div role="dialog" id="settings" style="display:DIALOG_DISPLAY"><button role="tab">General</button><button role="tab">Account</button><button aria-label="Close" onclick="this.parentElement.style.display='none';document.querySelector('#unrelated').style.display='block'">X</button></div><div role="dialog" id="unrelated" style="display:none">Unrelated surface</div><div role="menu" id="parent">Parent</div><div role="menu" id="child">Child</div><script>document.addEventListener('keydown', e => { if(e.key === 'Escape') { const menus = [...document.querySelectorAll('[role=menu]')].filter(n => n.style.display !== 'none'); if(menus.length) menus.at(-1).style.display = 'none'; } });</script>"#.replace("DIALOG_DISPLAY", if include_settings {"block"} else {"none"});
+            browser
+                .call(
+                    "Page.setDocumentContent",
+                    json!({"frameId":frame["frameTree"]["frame"]["id"],"html":html}),
+                    Some(&page.session),
+                )
+                .unwrap();
+            let closed = browser.close_menus(&page, include_settings);
+            let intact = browser.dom(&page, "function (settings) { return document.querySelector('#draft').value === 'untouched draft' && [...document.querySelectorAll('[role=menu], #settings')].every(n => n.style.display === 'none') && document.querySelector('#unrelated').style.display === (settings ? 'block' : 'none'); }", vec![json!(include_settings)]).unwrap();
+            results.push((closed, intact));
+        }
+        browser.close_page_checked(&page).unwrap();
+        browser.close().unwrap();
+        for (closed, intact) in results {
+            closed.unwrap();
+            assert_eq!(intact, true);
+        }
+    }
+
     #[test]
     #[ignore = "requires an installed Chrome; creates fresh diagnostic profiles"]
     fn login_window_returns_to_desktop_after_background_profile_use() {

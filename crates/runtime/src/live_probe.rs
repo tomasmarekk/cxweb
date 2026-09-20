@@ -223,7 +223,7 @@ pub async fn serve(
         .to_owned();
         let surface = browser
             .account_scope(&page)
-            .map_err(|_| "E_SESSION_SCOPE")?;
+            .map_err(|error| crate::managed_driver::browser_error(&error, "E_SESSION_SCOPE"))?;
         let scope = BrowserScope::from_surface(&observed_installation, &surface)?;
         browser.close_page(page).map_err(|_| "E_BROWSER_RELEASE")?;
         let binding = Binding {
@@ -347,6 +347,46 @@ pub(crate) async fn serve_generation_fixture(
     report["browser_closed"] = json!(false);
     report["browser_reused"] = json!(true);
     Ok(report)
+}
+
+/// Caller holds the installed gateway's exclusive maintenance lease for the
+/// complete server lifetime. The existing browser owner is borrowed, never stopped.
+pub(crate) async fn serve_installed_checkpoint(
+    output: &Path,
+    driver: &ManagedDriver,
+    binding: &Binding,
+    websocket: bool,
+    codec: cxweb_codex_adapter::catalog_codec::CatalogCodec,
+    stop: impl Future<Output = ()> + Send + 'static,
+) -> Result<Value, &'static str> {
+    let route = binding
+        .routes
+        .first()
+        .filter(|_| binding.routes.len() == 1)
+        .ok_or("E_MODEL_UNAVAILABLE")?;
+    run_probe(
+        output,
+        ProbeSession {
+            driver,
+            scope: ProviderScope {
+                installation: binding.installation.clone(),
+                account: binding.account.clone(),
+                workspace: binding.workspace.clone(),
+                epoch: binding.epoch,
+            },
+            route: route.id.clone(),
+            label: route.label.clone(),
+            effort: route.effort.clone().ok_or("E_MODEL_UNAVAILABLE")?,
+            consumer: None,
+            fixture: None,
+        },
+        websocket,
+        codec,
+        false,
+        true,
+        stop,
+    )
+    .await
 }
 
 fn validate_output(output: &Path) -> Result<&Path, &'static str> {

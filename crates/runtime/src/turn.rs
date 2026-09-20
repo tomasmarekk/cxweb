@@ -267,23 +267,25 @@ impl Coordinator {
         tracker.begin_submission()?;
         // This operation is deliberately not retried or raced against cancellation.
         // A timed-out send has an unknown upstream outcome.
-        if !matches!(
-            tokio::time::timeout(
-                Duration::from_secs(60),
-                self.browser.submit(
-                    prepared.handle.clone(),
-                    prompt,
-                    prepared.baseline.selected_model.clone()
-                )
-            )
-            .await,
-            Ok(Ok(()))
-        ) {
+        let submitted = tokio::time::timeout(
+            Duration::from_secs(60),
+            self.browser.submit(
+                prepared.handle.clone(),
+                prompt,
+                prepared.baseline.selected_model.clone(),
+            ),
+        )
+        .await;
+        if !matches!(submitted, Ok(Ok(()))) {
             self.ledger
                 .transition(id, TurnState::SubmissionUncertain)
                 .await?;
             self.stop(&prepared.handle).await;
-            return Err("E_SUBMISSION_UNCERTAIN");
+            return Err(if matches!(submitted, Ok(Err("E_BROWSER_RATE_LIMITED"))) {
+                "E_BROWSER_RATE_LIMITED"
+            } else {
+                "E_SUBMISSION_UNCERTAIN"
+            });
         }
         let deadline = tokio::time::Instant::now() + Duration::from_secs(1800);
         let mut progress_at = tokio::time::Instant::now();
@@ -315,11 +317,15 @@ impl Coordinator {
             .await
             {
                 Ok(Ok(observation)) => observation,
-                _ => {
+                failure => {
                     let _: Result<(), _> = tracker.fail("E_BROWSER_OBSERVATION");
                     self.ledger.transition(id, tracker.state()).await?;
                     self.stop(&prepared.handle).await;
-                    return Err("E_BROWSER_OBSERVATION");
+                    return Err(if matches!(failure, Ok(Err("E_BROWSER_RATE_LIMITED"))) {
+                        "E_BROWSER_RATE_LIMITED"
+                    } else {
+                        "E_BROWSER_OBSERVATION"
+                    });
                 }
             };
             let text_hash = format!("{:x}", Sha256::digest(observation.text.as_bytes()));
@@ -452,6 +458,8 @@ mod tests {
 
     #[derive(Clone, Copy)]
     enum Mode {
+        LimitedSubmit,
+        LimitedObserve,
         Final,
         Tool,
         Invalid,
@@ -539,8 +547,11 @@ mod tests {
                 .unwrap();
             *self.nonce.lock().unwrap() = nonce.to_owned();
             let uncertain = matches!(self.mode, Mode::Uncertain);
+            let limited = matches!(self.mode, Mode::LimitedSubmit);
             Box::pin(async move {
-                if uncertain {
+                if limited {
+                    Err("E_BROWSER_RATE_LIMITED")
+                } else if uncertain {
                     Err("E_PIPE_TIMEOUT")
                 } else {
                     Ok(())
@@ -549,6 +560,9 @@ mod tests {
         }
         fn observe(&self, _: String) -> BrowserFuture<Observation> {
             self.observing.notify_one();
+            if matches!(self.mode, Mode::LimitedObserve) {
+                return Box::pin(async { Err("E_BROWSER_RATE_LIMITED") });
+            }
             let nonce = self.nonce.lock().unwrap().clone();
             let text = match self.mode {
                 Mode::Checkpoint => json!({"protocol":"webbridge.tool.v1","turn_nonce":nonce,"kind":"checkpoint","summary":json!({"goal":"fixture","constraints":[],"changed_files":[],"decisions":[],"outstanding_work":[],"test_results":[],"unresolved_tool_ids":[]}).to_string()}).to_string(),
@@ -745,6 +759,43 @@ mod tests {
             assert_eq!(browser.releases.load(Ordering::SeqCst), 1);
         }
     }
+    #[tokio::test]
+    async fn service_limit_is_terminal_preserves_uncertainty_and_never_resends() {
+        for (mode, expected_state) in [
+            (Mode::LimitedSubmit, TurnState::SubmissionUncertain),
+            (Mode::LimitedObserve, TurnState::SubmissionUncertain),
+        ] {
+            let browser = MockBrowser::new(mode);
+            let ledger = Ledger::in_memory();
+            let coordinator = Coordinator::new(ledger.clone(), browser.clone());
+            assert_eq!(
+                coordinator
+                    .execute(input(), CancellationToken::new())
+                    .await
+                    .err(),
+                Some("E_BROWSER_RATE_LIMITED")
+            );
+            let request = input();
+            assert_eq!(
+                ledger
+                    .admit(&request.request_id, &request.session, &request.bytes)
+                    .await
+                    .unwrap(),
+                Admission::Existing(expected_state)
+            );
+            assert_eq!(
+                coordinator
+                    .execute(input(), CancellationToken::new())
+                    .await
+                    .err(),
+                Some("E_REQUEST_ALREADY_ADMITTED")
+            );
+            assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
+            assert_eq!(browser.releases.load(Ordering::SeqCst), 1);
+            assert!(coordinator.replay.lock().unwrap().is_empty());
+        }
+    }
+
     #[tokio::test]
     async fn completion_scope_failure_withholds_and_never_caches_the_answer() {
         let browser = MockBrowser::new(Mode::ChangedScope);

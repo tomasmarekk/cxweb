@@ -52,7 +52,10 @@ fn supervision_error(error: std::io::Error) -> &'static str {
 }
 
 impl DisconnectController {
-    pub(crate) async fn verify_compaction(&self) -> Result<DisconnectState, &'static str> {
+    pub(crate) async fn verify_compaction(
+        &self,
+        target: Option<crate::native_probe::CheckpointTarget>,
+    ) -> Result<DisconnectState, &'static str> {
         let controller = self.clone();
         tokio::spawn(async move {
             {
@@ -64,7 +67,7 @@ impl DisconnectController {
             let recovery = controller.recovery.as_ref().ok_or("E_WEB_RECOVERY_STATE")?;
             controller
                 .gateway
-                .maintain_web(|cancel| recovery.verify_compaction(cancel))
+                .maintain_web(|cancel| recovery.verify_compaction(target, cancel))
                 .await?;
             Ok(*controller.state.borrow())
         })

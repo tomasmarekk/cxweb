@@ -24,6 +24,122 @@ pub enum Exercise {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct CheckpointTarget {
+    pub client: std::path::PathBuf,
+    pub websocket: bool,
+    #[serde(default)]
+    pub capture_failure: bool,
+}
+
+/// Uses an already leased installed browser, but a disposable signed-out native
+/// home. No installed config, credentials or production capabilities are changed.
+pub(crate) async fn qualify_installed_checkpoint(
+    selected: &CheckpointTarget,
+    driver: &crate::managed_driver::ManagedDriver,
+    binding: &crate::managed_driver::Binding,
+    installation_directory: &Path,
+    cancellation: CancellationToken,
+) -> Result<(), &'static str> {
+    let target =
+        TargetPathGuard::capture(&selected.client, false).map_err(|_| "E_NATIVE_PROBE_TARGET")?;
+    let hash = native_preflight::fingerprint(&selected.client).await?;
+    let (build, codec) =
+        native_preflight::reviewed(&hash).ok_or("E_NATIVE_PROBE_CLIENT_UNQUALIFIED")?;
+    let directory =
+        installation_directory.join(format!("checkpoint-client-{:032x}", rand::random::<u128>()));
+    protected_directory(&directory).map_err(|_| "E_NATIVE_PROBE_DIRECTORY")?;
+    let _capture = if selected.capture_failure {
+        Some(
+            cxweb_browser_adapter::FailureCapture::enable(directory.join("scope-failure.png"))
+                .map_err(|_| "E_NATIVE_PROBE_CAPTURE")?,
+        )
+    } else {
+        None
+    };
+    let descriptor = directory.join("runtime/connection.json");
+    let report_path = installation_directory.join("native-compaction-probe-report.json");
+    let mut report = json!({"schema":"cxweb.native-checkpoint.v1","stage":"starting","completed":false,
+        "client_build":build,"catalog_codec":codec.id(),"executable_sha256":hash,"websocket":selected.websocket,
+        "saved_browser_reused":true,"isolated_native_home":true,"native_tools_executed":0,
+        "production_capability_published":false});
+    tokio::fs::write(&report_path, report.to_string())
+        .await
+        .map_err(|_| "E_NATIVE_PROBE_REPORT")?;
+    let stop = CancellationToken::new();
+    let _stop_on_drop = stop.clone().drop_guard();
+    let server = crate::live_probe::serve_installed_checkpoint(
+        &descriptor,
+        driver,
+        binding,
+        selected.websocket,
+        codec,
+        stop.clone().cancelled_owned(),
+    );
+    let client = async {
+        let result = async {
+            let mut connection = tokio::select! {
+                () = cancellation.cancelled() => return Err("E_NATIVE_PROBE_CANCELLED"),
+                result = tokio::time::timeout(Duration::from_secs(15), async {
+                    loop {
+                        if let Ok(bytes) = tokio::fs::read(&descriptor).await
+                            && let Ok(value) = strict_json::parse(&bytes, 1024 * 1024) { return value; }
+                        tokio::time::sleep(Duration::from_millis(25)).await;
+                    }
+                }) => result.map_err(|_| "E_NATIVE_PROBE_ENDPOINT")?,
+            };
+            connection["verify_checkpoint"] = json!(true);
+            let route = binding.routes.first().ok_or("E_MODEL_UNAVAILABLE")?;
+            let endpoint = Endpoint::parse(connection, &route.id, codec)?;
+            let marker = format!("CXWEB_NATIVE_CHECKPOINT_{:032x}", rand::random::<u128>());
+            run_client(&selected.client, &target, &directory, &endpoint, &marker, &cancellation, None).await
+        }.await;
+        stop.cancel();
+        result
+    };
+    let (runtime, client) = tokio::join!(server, client);
+    let result = async {
+        let runtime = runtime?;
+        // ScopeDiagnostic contains only bounded structural observations and
+        // fixed UI labels; ScopeSurface's account/workspace IDs are excluded.
+        report["browser_scope"] = runtime["diagnostic"]["scope"].clone();
+        report["transport"] = json!({
+            "failures":runtime["failures"],"compaction_requests":runtime["compaction_requests"],
+            "checkpoint_continuations":runtime["checkpoint_continuations"],
+            "checkpoint_continuations_with_plaintext_assistant_or_tools":runtime["checkpoint_continuations_with_plaintext_assistant_or_tools"],
+            "websocket_requests":runtime["websocket_requests"],"native_websocket_frames":runtime["native_websocket_frames"]});
+        client?;
+        if runtime["failures"] != json!([]) || runtime["compaction_requests"] != 1
+            || runtime["checkpoint_continuations"] != 1
+            || runtime["checkpoint_continuations_with_plaintext_assistant_or_tools"] != 0
+            || runtime["native_websocket_frames"] != 0
+            || (selected.websocket && runtime["websocket_requests"].as_u64().unwrap_or(0) < 3) {
+            return Err("E_NATIVE_PROBE_CHECKPOINT_TRANSPORT");
+        }
+        target.verify_unchanged().map_err(|_| "E_NATIVE_PROBE_TARGET_CHANGED")?;
+        if native_preflight::fingerprint(&selected.client).await? != hash {
+            return Err("E_NATIVE_PROBE_TARGET_CHANGED");
+        }
+        Ok(())
+    }.await;
+    let cleanup = driver.verify_idle().await;
+    report["cleanup_confirmed"] = json!(cleanup.is_ok());
+    let result = cleanup.and(result);
+    report["completed"] = json!(result.is_ok());
+    report["stage"] = json!(if result.is_ok() {
+        "completed"
+    } else {
+        "failed"
+    });
+    report["failure"] = json!(result.as_ref().err());
+    report["observed_at"] = json!(cxweb_platform::clock::utc_timestamp());
+    let saved = tokio::fs::write(report_path, report.to_string())
+        .await
+        .map_err(|_| "E_NATIVE_PROBE_REPORT");
+    result.and(saved)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Report {
     #[serde(default)]
     pub exercise: Exercise,
@@ -195,6 +311,7 @@ struct Endpoint {
     base: String,
     catalog: Value,
     model: String,
+    verify_checkpoint: bool,
 }
 impl Endpoint {
     fn parse(value: Value, model: &str, codec: CatalogCodec) -> Result<Self, &'static str> {
@@ -223,6 +340,7 @@ impl Endpoint {
             base: base.into(),
             catalog: value["catalog"].clone(),
             model: model.into(),
+            verify_checkpoint: value["verify_checkpoint"] == true,
         })
     }
 }
@@ -241,6 +359,7 @@ struct Client {
     read_denied: bool,
     patch_approved: bool,
     tests_approved: u8,
+    compacting: bool,
 }
 impl Client {
     async fn send(&mut self, value: Value) -> Result<(), &'static str> {
@@ -354,11 +473,12 @@ impl Client {
         ) && !matches!(
             message["params"]["item"]["type"].as_str(),
             Some("agentMessage" | "userMessage" | "reasoning")
-        ) && !(self.fixture.is_some()
-            && matches!(
-                message["params"]["item"]["type"].as_str(),
-                Some("commandExecution" | "fileChange")
-            ))
+        ) && !(self.compacting && message["params"]["item"]["type"] == "contextCompaction")
+            && !(self.fixture.is_some()
+                && matches!(
+                    message["params"]["item"]["type"].as_str(),
+                    Some("commandExecution" | "fileChange")
+                ))
         {
             return Err("E_NATIVE_PROBE_ACTION");
         }
@@ -404,7 +524,7 @@ impl Client {
             .await?;
         let config = &config["config"];
         if config["openai_base_url"] != endpoint.base
-            || config["model_catalog_json"].as_str().map(Path::new) != Some(catalog)
+            || !same_catalog_path(config["model_catalog_json"].as_str(), catalog)
             || config
                 .get("model_provider")
                 .is_some_and(|v| !v.is_null() && v != "openai")
@@ -468,7 +588,11 @@ impl Client {
             .as_ref()
             .map(|fixture| fixture.prompt())
             .unwrap_or_else(|| {
-                format!("Use no tools. Return a final answer with exactly this text: {expected}")
+                if endpoint.verify_checkpoint {
+                    "Use no tools. Invent a fresh random value of exactly 32 lowercase hexadecimal characters. Return exactly CXWEB_NATIVE_CHECKPOINT_ followed by that value, with no spaces or other text. Remember the complete line for a later question; preserve it verbatim in any task checkpoint.".into()
+                } else {
+                    format!("Use no tools. Return a final answer with exactly this text: {expected}")
+                }
             });
         let turn = self.rpc(5, "turn/start", json!({"threadId":thread,"input":[{"type":"text","text":prompt,"text_elements":[]}]})).await?;
         let turn = turn["turn"]["id"].as_str().ok_or("E_NATIVE_PROBE_RPC")?;
@@ -477,7 +601,11 @@ impl Client {
         }
         self.turn = Some(turn.into());
         loop {
-            if text_complete(&self.observations, &thread, turn, expected)? {
+            if endpoint.verify_checkpoint {
+                if let Some(seed) = checkpoint_seed(&self.observations, &thread, turn)? {
+                    return self.verify_checkpoint(&thread, &seed).await;
+                }
+            } else if text_complete(&self.observations, &thread, turn, expected)? {
                 if let Some(fixture) = &self.fixture {
                     if fixture.denial {
                         if !self.read_denied || self.read_approved || self.patch_approved {
@@ -494,6 +622,115 @@ impl Client {
             self.observe(message).await?;
         }
     }
+
+    async fn verify_checkpoint(
+        &mut self,
+        thread: &str,
+        expected: &str,
+    ) -> Result<(), &'static str> {
+        self.observations.clear();
+        self.turn = None;
+        self.compacting = true;
+        self.rpc(7, "thread/compact/start", json!({"threadId":thread}))
+            .await?;
+        loop {
+            if let Some(turn) = self.turn.as_deref()
+                && checkpoint_complete(&self.observations, thread, turn)?
+            {
+                break;
+            }
+            let message = self.next().await?;
+            self.observe(message).await?;
+        }
+        self.compacting = false;
+        self.observations.clear();
+        self.turn = None;
+        let resumed = self.rpc(8, "turn/start", json!({"threadId":thread,"input":[{"type":"text","text":"Return exactly the complete line remembered earlier. Recover it from the task checkpoint. Use no tools and add no other text.","text_elements":[]}]})).await?;
+        let turn = resumed["turn"]["id"].as_str().ok_or("E_NATIVE_PROBE_RPC")?;
+        if self.turn.as_deref().is_some_and(|old| old != turn) {
+            return Err("E_NATIVE_PROBE_ACTION");
+        }
+        self.turn = Some(turn.into());
+        loop {
+            if text_complete(&self.observations, thread, turn, expected)? {
+                return Ok(());
+            }
+            let message = self.next().await?;
+            self.observe(message).await?;
+        }
+    }
+}
+
+fn same_catalog_path(reported: Option<&str>, expected: &Path) -> bool {
+    let Some(reported) = reported.map(Path::new).filter(|path| path.is_absolute()) else {
+        return false;
+    };
+    let Ok(_guard) = TargetPathGuard::capture(reported, false) else {
+        return false;
+    };
+    match (reported.canonicalize(), expected.canonicalize()) {
+        (Ok(reported), Ok(expected)) => reported == expected,
+        _ => false,
+    }
+}
+
+fn checkpoint_complete(events: &[Value], thread: &str, turn: &str) -> Result<bool, &'static str> {
+    let Some(done) = events.iter().find(|event| {
+        event["method"] == "turn/completed"
+            && event["params"]["threadId"] == thread
+            && event["params"]["turn"]["id"] == turn
+    }) else {
+        return Ok(false);
+    };
+    if done["params"]["turn"]["status"] != "completed" {
+        return Err("E_NATIVE_PROBE_COMPACTION");
+    }
+    let items: Vec<_> = events
+        .iter()
+        .filter(|event| {
+            event["method"] == "item/completed"
+                && event["params"]["threadId"] == thread
+                && event["params"]["turnId"] == turn
+        })
+        .collect();
+    if items.len() != 1 || items[0]["params"]["item"]["type"] != "contextCompaction" {
+        return Err("E_NATIVE_PROBE_COMPACTION");
+    }
+    Ok(true)
+}
+
+// The first answer supplies the unpredictable fixture. Neither user message
+// contains it, so retaining user messages cannot make checkpoint recall pass.
+fn checkpoint_seed(
+    events: &[Value],
+    thread: &str,
+    turn: &str,
+) -> Result<Option<String>, &'static str> {
+    let text = events
+        .iter()
+        .find(|event| {
+            event["method"] == "item/completed"
+                && event["params"]["threadId"] == thread
+                && event["params"]["turnId"] == turn
+                && event["params"]["item"]["type"] == "agentMessage"
+        })
+        .and_then(|event| event["params"]["item"]["text"].as_str())
+        .unwrap_or("");
+    if !text_complete(events, thread, turn, text)? {
+        return Ok(None);
+    }
+    if !text
+        .strip_prefix("CXWEB_NATIVE_CHECKPOINT_")
+        .is_some_and(|value| {
+            value.len() == 32
+                && value
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        })
+    {
+        return Err("E_NATIVE_PROBE_CHECKPOINT_SEED");
+    }
+    Ok(Some(text.into()))
 }
 
 fn text_complete(
@@ -564,7 +801,9 @@ async fn run_client(
     let config = format!(
         "openai_base_url = {}\nmodel_catalog_json = {}\n",
         json!(endpoint.base),
-        json!(catalog.to_string_lossy().replace('\\', "/"))
+        // Preserve a verbatim Windows prefix. Converting its backslashes to
+        // slashes makes the native client's path round trip ambiguous.
+        json!(catalog.to_string_lossy())
     );
     std::fs::write(home.join("config.toml"), config).map_err(|_| "E_NATIVE_PROBE_CONFIG")?;
     let mut command = Command::new(executable);
@@ -608,6 +847,7 @@ async fn run_client(
         read_denied: false,
         patch_approved: false,
         tests_approved: 0,
+        compacting: false,
     };
     let result = tokio::select! {
         () = cancellation.cancelled() => Err("E_NATIVE_PROBE_CANCELLED"),
@@ -801,6 +1041,110 @@ fn verify_tools(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn catalog_identity_accepts_native_path_normalization_but_not_other_files() {
+        let directory = std::env::temp_dir().join(format!(
+            "cxweb-catalog-path-{:032x}",
+            rand::random::<u128>()
+        ));
+        protected_directory(&directory).unwrap();
+        let catalog = directory.join("catalog.json");
+        std::fs::write(&catalog, "{}").unwrap();
+        let canonical = catalog.canonicalize().unwrap();
+        assert!(same_catalog_path(catalog.to_str(), &canonical));
+        assert!(same_catalog_path(canonical.to_str(), &catalog));
+        let other = directory.join("other.json");
+        std::fs::write(&other, "{}").unwrap();
+        assert!(!same_catalog_path(other.to_str(), &catalog));
+        assert!(!same_catalog_path(Some("catalog.json"), &catalog));
+        assert!(!same_catalog_path(None, &catalog));
+        assert!(!same_catalog_path(
+            directory.join("missing.json").to_str(),
+            &catalog
+        ));
+        std::fs::remove_file(other).unwrap();
+        std::fs::remove_file(catalog).unwrap();
+        std::fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    fn checkpoint_seed_requires_exact_completed_assistant_shape() {
+        let marker = format!("CXWEB_NATIVE_CHECKPOINT_{}", "a".repeat(32));
+        let item = json!({"method":"item/completed","params":{"threadId":"thread","turnId":"seed","item":{"type":"agentMessage","text":marker}}});
+        let done = json!({"method":"turn/completed","params":{"threadId":"thread","turn":{"id":"seed","status":"completed"}}});
+        assert_eq!(
+            checkpoint_seed(std::slice::from_ref(&item), "thread", "seed"),
+            Ok(None)
+        );
+        assert_eq!(
+            checkpoint_seed(&[item.clone(), done.clone()], "thread", "seed"),
+            Ok(Some(marker.clone()))
+        );
+        assert!(
+            checkpoint_seed(
+                &[item.clone(), item.clone(), done.clone()],
+                "thread",
+                "seed"
+            )
+            .is_err()
+        );
+        for text in [
+            String::new(),
+            format!("{marker}\n"),
+            marker.to_uppercase(),
+            marker[..marker.len() - 1].into(),
+        ] {
+            let mut changed = item.clone();
+            changed["params"]["item"]["text"] = json!(text);
+            assert!(checkpoint_seed(&[changed, done.clone()], "thread", "seed").is_err());
+        }
+        assert!(
+            checkpoint_seed(&[item, done], "other", "seed")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn checkpoint_completion_requires_one_attributed_item_and_successful_turn() {
+        let item = json!({"method":"item/completed","params":{"threadId":"thread","turnId":"compact","item":{"type":"contextCompaction"}}});
+        let done = json!({"method":"turn/completed","params":{"threadId":"thread","turn":{"id":"compact","status":"completed"}}});
+        assert_eq!(
+            checkpoint_complete(std::slice::from_ref(&item), "thread", "compact"),
+            Ok(false)
+        );
+        assert_eq!(
+            checkpoint_complete(&[item.clone(), done.clone()], "thread", "compact"),
+            Ok(true)
+        );
+        assert_eq!(
+            checkpoint_complete(
+                &[item.clone(), item.clone(), done.clone()],
+                "thread",
+                "compact"
+            ),
+            Err("E_NATIVE_PROBE_COMPACTION")
+        );
+        for (pointer, value) in [
+            ("/params/threadId", json!("other")),
+            ("/params/turnId", json!("other")),
+            ("/params/item/type", json!("agentMessage")),
+        ] {
+            let mut changed = item.clone();
+            *changed.pointer_mut(pointer).unwrap() = value;
+            assert_eq!(
+                checkpoint_complete(&[changed, done.clone()], "thread", "compact"),
+                Err("E_NATIVE_PROBE_COMPACTION")
+            );
+        }
+        let mut failed = done;
+        failed["params"]["turn"]["status"] = json!("failed");
+        assert_eq!(
+            checkpoint_complete(&[item, failed], "thread", "compact"),
+            Err("E_NATIVE_PROBE_COMPACTION")
+        );
+    }
     use cxweb_codex_adapter::catalog_codec::CatalogRoute;
 
     #[test]

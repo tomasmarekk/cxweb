@@ -134,6 +134,7 @@ function showError(code) {
     E_MODEL_FAMILY: 'The selected model family could not be verified. Refresh model candidates.',
     E_MODEL_SELECTION: 'The selected ChatGPT route changed or could not be verified. Refresh model candidates.',
     E_SESSION_SCOPE: 'The ChatGPT account or workspace changed or could not be verified. Refresh model candidates. No automatic retry was made.',
+    E_BROWSER_RATE_LIMITED: 'ChatGPT temporarily limited access because requests were too frequent. Wait a few minutes before trying again. No automatic retry was made; signing in again is not required.',
     E_MODEL_SELECT: 'The requested thinking effort could not be selected. Refresh model candidates.',
     E_MODEL_LABEL: 'The model label changed during verification. Refresh model candidates.',
     E_SUBMISSION_UNCERTAIN: 'The test may have been submitted. It was not retried automatically.',

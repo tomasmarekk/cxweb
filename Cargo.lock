@@ -785,6 +785,7 @@ dependencies = [
 name = "cxweb-browser-adapter"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "cxweb-domain",
  "cxweb-platform",
  "serde",

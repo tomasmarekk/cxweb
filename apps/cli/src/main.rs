@@ -14,6 +14,14 @@ enum Command {
     RuntimeVerifyCompaction {
         #[arg(long)]
         installation: String,
+        /// Reviewed native executable to exercise actual compaction transport.
+        #[arg(long)]
+        client: Option<std::path::PathBuf>,
+        #[arg(long, requires = "client")]
+        websocket: bool,
+        /// Save one failed browser surface privately for local development inspection.
+        #[arg(long, requires = "client")]
+        capture_failure: bool,
     },
     /// Qualify every observed reasoning choice in the installed family. Uses ChatGPT allowance.
     RuntimeQualifyReasoning {
@@ -130,20 +138,30 @@ enum BrowserAction {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match Args::parse().command {
-        Command::RuntimeVerifyCompaction { installation } => {
+        Command::RuntimeVerifyCompaction {
+            installation,
+            client,
+            websocket,
+            capture_failure,
+        } => {
             #[cfg(windows)]
             {
                 let current = cxweb_runtime::installed_control::check(&installation).await?;
                 let result = cxweb_runtime::installed_control::verify_compaction(
                     &installation,
                     current.instance,
+                    client.map(|client| cxweb_runtime::native_probe::CheckpointTarget {
+                        client,
+                        websocket,
+                        capture_failure,
+                    }),
                 )
                 .await?;
                 print_json(&serde_json::to_value(result.health)?);
             }
             #[cfg(not(windows))]
             {
-                let _ = installation;
+                let _ = (installation, client, websocket, capture_failure);
                 return Err("runtime verification requires Windows".into());
             }
         }

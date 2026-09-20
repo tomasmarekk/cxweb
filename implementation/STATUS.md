@@ -23,6 +23,87 @@ English. The complete installed CLI and App-backend read/patch/final scenarios
 now pass. A fixed message sent from the actual GUI also passed with the owned
 model and effort corroborated by the native turn context.
 
+## Native checkpoint transport using the installed browser (2026-09-20)
+
+- Extended the explicit checkpoint diagnostic with `--client <reviewed-executable>`
+  and optional `--websocket`. It holds the installed maintenance lease while a
+  disposable signed-out native home uses a separate capability-bound local gateway.
+  The existing authenticated browser owner is borrowed for the complete test;
+  native forwarding and installed client configuration are not replaced.
+- The native client receives a model-generated random fixture, calls its actual
+  `thread/compact/start`, waits for exactly one attributed compaction item and a
+  successful turn, then requests exact recall. Neither user message includes the
+  fixture. Runtime counters require one checkpoint continuation with no plaintext
+  assistant/tool history. All native tool requests are rejected in this exercise.
+- The first CLI attempt stopped before generation with `E_NATIVE_PROBE_CONFIG`.
+  Native `config/read` exposed a Windows verbatim-path issue: converting the
+  `\\?\` prefix to forward slashes produced an inconsistent round trip. Preserve
+  backslashes when writing TOML and compare guarded canonical file identities
+  when reading the native normalized path. The initial failed report is retained
+  in `cli-0.155.1.installed-checkpoint-config-failure.json`.
+- This diagnostic does not publish production compaction or context capacity.
+  CLI 0.155.1 passed the complete HTTP/SSE cycle at 16:04:43 UTC: one native
+  compaction, one exact continuation without plaintext assistant/tool history,
+  no generation failures, and confirmed cleanup. See
+  `cli-0.155.1.installed-browser-checkpoint-http.json`.
+  App backend 0.155.0-alpha.9.2 passed the same cycle at 16:06:01 UTC.
+  The first CLI WebSocket attempt accepted compaction but failed the browser
+  scope check on continuation (`E_SESSION_SCOPE`, 16:07:39 UTC); its incomplete
+  report is retained. Added structural browser-scope diagnostics before further
+  investigation. The App WebSocket attempt then identified `E_MODEL_CLOSE` in
+  account inspection, before generation. A fresh offscreen Chrome regression
+  reproduced the same failure with stacked menus: one Escape closes only the
+  inner portal. Closing now leaves the hover target, checks visibility between
+  dismissals and allows at most three Escapes within the existing deadline.
+  That browser regression failed before the fix and passed afterward, preserving
+  the draft. A later CLI run isolated an additional settings dialog that outlived
+  the menus (`E_ACCOUNT_SETTINGS_CLOSE`). Account inspection now confirms both
+  menus and settings are closed. The expanded real-Chrome regression covers two
+  menu layers with and without an underlying dialog and preserves the draft.
+  A scoped Close-control fallback was added for settings dialogs that ignore
+  Escape, with ambiguity/hit-target checks and a real-Chrome fixture. This was
+  a tested local robustness change, not proof of the live failure's cause.
+  Further structural diagnostics showed an unrelated dialog; a private opt-in
+  failure screenshot at 16:39:39 UTC identified the actual service message:
+  **Too many requests**, with temporary conversation-access restrictions and an
+  instruction to wait a few minutes. The dialog covered the account control.
+  The failed report is `app-0.155.0-alpha.9.2.installed-browser-checkpoint-websocket-rate-limit.json`;
+  its screenshot stays private and is excluded from repository evidence. Earlier
+  failed attempts are retained as failures; their exact causes are not inferred
+  retroactively from the final screenshot.
+- Added `--capture-failure` (requires `--client`) for explicit private diagnostics.
+  The exclusive guard is disabled on scope exit and never used by regular work.
+  The exact visible service restriction is now detected without reading model
+  responses, dismissing the dialog or clicking Send. A fixed
+  `E_BROWSER_RATE_LIMITED` survives account/turn processing and reaches terminal
+  HTTP 400 (reviewed clients retry 429). The durable ledger preserves uncertain
+  submissions, refuses replay and retains cleanup. Health displays `rate_limited`
+  with a wait instruction, not a sign-in or browser-restart action. No quota
+  reset time is invented. New live probes were stopped after identifying the limit.
+- After the service-request cooldown and deployment of the final fix, the App
+  backend passed the complete WebSocket scenario at 16:53:20 UTC: three owned
+  WebSocket requests, one native compaction, one exact checkpoint continuation,
+  zero plaintext assistant/tool history in that continuation, no transport
+  failures, no native WebSocket frames and confirmed cleanup. The report is
+  `app-0.155.0-alpha.9.2.installed-browser-checkpoint-websocket.json`.
+  CLI 0.155.1 passed the same three-request WebSocket cycle at 16:55:13 UTC;
+  see `cli-0.155.1.installed-browser-checkpoint-websocket.json`. Both native
+  builds now pass explicit text compaction/recall over HTTP and WebSocket.
+  Full long-history/tool-state qualification remains pending; these scenarios
+  alone do not complete the production capability gates.
+- Validation: 288 Rust workspace tests and all 103 browser/desktop JavaScript
+  tests passed; 17 opt-in Rust tests were ignored by the normal workspace run.
+  The real offscreen Chrome menu-closure and service-limit regressions each passed
+  explicitly. Clippy with warnings denied, formatting and diff checks passed.
+  Release CLI, daemon and desktop builds passed. The owned runtime was updated
+  while idle; passive saved-session recovery passed without a login window and
+  the desktop was reopened. Diagnostic runs do not mark installed App/CLI client
+  health as request-verified.
+- Ordinary requests through the unchanged installed configuration then passed
+  the App backend at 16:56:17 UTC and CLI at 16:57:32 UTC, with all five reasoning
+  choices plus native models present. Config and native executable hashes stayed
+  unchanged. These reports are `*.post-native-checkpoint-verification.json`.
+
 ## Installed live checkpoint diagnostic (2026-09-20)
 
 - Added explicit `runtime-verify-compaction --installation <id>` through private,

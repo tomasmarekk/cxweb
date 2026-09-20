@@ -50,6 +50,12 @@ fn failure(code: &str) -> (Overall, State, Action, &'static str) {
         );
     }
     match code {
+        "E_BROWSER_RATE_LIMITED" => (
+            Overall::RateLimited,
+            State::Unavailable,
+            Action::Details,
+            "E_BROWSER_RATE_LIMITED",
+        ),
         "E_LOGIN_REQUIRED" => (
             Overall::AuthRequired,
             State::AuthRequired,
@@ -417,6 +423,11 @@ mod tests {
             "E_WEB_UNAVAILABLE"
         );
         for (code, overall, action) in [
+            (
+                "E_BROWSER_RATE_LIMITED",
+                Overall::RateLimited,
+                Action::Details,
+            ),
             ("E_LOGIN_REQUIRED", Overall::AuthRequired, Action::OpenLogin),
             (
                 "E_BROWSER_VERIFICATION_REQUIRED",

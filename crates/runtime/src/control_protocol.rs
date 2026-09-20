@@ -22,7 +22,7 @@ const EXCHANGE: Duration = Duration::from_secs(2);
 pub type Work = Pin<Box<dyn Future<Output = Result<DisconnectState, &'static str>> + Send>>;
 
 pub trait Lifecycle: Send + Sync + 'static {
-    fn verify_compaction(&self) -> Work {
+    fn verify_compaction(&self, _target: Option<crate::native_probe::CheckpointTarget>) -> Work {
         Box::pin(async { Err("E_COMPACTION_UNQUALIFIED") })
     }
     fn reasoning_status(&self) -> Option<Vec<ReasoningFamily>> {
@@ -86,7 +86,7 @@ impl LoginBackend for Control {
 }
 #[derive(Clone, PartialEq, Eq)]
 enum OperationKind {
-    VerifyCompaction,
+    VerifyCompaction(Option<crate::native_probe::CheckpointTarget>),
     QualifyReasoning,
     Activate(crate::setup_owner::ActivationTarget),
     RetryWeb,
@@ -96,9 +96,9 @@ enum OperationKind {
     NativeText(crate::setup_owner::NativeTarget),
 }
 impl Lifecycle for DisconnectController {
-    fn verify_compaction(&self) -> Work {
+    fn verify_compaction(&self, target: Option<crate::native_probe::CheckpointTarget>) -> Work {
         let controller = self.clone();
-        Box::pin(async move { controller.verify_compaction().await })
+        Box::pin(async move { controller.verify_compaction(target).await })
     }
     fn reasoning_status(&self) -> Option<Vec<ReasoningFamily>> {
         self.reasoning_status()
@@ -143,6 +143,8 @@ pub enum Command {
     VerifyCompaction {
         instance: String,
         operation: String,
+        #[serde(default)]
+        target: Option<crate::native_probe::CheckpointTarget>,
     },
     ReasoningStatus {},
     QualifyReasoning {
@@ -243,6 +245,7 @@ pub enum Outcome {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReasoningFailure {
+    RateLimited,
     Discovery,
     Protocol,
     Timeout,
@@ -255,6 +258,7 @@ pub enum ReasoningFailure {
 impl ReasoningFailure {
     fn from_code(code: &str) -> Self {
         match code {
+            "E_BROWSER_RATE_LIMITED" => Self::RateLimited,
             "E_REASONING_DISCOVERY" | "E_MODEL_UNAVAILABLE" | "E_MODEL_SELECTION" => {
                 Self::Discovery
             }
@@ -269,6 +273,7 @@ impl ReasoningFailure {
     }
     pub fn code(&self) -> &'static str {
         match self {
+            Self::RateLimited => "E_BROWSER_RATE_LIMITED",
             Self::Discovery => "E_REASONING_DISCOVERY",
             Self::Protocol => "E_QUALIFICATION_PROTOCOL",
             Self::Timeout => "E_QUALIFICATION_TIMEOUT",
@@ -283,6 +288,7 @@ impl ReasoningFailure {
 
 pub(crate) fn login_error(code: &str) -> &'static str {
     match code {
+        "E_BROWSER_RATE_LIMITED" => "E_BROWSER_RATE_LIMITED",
         "E_ALREADY_RUNNING" => "E_ALREADY_RUNNING",
         "E_BROWSER_START" => "E_BROWSER_START",
         "E_BROWSER_LOGIN" => "E_BROWSER_LOGIN",
@@ -427,7 +433,12 @@ impl Service {
             Command::VerifyCompaction {
                 instance,
                 operation,
-            } => (instance, operation, Some(OperationKind::VerifyCompaction)),
+                target,
+            } => (
+                instance,
+                operation,
+                Some(OperationKind::VerifyCompaction(target)),
+            ),
             Command::QualifyReasoning {
                 instance,
                 operation,
@@ -560,7 +571,7 @@ impl Service {
                 | OperationKind::DisconnectWhenIdle
                 | OperationKind::RetryWeb
                 | OperationKind::QualifyReasoning
-                | OperationKind::VerifyCompaction
+                | OperationKind::VerifyCompaction(_)
         ) && self.backend.is_none())
             || (matches!(
                 &kind,
@@ -574,7 +585,7 @@ impl Service {
                 && !(kind == OperationKind::Disconnect
                     && matches!(
                         running,
-                        OperationKind::QualifyReasoning | OperationKind::VerifyCompaction
+                        OperationKind::QualifyReasoning | OperationKind::VerifyCompaction(_)
                     ))
         }) {
             return error(ErrorCode::Busy);
@@ -609,10 +620,10 @@ impl Service {
             let work_kind = kind.clone();
             let worker = tokio::spawn(async move {
                 match work_kind {
-                    OperationKind::VerifyCompaction => {
+                    OperationKind::VerifyCompaction(target) => {
                         match backend
                             .expect("validated lifecycle backend")
-                            .verify_compaction()
+                            .verify_compaction(target)
                             .await
                         {
                             Ok(result) => Outcome::Completed { result },
@@ -672,7 +683,7 @@ impl Service {
                             | OperationKind::DisconnectWhenIdle
                             | OperationKind::RetryWeb
                             | OperationKind::QualifyReasoning
-                            | OperationKind::VerifyCompaction => {
+                            | OperationKind::VerifyCompaction(_) => {
                                 unreachable!()
                             }
                         }
@@ -918,7 +929,10 @@ mod tests {
         release: Arc<Semaphore>,
     }
     impl Lifecycle for Backend {
-        fn verify_compaction(&self) -> Work {
+        fn verify_compaction(
+            &self,
+            _target: Option<crate::native_probe::CheckpointTarget>,
+        ) -> Work {
             self.retry_web()
         }
         fn reasoning_status(&self) -> Option<Vec<ReasoningFamily>> {
@@ -976,13 +990,15 @@ mod tests {
         let command = || Command::VerifyCompaction {
             instance: service.instance.clone(),
             operation: "d".repeat(32),
+            target: None,
         };
         assert_eq!(
             dispatch(
                 &service,
                 Command::VerifyCompaction {
                     instance: "old".into(),
-                    operation: "d".repeat(32)
+                    operation: "d".repeat(32),
+                    target: None,
                 }
             ),
             error(ErrorCode::Instance)
@@ -1001,7 +1017,23 @@ mod tests {
                 &service,
                 Command::VerifyCompaction {
                     instance: service.instance.clone(),
-                    operation: "e".repeat(32)
+                    operation: "d".repeat(32),
+                    target: Some(crate::native_probe::CheckpointTarget {
+                        client: "C:/fixture/codex.exe".into(),
+                        websocket: true,
+                        capture_failure: false,
+                    }),
+                }
+            ),
+            error(ErrorCode::OperationConflict)
+        );
+        assert_eq!(
+            dispatch(
+                &service,
+                Command::VerifyCompaction {
+                    instance: service.instance.clone(),
+                    operation: "e".repeat(32),
+                    target: None,
                 }
             ),
             error(ErrorCode::Busy)

@@ -196,9 +196,10 @@ pub async fn retry_web(installation: &str, instance: String) -> Result<Snapshot,
 pub async fn verify_compaction(
     installation: &str,
     instance: String,
+    target: Option<crate::native_probe::CheckpointTarget>,
 ) -> Result<Snapshot, &'static str> {
     selected(installation).await?;
-    mutate(installation, instance, Action::VerifyCompaction).await?;
+    mutate(installation, instance, Action::VerifyCompaction(target)).await?;
     read(installation).await
 }
 
@@ -211,9 +212,9 @@ pub async fn qualify_reasoning(
     read(installation).await
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Action {
-    VerifyCompaction,
+    VerifyCompaction(Option<crate::native_probe::CheckpointTarget>),
     QualifyReasoning,
     Remove(bool),
     RetryWeb,
@@ -230,10 +231,11 @@ async fn remove(
 
 async fn mutate(installation: &str, instance: String, action: Action) -> Result<(), &'static str> {
     let operation = format!("{:032x}", rand::random::<u128>());
-    let command = match action {
-        Action::VerifyCompaction => Command::VerifyCompaction {
+    let command = match action.clone() {
+        Action::VerifyCompaction(target) => Command::VerifyCompaction {
             instance: instance.clone(),
             operation: operation.clone(),
+            target,
         },
         Action::QualifyReasoning => Command::QualifyReasoning {
             instance: instance.clone(),
@@ -262,7 +264,10 @@ async fn mutate(installation: &str, instance: String, action: Action) -> Result<
     .await;
     let deadline = tokio::time::Instant::now()
         + Duration::from_secs(
-            if matches!(action, Action::QualifyReasoning | Action::VerifyCompaction) {
+            if matches!(
+                action,
+                Action::QualifyReasoning | Action::VerifyCompaction(_)
+            ) {
                 2700
             } else if matches!(action, Action::RetryWeb) {
                 90
@@ -288,7 +293,7 @@ async fn mutate(installation: &str, instance: String, action: Action) -> Result<
                 outcome: Outcome::Failed {},
                 ..
             }) => {
-                return Err(if matches!(action, Action::VerifyCompaction) {
+                return Err(if matches!(action, Action::VerifyCompaction(_)) {
                     "E_INSTALLED_COMPACTION"
                 } else if matches!(action, Action::RetryWeb) {
                     "E_INSTALLED_RECOVERY"

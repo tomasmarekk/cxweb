@@ -168,7 +168,9 @@ impl PreparedHandoff {
         browser
             .verify_candidate(page, identity, &model.label)
             .map_err(|_| "E_MODEL_SELECTION")?;
-        let surface = browser.account_scope(page).map_err(|_| "E_SESSION_SCOPE")?;
+        let surface = browser
+            .account_scope(page)
+            .map_err(|error| crate::managed_driver::browser_error(&error, "E_SESSION_SCOPE"))?;
         if &BrowserScope::from_surface(observed.0, &surface)? != observed.1 {
             return Err("E_SESSION_SCOPE");
         }

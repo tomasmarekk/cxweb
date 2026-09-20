@@ -197,7 +197,7 @@ impl Receipt {
             }
             let surface = browser
                 .account_scope(&page)
-                .map_err(|_| "E_SESSION_SCOPE")?;
+                .map_err(|error| crate::managed_driver::browser_error(&error, "E_SESSION_SCOPE"))?;
             let current = BrowserScope::from_surface(&self.binding.installation, &surface)?;
             if current.account != self.binding.account
                 || current.workspace != self.binding.workspace
@@ -228,7 +228,7 @@ impl Receipt {
             }
             let surface = browser
                 .account_scope(&page)
-                .map_err(|_| "E_SESSION_SCOPE")?;
+                .map_err(|error| crate::managed_driver::browser_error(&error, "E_SESSION_SCOPE"))?;
             let current = BrowserScope::from_surface(&self.binding.installation, &surface)?;
             if current.account != self.binding.account
                 || current.workspace != self.binding.workspace
@@ -574,6 +574,7 @@ pub(crate) struct RecoveryController {
 impl RecoveryController {
     pub(crate) async fn verify_compaction(
         &self,
+        target: Option<crate::native_probe::CheckpointTarget>,
         cancel: CancellationToken,
     ) -> Result<(), &'static str> {
         self.pending.ready()?;
@@ -590,6 +591,19 @@ impl RecoveryController {
             .map_err(|_| "E_WEB_RECOVERY_STATE")?
             .clone();
         driver.verify_idle().await?;
+        if let Some(target) = target {
+            let result = crate::native_probe::qualify_installed_checkpoint(
+                &target,
+                &driver,
+                &receipt.binding,
+                &self.directory,
+                cancel,
+            )
+            .await;
+            // Any uncertain cleanup must keep the production admission gate closed.
+            driver.verify_idle().await?;
+            return result;
+        }
         // The probe shares the browser owner but never publishes its checkpoint codec.
         // It verifies cleanup before allowing normal web admission to resume.
         crate::compaction_probe::run(

@@ -36,9 +36,12 @@ fn check_scope(
     page: &ManagedPage,
     binding: &Binding,
 ) -> io::Result<()> {
-    let surface = browser
-        .account_scope(page)
-        .map_err(|_| io::Error::other("E_SESSION_SCOPE"))?;
+    let surface = browser.account_scope(page).map_err(|error| {
+        io::Error::other(crate::managed_driver::browser_error(
+            &error,
+            "E_SESSION_SCOPE",
+        ))
+    })?;
     let scope =
         BrowserScope::from_surface(&binding.installation, &surface).map_err(io::Error::other)?;
     if scope.account != binding.account || scope.workspace != binding.workspace {
@@ -116,7 +119,8 @@ fn qualify_inner(
         .open_temporary_chat()
         .map_err(|error| crate::managed_driver::temporary_chat_error(&error.to_string()))?;
     let discovered = (|| {
-        check_scope(browser, &page, binding).map_err(|_| "E_SESSION_SCOPE")?;
+        check_scope(browser, &page, binding)
+            .map_err(|error| crate::managed_driver::browser_error(&error, "E_SESSION_SCOPE"))?;
         let route = binding.routes.first().ok_or("E_MODEL_UNAVAILABLE")?;
         let label = browser
             .select_candidate(&page, &route.identity)
@@ -133,7 +137,8 @@ fn qualify_inner(
             .map(|candidate| candidate.label.clone())
             .collect();
         report.save(directory)?;
-        check_scope(browser, &page, binding).map_err(|_| "E_SESSION_SCOPE")?;
+        check_scope(browser, &page, binding)
+            .map_err(|error| crate::managed_driver::browser_error(&error, "E_SESSION_SCOPE"))?;
         candidates(binding, surface.candidates)
     })();
     browser
@@ -226,6 +231,7 @@ fn qualify_inner(
                         "E_CANCELLED" => "E_CANCELLED",
                         "E_WEB_CLEANUP_UNCONFIRMED" => "E_WEB_CLEANUP_UNCONFIRMED",
                         "E_SESSION_SCOPE" => "E_SESSION_SCOPE",
+                        "E_BROWSER_RATE_LIMITED" => "E_BROWSER_RATE_LIMITED",
                         "E_QUALIFICATION_TIMEOUT" => "E_QUALIFICATION_TIMEOUT",
                         _ => "E_REASONING_QUALIFICATION",
                     };

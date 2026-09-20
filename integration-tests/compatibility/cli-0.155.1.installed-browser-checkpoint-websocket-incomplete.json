@@ -1,0 +1,36 @@
+{
+  "catalog_codec": "codex-model-info-0.155.1",
+  "cleanup_confirmed": true,
+  "client_build": "0.155.1",
+  "completed": false,
+  "executable_sha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+  "failure": "E_NATIVE_PROBE_GENERATION",
+  "isolated_native_home": true,
+  "native_tools_executed": 0,
+  "observed_at": "2026-09-20T16:07:39.480Z",
+  "production_capability_published": false,
+  "saved_browser_reused": true,
+  "schema": "cxweb.native-checkpoint.v1",
+  "stage": "failed",
+  "transport": {
+    "checkpoint_continuations": 1,
+    "checkpoint_continuations_with_plaintext_assistant_or_tools": 0,
+    "compaction_requests": 1,
+    "failures": [
+      "E_SESSION_SCOPE"
+    ],
+    "native_websocket_frames": 0,
+    "websocket_requests": 3
+  },
+  "websocket": true,
+  "daemon_sha256": "3ad7ba17ca80472cb75c968ae5ea05cae1ac5468bbbb64e67981a2059f827b56",
+  "browser_version": "Chrome/153.0.8010.48",
+  "os_version": "Microsoft Windows NT 10.0.26100.0",
+  "selected_reasoning_effort": "xhigh",
+  "evidence_level": "account_live",
+  "limitations": [
+    "The actual native executable used an isolated signed-out diagnostic home and loopback gateway, borrowing the installed authenticated browser.",
+    "The test exercises explicit text compaction and exact recall, not automatic long-history recovery or outstanding tool-state preservation.",
+    "Only the Extra High reasoning choice is exercised; production checkpoint capability remains unpublished."
+  ]
+}
