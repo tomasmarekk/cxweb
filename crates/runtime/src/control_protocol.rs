@@ -41,6 +41,11 @@ pub trait Lifecycle: Send + Sync + 'static {
     fn health(&self) -> cxweb_domain::health::Health {
         cxweb_domain::health::Health::default()
     }
+    fn checked_health(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = cxweb_domain::health::Health> + Send + '_>> {
+        Box::pin(async move { self.health() })
+    }
     fn disconnect(&self) -> Work;
     fn disconnect_when_idle(&self) -> Work {
         Box::pin(async { Err("E_IDLE_DISCONNECT_UNSUPPORTED") })
@@ -129,6 +134,11 @@ impl Lifecycle for DisconnectController {
     }
     fn health(&self) -> cxweb_domain::health::Health {
         DisconnectController::health(self)
+    }
+    fn checked_health(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = cxweb_domain::health::Health> + Send + '_>> {
+        Box::pin(DisconnectController::checked_health(self))
     }
     fn state(&self) -> DisconnectState {
         *self.subscribe().borrow()
@@ -779,6 +789,18 @@ impl Service {
         }
     }
 
+    async fn handle_checked(&self, bytes: &[u8]) -> Reply {
+        // The normal decoder validates version, shape and backend availability
+        // before the filesystem observation can run.
+        let mut reply = self.handle(bytes);
+        if let Reply::Health { health, .. } = &mut reply
+            && let Some(backend) = &self.backend
+        {
+            **health = backend.checked_health().await;
+        }
+        reply
+    }
+
     /// Stopping control admission does not shut down the gateway or cancel an
     /// accepted lifecycle operation. The daemon owner retains those resources.
     pub async fn serve(
@@ -796,7 +818,7 @@ impl Service {
             // peer cannot occupy control admission indefinitely.
             let exchange = async {
                 let bytes = control_pipe::read_frame(&mut pipe).await?;
-                let reply = self.handle(&bytes);
+                let reply = self.handle_checked(&bytes).await;
                 let bytes = serde_json::to_vec(&reply).map_err(io::Error::other)?;
                 control_pipe::write_frame(&mut pipe, &bytes).await?;
                 // Closing a Windows server handle can discard unread output.
@@ -1024,6 +1046,50 @@ mod tests {
     }
     fn dispatch(service: &Service, command: Command) -> Reply {
         service.handle(&serde_json::to_vec(&request(command)).unwrap())
+    }
+    #[tokio::test]
+    async fn checked_dispatch_refreshes_only_valid_health_requests() {
+        struct Observer(AtomicUsize);
+        impl Lifecycle for Observer {
+            fn state(&self) -> DisconnectState {
+                DisconnectState::Idle
+            }
+            fn disconnect(&self) -> Work {
+                Box::pin(async { Err("not used") })
+            }
+            fn checked_health(
+                &self,
+            ) -> Pin<Box<dyn Future<Output = cxweb_domain::health::Health> + Send + '_>>
+            {
+                Box::pin(async move {
+                    self.0.fetch_add(1, Ordering::SeqCst);
+                    let mut health = cxweb_domain::health::Health::default();
+                    health.components.config.state = cxweb_domain::health::ComponentState::Healthy;
+                    health
+                })
+            }
+        }
+        let backend = Arc::new(Observer(AtomicUsize::new(0)));
+        let service = Service::new(backend.clone());
+        for bytes in [
+            br#"{"version":2,"command":{"type":"health"}}"#.as_slice(),
+            br#"{"version":1,"command":{"type":"health","extra":true}}"#.as_slice(),
+            br#"{"version":1,"command":{"type":"status"}}"#.as_slice(),
+        ] {
+            service.handle_checked(bytes).await;
+        }
+        assert_eq!(backend.0.load(Ordering::SeqCst), 0);
+        let reply = service
+            .handle_checked(&serde_json::to_vec(&request(Command::Health {})).unwrap())
+            .await;
+        let Reply::Health { health, .. } = reply else {
+            panic!("expected checked health")
+        };
+        assert_eq!(
+            health.components.config.state,
+            cxweb_domain::health::ComponentState::Healthy
+        );
+        assert_eq!(backend.0.load(Ordering::SeqCst), 1);
     }
     #[tokio::test]
     async fn protocol_receipt_preserves_run_and_effort_and_deduplicates_lost_acknowledgements() {

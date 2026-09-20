@@ -500,6 +500,19 @@ impl ConfigJournal {
         }
     }
 
+    /// Observe the owned route, not equality of the entire original candidate.
+    /// Unrelated user settings may change without invalidating this connection.
+    /// This read never authorizes a write or exports configuration contents.
+    pub(crate) fn routing_matches_current(&self) -> io::Result<bool> {
+        self.journal.verify_unchanged()?;
+        if self.record.phase != Phase::ConfigApplied {
+            return Ok(false);
+        }
+        let current = Snapshot::capture_native_config(&self.record.target)?;
+        let text = std::str::from_utf8(current.original()).map_err(|_| invalid())?;
+        Ok(current.existed() && plan_record(&self.record)?.0.can_resume(text))
+    }
+
     /// Production activation requires current access evidence for both writes.
     /// A read-only preflight report or durable journal cannot supply this proof.
     /// Refusal happens before taking the prepared snapshot or creating staging.
@@ -1016,6 +1029,37 @@ mod tests {
                 .unwrap()
                 .contains("user's later edit")
         );
+    }
+    #[test]
+    fn route_observation_accepts_unrelated_edits_but_detects_effective_conflicts() {
+        let f = Fixture::new();
+        let mut journal = ConfigJournal::prepare(&f.state, &f.target, 12345, CAP).unwrap();
+        assert!(!journal.routing_matches_current().unwrap());
+        journal.apply().unwrap();
+        let installed = std::fs::read_to_string(&f.target).unwrap();
+        assert!(journal.routing_matches_current().unwrap());
+        for extra in ["# user comment\n", "theme = 'dark'\n", "model = 'native'\n"] {
+            let changed = format!("{installed}{extra}");
+            std::fs::write(&f.target, &changed).unwrap();
+            assert!(journal.routing_matches_current().unwrap());
+            assert_eq!(std::fs::read_to_string(&f.target).unwrap(), changed);
+        }
+        for changed in [
+            "model = 'native'\n".to_owned(),
+            installed.replace(CAP, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            format!("{installed}model_provider = 'foreign'\n"),
+            format!("{installed}profile = 'foreign'\n"),
+            format!("{installed}model_catalog_json = 'other.json'\n"),
+            format!("{installed}malformed = [\n"),
+        ] {
+            std::fs::write(&f.target, &changed).unwrap();
+            assert!(!journal.routing_matches_current().unwrap());
+            assert_eq!(std::fs::read_to_string(&f.target).unwrap(), changed);
+        }
+        std::fs::write(&f.target, &installed).unwrap();
+        std::fs::write(f.state.join("integration.json"), "changed receipt").unwrap();
+        assert!(journal.routing_matches_current().is_err());
+        assert_eq!(std::fs::read_to_string(&f.target).unwrap(), installed);
     }
     #[test]
     fn crash_between_config_and_receipt_is_detected_without_rewriting() {

@@ -32,6 +32,7 @@ pub struct DisconnectController {
     published: Arc<Vec<String>>,
     native: Arc<Vec<String>>,
     health: Arc<Mutex<crate::health::Tracker>>,
+    config_check: Arc<AsyncMutex<()>>,
     recovery: Option<crate::web_recovery::RecoveryController>,
 }
 
@@ -129,10 +130,10 @@ impl DisconnectController {
         }
         let journal = self.journal.clone();
         tokio::task::spawn_blocking(move || {
-            journal.lock().ok().is_some_and(|journal| {
-                journal.phase() == Phase::ConfigApplied
-                    && matches!(journal.recovery(), Ok(Recovery::Candidate))
-            })
+            journal
+                .lock()
+                .ok()
+                .is_some_and(|journal| journal.routing_matches_current().unwrap_or(false))
         })
         .await
         .unwrap_or(false)
@@ -302,6 +303,7 @@ impl DisconnectController {
             published: Arc::new(published),
             native: Arc::new(native),
             health: Arc::default(),
+            config_check: Arc::default(),
             recovery: None,
         })
     }
@@ -311,6 +313,39 @@ impl DisconnectController {
             .lock()
             .expect("health cache lock poisoned")
             .snapshot(*self.state.borrow(), self.gateway.health())
+    }
+
+    /// Check the selected native configuration off the async executor. This
+    /// does not contact the browser/upstream, change config or start a process.
+    pub(crate) async fn checked_health(&self) -> cxweb_domain::health::Health {
+        use crate::health::Configuration;
+        let Ok(permit) = self.config_check.clone().try_lock_owned() else {
+            return self.health();
+        };
+        let journal = self.journal.clone();
+        let (configuration, _permit) = tokio::task::spawn_blocking(move || {
+            // Retain the permit even when the control exchange times out. A
+            // slow filesystem must not accumulate detached probe workers.
+            let configuration = journal
+                .try_lock()
+                .map_or(Configuration::Unavailable, |journal| {
+                    match journal.routing_matches_current() {
+                        Ok(true) => Configuration::Installed,
+                        Ok(false) if journal.phase() != Phase::ConfigApplied => {
+                            Configuration::NotInstalled
+                        }
+                        Ok(false) => Configuration::Conflict,
+                        Err(_) => Configuration::Unavailable,
+                    }
+                });
+            // Keep observations serialized through publication as well.
+            (configuration, Some(permit))
+        })
+        .await
+        .unwrap_or((Configuration::Unavailable, None));
+        let mut tracker = self.health.lock().expect("health cache lock poisoned");
+        tracker.observe_configuration(configuration);
+        tracker.snapshot(*self.state.borrow(), self.gateway.health())
     }
 
     pub fn subscribe(&self) -> watch::Receiver<DisconnectState> {
@@ -457,6 +492,39 @@ mod tests {
     }
     fn gateway(provider: Arc<dyn WebProvider>) -> Gateway {
         Gateway::new(12345, NativeTransport::subscription().unwrap(), provider)
+    }
+    #[tokio::test]
+    async fn checked_health_observes_route_edits_without_modifying_config() {
+        use cxweb_domain::health::{ComponentState, Overall};
+        let fixture = Fixture::new();
+        let gateway = gateway(Arc::new(UnqualifiedProvider));
+        let journal = fixture.journal(&gateway);
+        let installed = std::fs::read_to_string(fixture.config()).unwrap();
+        let controller = DisconnectController::new(gateway, journal, vec![], vec![]).unwrap();
+        let first = controller.checked_health().await;
+        assert_eq!(first.components.config.state, ComponentState::Healthy);
+        assert_ne!(first.overall, Overall::Ready);
+        let probe = controller.config_check.clone().try_lock_owned().unwrap();
+        assert_eq!(controller.checked_health().await, first);
+        drop(probe);
+        std::fs::write(fixture.config(), format!("{installed}theme = 'dark'\n")).unwrap();
+        assert!(controller.routing_installed().await);
+        assert_eq!(
+            controller.checked_health().await.components.config.state,
+            ComponentState::Healthy
+        );
+        let changed = "model_provider = 'foreign'\n";
+        std::fs::write(fixture.config(), changed).unwrap();
+        assert!(!controller.routing_installed().await);
+        let conflict = controller.checked_health().await;
+        assert_eq!(conflict.overall, Overall::ConfigConflict);
+        assert!(conflict.revision > first.revision);
+        assert_eq!(std::fs::read_to_string(fixture.config()).unwrap(), changed);
+        std::fs::write(fixture.config(), &installed).unwrap();
+        assert_eq!(
+            controller.checked_health().await.components.config.state,
+            ComponentState::Healthy
+        );
     }
     #[tokio::test]
     async fn dropped_activation_waiter_does_not_cancel_an_accepted_write() {

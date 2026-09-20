@@ -1,4 +1,4 @@
-//! Passive private-control health. No browser, filesystem or upstream probes.
+//! Private-control health from sanitized observations; this module performs no IO.
 use crate::{
     gateway::{GatewayHealth, ProviderHealth},
     lifecycle::DisconnectState,
@@ -9,7 +9,18 @@ use cxweb_domain::health::{
 
 #[derive(Default)]
 pub(crate) struct Tracker {
-    previous: Option<(DisconnectState, GatewayHealth, Health)>,
+    previous: Option<(DisconnectState, GatewayHealth, Configuration, Health)>,
+    configuration: Configuration,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Configuration {
+    #[default]
+    Unknown,
+    Installed,
+    NotInstalled,
+    Conflict,
+    Unavailable,
 }
 
 fn component(
@@ -156,10 +167,15 @@ fn failure(code: &str) -> (Overall, State, Action, &'static str) {
 }
 
 impl Tracker {
+    pub(crate) fn observe_configuration(&mut self, configuration: Configuration) {
+        self.configuration = configuration;
+    }
+
     pub(crate) fn snapshot(&mut self, state: DisconnectState, gateway: GatewayHealth) -> Health {
-        if let Some((previous_state, previous_gateway, health)) = &self.previous
+        if let Some((previous_state, previous_gateway, previous_config, health)) = &self.previous
             && *previous_state == state
             && *previous_gateway == gateway
+            && *previous_config == self.configuration
         {
             return health.clone();
         }
@@ -168,7 +184,7 @@ impl Tracker {
             revision: self
                 .previous
                 .as_ref()
-                .map_or(1, |(_, _, h)| h.revision.saturating_add(1)),
+                .map_or(1, |(_, _, _, h)| h.revision.saturating_add(1)),
             active_web_turns: gateway.active_turns,
             components: Components {
                 runtime: component(State::Healthy, Evidence::LocalProbe, now.clone(), None),
@@ -255,6 +271,26 @@ impl Tracker {
                 );
             }
         }
+        if state == DisconnectState::Idle {
+            let (config_state, code) = match self.configuration {
+                Configuration::Unknown => (State::Unknown, None),
+                Configuration::Installed => (State::Healthy, None),
+                Configuration::NotInstalled => (State::NotInstalled, None),
+                Configuration::Conflict => (State::Conflict, Some("E_CONFIG_CHANGED")),
+                Configuration::Unavailable => (State::Unavailable, Some("E_CONFIG_OBSERVATION")),
+            };
+            if self.configuration != Configuration::Unknown {
+                health.components.config =
+                    component(config_state, Evidence::LocalProbe, now.clone(), code);
+            }
+            if self.configuration == Configuration::Conflict {
+                health.overall = Overall::ConfigConflict;
+                health.suggested_action = Action::Details;
+            } else if self.configuration == Configuration::Unavailable {
+                health.overall = Overall::Unavailable;
+                health.suggested_action = Action::Details;
+            }
+        }
         if !gateway.accepting {
             health.overall = Overall::Disconnected;
             health.suggested_action = Action::Connect;
@@ -302,7 +338,7 @@ impl Tracker {
                 );
             }
         }
-        self.previous = Some((state, gateway, health.clone()));
+        self.previous = Some((state, gateway, self.configuration, health.clone()));
         health
     }
 }
@@ -310,6 +346,41 @@ impl Tracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn configuration_observation_changes_revision_without_certifying_other_dimensions() {
+        let mut tracker = Tracker::default();
+        let source = gateway(ProviderHealth::Verified { observed_at: None });
+        let unknown = tracker.snapshot(DisconnectState::Idle, source.clone());
+        tracker.observe_configuration(Configuration::Installed);
+        let installed = tracker.snapshot(DisconnectState::Idle, source.clone());
+        assert!(installed.revision > unknown.revision);
+        assert_eq!(installed.components.config.state, State::Healthy);
+        assert_eq!(installed.components.native_upstream.state, State::Unknown);
+        assert_eq!(installed.components.codex_app.state, State::Unknown);
+        assert_eq!(installed.overall, Overall::Preflight);
+        assert_eq!(
+            tracker.snapshot(DisconnectState::Idle, source.clone()),
+            installed
+        );
+        tracker.observe_configuration(Configuration::Conflict);
+        let conflict = tracker.snapshot(DisconnectState::Idle, source.clone());
+        assert!(conflict.revision > installed.revision);
+        assert_eq!(conflict.overall, Overall::ConfigConflict);
+        assert_eq!(
+            conflict.components.config.code.as_deref(),
+            Some("E_CONFIG_CHANGED")
+        );
+        tracker.observe_configuration(Configuration::Unavailable);
+        let unavailable = tracker.snapshot(DisconnectState::Idle, source.clone());
+        assert_eq!(unavailable.overall, Overall::Unavailable);
+        assert_eq!(
+            unavailable.components.config.code.as_deref(),
+            Some("E_CONFIG_OBSERVATION")
+        );
+        let removed = tracker.snapshot(DisconnectState::PendingRestart, source);
+        assert_eq!(removed.overall, Overall::RemovalPendingRestart);
+        assert_eq!(removed.components.config.state, State::Healthy);
+    }
     fn gateway(provider: ProviderHealth) -> GatewayHealth {
         GatewayHealth {
             accepting: true,
