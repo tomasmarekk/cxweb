@@ -18,6 +18,45 @@ native/web switching and GUI request still need verification. Both native backen
 pass web/native/web text generation in one process through the installed runtime.
 Scheduled browser recovery now passes after removing an MSIX data-path ambiguity.
 
+## Installed tool string rendering and remaining preparation failure (2026-09-20)
+
+- Added an installed `--tools` exercise alongside the existing text/coexistence
+  probe. It uses the real native home, subscription and gateway, creates a fresh
+  random input fixture, and asks Codex to read it and apply one literal patch.
+  The marker is absent from the prompt. Approval binds to the exact native turn,
+  command, directory, patch and observed read result. The harness never executes
+  model tools. Final verification checks event order, file bytes and exact text.
+- The installed exercise exposed malformed response JSON before any native tool
+  execution. Fixed diagnostics distinguished JSON, envelope shape/identity,
+  purpose, unknown tools, input schema, tool choice and rendered code fences.
+  Invalid escape sequences and raw controls have separate fixed codes. Parser
+  messages, response content, arguments and account data are never exported.
+  Existing validation acceptance remains unchanged, including duplicate-key,
+  unknown-field, schema and nonce rejection. The original coarse error API is
+  preserved for callers that do not need detailed diagnostics.
+- The App backend reproduced `E_TOOL_ENVELOPE_JSON_ESCAPE`. Normal tool replies
+  lacked the Markdown-safe string guidance already used by structured finals
+  and compaction. All normal string values now use Unicode escapes for literal
+  backslashes, inner quotes and Markdown punctuation, including nested function
+  arguments and custom patches. The receiver does not repair or coerce output.
+  A regression preserves Windows paths, quoted commands, literal patch markers,
+  backticks and newlines through decoding and native wire serialization.
+- After that change, the installed CLI produced a byte-identical output fixture
+  through the native read/patch flow. The full task still failed with
+  `E_TEMPORARY_CHAT` while preparing the final model request. An independent App
+  backend exercise then failed at the same preparation boundary before tools.
+  These are FAILED scenarios, retained in `installed-tools-investigation.json`.
+  Temporary Chat preparation is the next active investigation, not a passed gate.
+- A probe launched before browser recovery completed also observed a native-only
+  catalog. The native client can cache that response for five minutes. Startup
+  catalog visibility needs a product-level regression; no native cache was edited
+  to conceal the observation. Subsequent checks waited for actual browser readiness.
+- Validation: workspace 264 passed / 14 ignored; desktop plus fixture approval
+  tests 62 passed; Clippy, formatting and release CLI/daemon/desktop builds passed.
+  The scheduled runtime runs the new encoding/diagnostic build. Earlier live
+  results do not certify the changed prompt; full installed tool completion,
+  actual App picker switching and the wider qualification corpus remain open.
+
 ## Installed native subscription coexistence (2026-09-20)
 
 - Added `--coexistence` to `scripts/probe-installed-client.mjs`. It requests a web

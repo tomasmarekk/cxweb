@@ -1,0 +1,113 @@
+{
+  "schema": "cxweb.installed-tools-investigation.v1",
+  "evidenceLevel": "account_live",
+  "completeScenario": "NOT PASSED",
+  "runs": [
+    {
+      "build": "0.155.1",
+      "startedAt": "2026-09-20T09:58:57.188Z",
+      "observedAt": "2026-09-20T09:59:22.575Z",
+      "result": "FAIL",
+      "error": "E_TURN_FAILED",
+      "providerErrorCodes": [
+        "E_INVALID_TOOL_ENVELOPE"
+      ],
+      "nativeTools": {
+        "result": "started",
+        "harnessExecutedTools": false,
+        "fixtureMarkerInPrompt": false
+      },
+      "configUnchanged": true,
+      "executableUnchanged": true,
+      "fixtureFilesMatch": false
+    },
+    {
+      "build": "0.155.1",
+      "startedAt": "2026-09-20T10:04:06.223Z",
+      "observedAt": "2026-09-20T10:04:29.040Z",
+      "result": "FAIL",
+      "error": "E_TURN_FAILED",
+      "providerErrorCodes": [
+        "E_TOOL_ENVELOPE_JSON"
+      ],
+      "nativeTools": {
+        "result": "started",
+        "harnessExecutedTools": false,
+        "fixtureMarkerInPrompt": false
+      },
+      "configUnchanged": true,
+      "executableUnchanged": true,
+      "fixtureFilesMatch": false
+    },
+    {
+      "build": "0.155.1",
+      "startedAt": "2026-09-20T10:07:22.048Z",
+      "observedAt": "2026-09-20T10:07:22.873Z",
+      "result": "FAIL",
+      "error": "E_OWNED_MODEL_MISSING",
+      "providerErrorCodes": [],
+      "configUnchanged": true,
+      "executableUnchanged": true,
+      "fixtureFilesMatch": false
+    },
+    {
+      "build": "0.155.0-alpha.9.2",
+      "startedAt": "2026-09-20T10:07:46.083Z",
+      "observedAt": "2026-09-20T10:08:10.766Z",
+      "result": "FAIL",
+      "error": "E_TURN_FAILED",
+      "providerErrorCodes": [
+        "E_TOOL_ENVELOPE_JSON_ESCAPE"
+      ],
+      "nativeTools": {
+        "result": "started",
+        "harnessExecutedTools": false,
+        "fixtureMarkerInPrompt": false
+      },
+      "configUnchanged": true,
+      "executableUnchanged": true,
+      "fixtureFilesMatch": false
+    },
+    {
+      "build": "0.155.1",
+      "startedAt": "2026-09-20T10:10:56.762Z",
+      "observedAt": "2026-09-20T10:12:08.645Z",
+      "result": "FAIL",
+      "error": "E_TURN_FAILED",
+      "providerErrorCodes": [
+        "E_TEMPORARY_CHAT"
+      ],
+      "nativeTools": {
+        "result": "started",
+        "harnessExecutedTools": false,
+        "fixtureMarkerInPrompt": false
+      },
+      "configUnchanged": true,
+      "executableUnchanged": true,
+      "fixtureFilesMatch": true
+    },
+    {
+      "build": "0.155.0-alpha.9.2",
+      "startedAt": "2026-09-20T10:13:18.065Z",
+      "observedAt": "2026-09-20T10:13:36.542Z",
+      "result": "FAIL",
+      "error": "E_TURN_FAILED",
+      "providerErrorCodes": [
+        "E_TEMPORARY_CHAT"
+      ],
+      "nativeTools": {
+        "result": "failed",
+        "harnessExecutedTools": false,
+        "fixtureMarkerInPrompt": false,
+        "completedReads": 0,
+        "completedPatches": 0,
+        "readApprovalObserved": false,
+        "patchApprovalObserved": false
+      },
+      "configUnchanged": true,
+      "executableUnchanged": true,
+      "fixtureFilesMatch": false
+    }
+  ],
+  "interpretation": "Detailed diagnostics isolated invalid JSON escape sequences. Universal Unicode string encoding then allowed the CLI fixture file to be copied through native tools. Temporary Chat preparation prevented final completion and the subsequent App-backend scenario. No unsuccessful run is counted as a pass."
+}

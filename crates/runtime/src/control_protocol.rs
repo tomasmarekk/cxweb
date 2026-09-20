@@ -218,6 +218,7 @@ pub(crate) fn login_error(code: &str) -> &'static str {
         "E_USER_MESSAGE_MISMATCH" => "E_USER_MESSAGE_MISMATCH",
         "E_MODEL_FIDELITY" => "E_MODEL_FIDELITY",
         "E_INVALID_TOOL_ENVELOPE" => "E_INVALID_TOOL_ENVELOPE",
+        "E_TOOL_ENVELOPE_FENCED" => "E_TOOL_ENVELOPE_FENCED",
         "E_QUALIFICATION_SELECT" => "E_QUALIFICATION_SELECT",
         "E_QUALIFICATION_BASELINE" => "E_QUALIFICATION_BASELINE",
         "E_QUALIFICATION_INSERT" => "E_QUALIFICATION_INSERT",
@@ -254,6 +255,7 @@ fn login_failures_never_export_arbitrary_backend_text() {
         "E_USER_MESSAGE_MISMATCH",
         "E_MODEL_FIDELITY",
         "E_INVALID_TOOL_ENVELOPE",
+        "E_TOOL_ENVELOPE_FENCED",
         "E_BROWSER_OTHER_PAGES",
         "E_BROWSER_IN_USE",
     ] {

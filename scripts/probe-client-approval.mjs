@@ -63,3 +63,15 @@ export function approveFixturePatch(params, itemEvent, cwd, marker) {
     && resolve(cwd, change.path).toLowerCase() === resolve(cwd, 'probe-output.txt').toLowerCase()
     && change.diff === marker + '\n';
 }
+
+// Evidence must belong to one native turn. A marker in unrelated output, a
+// failed read, or a patch started before that read cannot authorize a write.
+export function completedFixtureRead(events, threadId, turnId, cwd, marker, shells = []) {
+  const commands = events.filter(event => event.method === 'item/completed'
+    && event.params?.threadId === threadId && event.params?.turnId === turnId
+    && event.params?.item?.type === 'commandExecution');
+  if (commands.length !== 1) return false;
+  const item = commands[0].params.item;
+  return item.status === 'completed' && item.exitCode === 0
+    && approveFixtureRead(item, cwd, shells) && item.aggregatedOutput?.trim() === marker;
+}

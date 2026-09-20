@@ -1,17 +1,19 @@
 // Verify an explicitly selected native client's real installed routing.
 // Uses its existing subscription. --text consumes web allowance; --coexistence
 // also exercises a native subscription model between two independent web turns.
+// --tools runs one exact native read/patch exercise in a disposable workspace.
 // No auth files, routing overrides, model catalogs or client binaries are changed.
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { readFile, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
 import { isAbsolute, resolve, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import assert from 'node:assert/strict';
+import { approveFixtureRead, approveFixturePatch, completedFixtureRead, fixtureReadCommand } from './probe-client-approval.mjs';
 
 const [client, home, model, option] = process.argv.slice(2);
 assert.ok(client && home && model?.startsWith('webbridge/') && isAbsolute(client) && isAbsolute(home));
-assert.ok(process.argv.length <= 6 && (!option || ['--text', '--coexistence'].includes(option)));
+assert.ok(process.argv.length <= 6 && (!option || ['--text', '--coexistence', '--tools'].includes(option)));
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const builds = new Map([
   ['eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316', '0.155.1'],
@@ -24,10 +26,15 @@ const configPath = join(home, 'config.toml');
 const configBefore = sha256(await readFile(configPath));
 await mkdir(resolve('.local/probes'), { recursive: true });
 const cwd = await mkdtemp(resolve('.local/probes/installed-'));
+const shells = [];
+if (option === '--tools') for (const name of ['pwsh.exe', 'powershell.exe']) {
+  try { shells.push(...execFileSync('where.exe', [name], { encoding: 'utf8', windowsHide: true }).trim().split(/\r?\n/)); } catch { /* optional shell absent */ }
+}
 const child = spawn(client, ['app-server'], { cwd, env: { ...process.env, CODEX_HOME: home }, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
 const pending = new Map();
 const events = [];
 let failure, bytes = 0, id = 0;
+let toolRun;
 const send = value => child.stdin.write(JSON.stringify(value) + '\n');
 const lines = createInterface({ input: child.stdout });
 lines.on('line', line => {
@@ -36,14 +43,34 @@ lines.on('line', line => {
   let message;
   try { message = JSON.parse(line); } catch { failure = 'E_PROTOCOL'; child.kill(); return; }
   if (message.method && message.id !== undefined) {
-    // Text-only verification never approves tools or other client-side actions.
-    send({ id: message.id, error: { code: -32601, message: 'No actions approved by this text test' } });
-    failure = 'E_UNEXPECTED_ACTION';
+    const command = message.method === 'item/commandExecution/requestApproval';
+    const patch = message.method === 'item/fileChange/requestApproval';
+    const params = message.params;
+    const scoped = toolRun?.turn && params?.threadId === toolRun.thread && params?.turnId === toolRun.turn;
+    let accepted = false;
+    if (scoped && command && !toolRun.readApproved && !toolRun.patchApproved && approveFixtureRead(params, cwd, shells)) {
+      accepted = toolRun.readApproved = true;
+    } else if (scoped && patch && !toolRun.patchApproved && completedFixtureRead(events, toolRun.thread, toolRun.turn, cwd, toolRun.marker, shells)) {
+      const started = events.findLast(event => event.method === 'item/started' && event.params?.item?.id === params.itemId);
+      accepted = approveFixturePatch(params, started, cwd, toolRun.marker);
+      toolRun.patchApproved = accepted;
+    }
+    send(command || patch
+      ? { id: message.id, result: { decision: accepted ? 'accept' : 'decline' } }
+      : { id: message.id, error: { code: -32601, message: 'No other actions approved by this fixture' } });
+    if (!accepted) failure = 'E_UNEXPECTED_ACTION';
   } else if (message.id !== undefined) {
     const callback = pending.get(message.id);
     pending.delete(message.id);
     callback?.(message);
-  } else { events.push(message); }
+  } else {
+    if (toolRun && message.method === 'turn/started' && message.params?.threadId === toolRun.thread) {
+      const turn = message.params.turn?.id;
+      if (!turn || (toolRun.turn && toolRun.turn !== turn)) failure = 'E_TURN_IDENTITY';
+      else toolRun.turn = turn;
+    }
+    events.push(message);
+  }
 });
 child.on('error', () => { failure = 'E_CLIENT_START'; });
 async function rpc(method, params) {
@@ -85,6 +112,45 @@ async function verifyText(selectedModel, effort) {
   assert.ok(!events.some(event => event.method === 'item/started' && event.params?.threadId === thread && event.params?.turnId === turn && ['commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall'].includes(event.params?.item?.type)), 'E_UNEXPECTED_TOOL');
   check.result = 'passed';
 }
+async function verifyTools(selectedModel) {
+  evidence.nativeTools = { result: 'started', harnessExecutedTools: false, fixtureMarkerInPrompt: false };
+  const marker = `CXWEB_INSTALLED_TOOLS_${randomBytes(16).toString('hex')}`;
+  await writeFile(join(cwd, 'probe-input.txt'), marker + '\n', { flag: 'wx' });
+  const started = await rpc('thread/start', { cwd, model, ephemeral: true, approvalPolicy: 'untrusted', sandbox: 'read-only' });
+  assert.equal(started.model, model, 'E_SELECTED_MODEL');
+  assert.equal(started.modelProvider, 'openai', 'E_NATIVE_PROVIDER');
+  toolRun = { thread: started.thread.id, marker, readApproved: false, patchApproved: false };
+  const prompt = `Use exec_command exactly once with cmd exactly ${JSON.stringify(fixtureReadCommand)}, login=false and the current working directory. After reading probe-input.txt, use apply_patch exactly once to add probe-output.txt containing that exact line followed by a newline. Wait for each actual tool result before continuing. Do not run other commands, change other files, request elevated permissions or access the network. Return exactly the line read as the final answer without extra text.`;
+  const turn = (await rpc('turn/start', { threadId: toolRun.thread, effort: selectedModel.defaultReasoningEffort, input: [{ type: 'text', text: prompt, text_elements: [] }] })).turn.id;
+  assert.ok(!toolRun.turn || toolRun.turn === turn, 'E_TURN_IDENTITY');
+  toolRun.turn = turn;
+  console.log(JSON.stringify({ phase: 'native read and patch', model }));
+  const deadline = Date.now() + 600000;
+  let done;
+  while (Date.now() < deadline) {
+    assert.ok(!failure, failure);
+    done = events.find(event => event.method === 'turn/completed' && event.params?.threadId === toolRun.thread && event.params?.turn?.id === turn);
+    if (done) break;
+    assert.equal(child.exitCode, null, 'E_CLIENT_EXIT');
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  assert.equal(done?.params?.turn?.status, 'completed', 'E_TURN_FAILED');
+  assert.ok(completedFixtureRead(events, toolRun.thread, turn, cwd, marker, shells), 'E_READ_RESULT');
+  const completed = events.filter(event => event.method === 'item/completed' && event.params?.threadId === toolRun.thread && event.params?.turnId === turn);
+  const tools = completed.filter(event => !['userMessage', 'agentMessage', 'reasoning'].includes(event.params?.item?.type));
+  assert.deepEqual(tools.map(event => event.params.item.type), ['commandExecution', 'fileChange'], 'E_TOOL_ORDER');
+  const patch = tools[1].params.item;
+  assert.equal(patch.status, 'completed', 'E_PATCH_FAILED');
+  const patchStarted = events.findLast(event => event.method === 'item/started' && event.params?.item?.id === patch.id);
+  assert.ok(approveFixturePatch({ itemId: patch.id, threadId: toolRun.thread, turnId: turn }, patchStarted, cwd, marker), 'E_PATCH_TARGET');
+  assert.equal(await readFile(join(cwd, 'probe-output.txt'), 'utf8'), marker + '\n', 'E_PATCH_CONTENT');
+  assert.equal(await readFile(join(cwd, 'probe-input.txt'), 'utf8'), marker + '\n', 'E_INPUT_CHANGED');
+  const answers = completed.filter(event => event.params.item.type === 'agentMessage');
+  assert.equal(answers.length, 1, 'E_ANSWER_COUNT');
+  assert.equal(answers[0].params.item.text, marker, 'E_ANSWER_TEXT');
+  evidence.nativeTools = { ...evidence.nativeTools, result: 'passed', exactRead: true, exactPatch: true, realFileVerified: true, exactFinalAnswer: true, readApprovalObserved: toolRun.readApproved, patchApprovalObserved: toolRun.patchApproved };
+  toolRun = undefined;
+}
 try {
   await rpc('initialize', { clientInfo: { name: 'cxweb_installed_check', version: '0.1.0' }, capabilities: { experimentalApi: true } });
   send({ method: 'initialized', params: {} });
@@ -113,7 +179,9 @@ try {
   evidence.selectedEffort = selectedModel.defaultReasoningEffort;
   assert.ok(models.some(row => !row.id.startsWith('webbridge/')), 'E_NATIVE_MODELS_MISSING');
   evidence.ownedAndNativeCatalog = true;
-  if (option) {
+  if (option === '--tools') {
+    await verifyTools(selectedModel);
+  } else if (option) {
     evidence.text = 'started';
     await verifyText(selectedModel, selectedModel.defaultReasoningEffort);
     if (option === '--coexistence') {
@@ -137,6 +205,17 @@ try {
     const info = event.params?.turn?.error?.codexErrorInfo ?? event.params?.error?.codexErrorInfo;
     return typeof info === 'string' && /^[A-Za-z]{1,64}$/.test(info) ? [info] : info && typeof info === 'object' ? Object.keys(info).filter(key => /^[A-Za-z]{1,64}$/.test(key)) : [];
   }))];
+  if (toolRun) {
+    const completed = events.filter(event => event.method === 'item/completed' && event.params?.threadId === toolRun.thread && event.params?.turnId === toolRun.turn);
+    evidence.nativeTools = {
+      ...evidence.nativeTools,
+      result: 'failed',
+      completedReads: completed.filter(event => event.params?.item?.type === 'commandExecution' && event.params.item.status === 'completed').length,
+      completedPatches: completed.filter(event => event.params?.item?.type === 'fileChange' && event.params.item.status === 'completed').length,
+      readApprovalObserved: toolRun.readApproved,
+      patchApprovalObserved: toolRun.patchApproved,
+    };
+  }
   process.exitCode = 1;
 } finally {
   lines.close();

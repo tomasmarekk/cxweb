@@ -64,12 +64,30 @@ impl<'de> Deserialize<'de> for Strict {
 }
 
 pub fn parse(bytes: &[u8], limit: usize) -> Result<Value, &'static str> {
+    parse_detailed(bytes, limit).map_err(|code| match code {
+        "E_PAYLOAD_LIMIT" => "E_PAYLOAD_LIMIT",
+        _ => "E_INVALID_JSON",
+    })
+}
+
+/// Categorize only fixed parser failures. The parser's message itself may
+/// contain user content and must never be returned or logged.
+pub fn parse_detailed(bytes: &[u8], limit: usize) -> Result<Value, &'static str> {
     if bytes.len() > limit {
         return Err("E_PAYLOAD_LIMIT");
     }
     serde_json::from_slice::<Strict>(bytes)
         .map(|v| v.0)
-        .map_err(|_| "E_INVALID_JSON")
+        .map_err(|error| {
+            let message = error.to_string();
+            if message.starts_with("invalid escape at line ") {
+                "E_INVALID_JSON_ESCAPE"
+            } else if message.starts_with("control character (") {
+                "E_INVALID_JSON_CONTROL"
+            } else {
+                "E_INVALID_JSON"
+            }
+        })
 }
 
 #[cfg(test)]
@@ -81,5 +99,20 @@ mod tests {
         assert!(parse(br#"{"a":1} trailing"#, 100).is_err());
         assert!(parse(br#"{"a":"\u0000"}"#, 100).is_err());
         assert!(parse(br#"{"a":1}"#, 3).is_err());
+    }
+
+    #[test]
+    fn diagnostics_do_not_export_invalid_string_content() {
+        let bytes = br#"{"path":"C:\PRIVATE\file"}"#;
+        assert_eq!(parse_detailed(bytes, 100), Err("E_INVALID_JSON_ESCAPE"));
+        assert_eq!(parse(bytes, 100), Err("E_INVALID_JSON"));
+        assert_eq!(
+            parse_detailed(b"{\"text\":\"PRIVATE\nVALUE\"}", 100),
+            Err("E_INVALID_JSON_CONTROL")
+        );
+        assert_eq!(
+            parse_detailed(br#"{"path":"C:\u005cPRIVATE\u005cfile"}"#, 100).unwrap()["path"],
+            r"C:\PRIVATE\file"
+        );
     }
 }

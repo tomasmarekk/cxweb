@@ -50,7 +50,59 @@ fn all_prd_envelope_fixtures() {
             fixture["valid"].as_bool().unwrap(),
             "{file}"
         );
+        assert_eq!(
+            validate_detailed(&bytes, &context).is_ok(),
+            validate(&bytes, &context).is_ok(),
+            "diagnostics must not change acceptance: {file}"
+        );
     }
+}
+
+#[test]
+fn diagnostic_codes_distinguish_failures_without_exporting_model_content() {
+    let registry = registry();
+    let context = Context {
+        nonce: "11111111111111111111111111111111",
+        purpose: Purpose::Normal,
+        parallel: true,
+        choice: ToolChoice::Auto,
+        registry: &registry,
+    };
+    for (bytes, expected) in [
+        (&b"PRIVATE_NON_JSON"[..], "E_TOOL_ENVELOPE_JSON"),
+        (
+            &br#"{"PRIVATE_KEY":"PRIVATE_VALUE"}"#[..],
+            "E_TOOL_ENVELOPE_SHAPE",
+        ),
+        (
+            include_bytes!("fixtures/invalid-nonce.json").as_slice(),
+            "E_TOOL_ENVELOPE_IDENTITY",
+        ),
+        (
+            include_bytes!("fixtures/invalid-unknown-tool.json").as_slice(),
+            "E_TOOL_ENVELOPE_UNKNOWN_TOOL",
+        ),
+        (
+            include_bytes!("fixtures/invalid-function-schema.json").as_slice(),
+            "E_TOOL_INPUT_SCHEMA",
+        ),
+        (
+            include_bytes!("fixtures/valid-checkpoint.json").as_slice(),
+            "E_TOOL_ENVELOPE_PURPOSE",
+        ),
+    ] {
+        let error = validate_detailed(bytes, &context).unwrap_err();
+        assert_eq!(error, expected);
+        assert!(!error.contains("PRIVATE"));
+    }
+    let required = Context {
+        choice: ToolChoice::Required,
+        ..context
+    };
+    assert_eq!(
+        validate_detailed(include_bytes!("fixtures/valid-final.json"), &required).unwrap_err(),
+        "E_TOOL_CHOICE"
+    );
 }
 
 #[test]
@@ -153,4 +205,43 @@ fn native_patch_grammar_accepts_reviewed_windows_asset_without_relaxing_the_prot
         changed["format"]["definition"] = json!(definition.replace("hunk+", "hunk*"));
         assert!(Registry::from_native(&[changed]).is_err());
     }
+}
+
+#[test]
+fn rendered_safe_tool_strings_keep_paths_quotes_and_literal_patch_newlines() {
+    use cxweb_codex_adapter::request::CanonicalRequest;
+    let body = json!({
+        "model":"webbridge/fixture", "input":"Read the fixture and patch it.",
+        "tools":[
+            {"type":"function","name":"exec_command","parameters":{"type":"object","properties":{"cmd":{"type":"string"},"cwd":{"type":"string"}},"required":["cmd","cwd"],"additionalProperties":false}},
+            {"type":"custom","name":"apply_patch"}
+        ]
+    });
+    let request = CanonicalRequest::decode(body.to_string().as_bytes()).unwrap();
+    let nonce = "11111111111111111111111111111111";
+    let prompt = request.browser_prompt(nonce, 100000).unwrap();
+    assert!(
+        prompt.contains("including nested function arguments, custom tool input and final text")
+    );
+    assert!(prompt.contains(r"C:\u005cfixture\u005cinput.txt"));
+    let rendered = br#"{"protocol":"webbridge.tool.v1","turn_nonce":"11111111111111111111111111111111","kind":"tool_calls","calls":[{"tool_key":"tool_0001","input":{"cmd":"Get-Content -LiteralPath \u0022C:\u005cfixture\u005cinput.txt\u0022","cwd":"C:\u005cfixture"}},{"tool_key":"tool_0002","input":"\u002a\u002a\u002a Begin Patch\n\u002a\u002a\u002a Add File: output.txt\n+\u0060quoted\u0060 C:\u005cfixture\n\u002a\u002a\u002a End Patch\n"}]}"#;
+    let ValidatedOutput::Calls(calls) =
+        validate_detailed(rendered, &request.context(nonce)).unwrap()
+    else {
+        panic!("expected exact tool calls");
+    };
+    let arguments: Value = serde_json::from_str(
+        native_call(&calls[0], "item1", "call1")["arguments"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        arguments,
+        json!({"cmd":r#"Get-Content -LiteralPath "C:\fixture\input.txt""#,"cwd":r"C:\fixture"})
+    );
+    assert_eq!(
+        native_call(&calls[1], "item2", "call2")["input"],
+        "*** Begin Patch\n*** Add File: output.txt\n+`quoted` C:\\fixture\n*** End Patch\n"
+    );
 }

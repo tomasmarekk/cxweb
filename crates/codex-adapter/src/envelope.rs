@@ -208,10 +208,32 @@ pub enum ValidatedOutput {
 }
 
 pub fn validate(bytes: &[u8], context: &Context<'_>) -> Result<ValidatedOutput, ProtocolError> {
-    let value =
-        strict_json::parse(bytes, MAX_ENVELOPE).map_err(|_| ProtocolError::InvalidEnvelope)?;
-    let envelope: Envelope =
-        serde_json::from_value(value).map_err(|_| ProtocolError::InvalidEnvelope)?;
+    let envelope = decode_envelope(bytes, context).map_err(|_| ProtocolError::InvalidEnvelope)?;
+    validate_body(envelope, context)
+}
+
+/// Fixed diagnostic codes only: never expose a response, argument, schema,
+/// nonce or parser error through native errors or exported diagnostics.
+pub fn validate_detailed(
+    bytes: &[u8],
+    context: &Context<'_>,
+) -> Result<ValidatedOutput, &'static str> {
+    let envelope = decode_envelope(bytes, context)?;
+    validate_body(envelope, context).map_err(|error| match error {
+        ProtocolError::InvalidEnvelope => "E_TOOL_ENVELOPE_PURPOSE",
+        ProtocolError::UnsupportedTool => "E_TOOL_ENVELOPE_UNKNOWN_TOOL",
+        ProtocolError::InvalidInput => "E_TOOL_INPUT_SCHEMA",
+        ProtocolError::ToolChoice => "E_TOOL_CHOICE",
+    })
+}
+
+fn decode_envelope(bytes: &[u8], context: &Context<'_>) -> Result<Envelope, &'static str> {
+    let value = strict_json::parse_detailed(bytes, MAX_ENVELOPE).map_err(|code| match code {
+        "E_INVALID_JSON_ESCAPE" => "E_TOOL_ENVELOPE_JSON_ESCAPE",
+        "E_INVALID_JSON_CONTROL" => "E_TOOL_ENVELOPE_JSON_CONTROL",
+        _ => "E_TOOL_ENVELOPE_JSON",
+    })?;
+    let envelope: Envelope = serde_json::from_value(value).map_err(|_| "E_TOOL_ENVELOPE_SHAPE")?;
     let (protocol, nonce) = match &envelope {
         Envelope::Final {
             protocol,
@@ -236,8 +258,15 @@ pub fn validate(bytes: &[u8], context: &Context<'_>) -> Result<ValidatedOutput, 
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
     {
-        return Err(ProtocolError::InvalidEnvelope);
+        return Err("E_TOOL_ENVELOPE_IDENTITY");
     }
+    Ok(envelope)
+}
+
+fn validate_body(
+    envelope: Envelope,
+    context: &Context<'_>,
+) -> Result<ValidatedOutput, ProtocolError> {
     match (context.purpose, envelope) {
         (Purpose::Compaction, Envelope::Checkpoint { summary, .. })
             if !summary.is_empty() && summary.len() <= 2 * 1024 * 1024 =>

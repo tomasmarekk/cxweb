@@ -1114,6 +1114,9 @@ impl Control {
                                                 "E_INVALID_TOOL_ENVELOPE" => {
                                                     "E_INVALID_TOOL_ENVELOPE"
                                                 }
+                                                "E_TOOL_ENVELOPE_FENCED" => {
+                                                    "E_TOOL_ENVELOPE_FENCED"
+                                                }
                                                 _ => "E_LIVE_QUALIFICATION",
                                             };
                                             let _ = reply.send(Err(code));

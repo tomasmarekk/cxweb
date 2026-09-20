@@ -131,7 +131,7 @@ impl TurnTracker {
             // Intermediate rendering is not a completed protocol reply. Refuse
             // fenced final output without cancelling an in-progress answer.
             if observation.fenced_output {
-                return self.fail("E_INVALID_TOOL_ENVELOPE");
+                return self.fail("E_TOOL_ENVELOPE_FENCED");
             }
             self.state
                 .transition(TurnState::Completed)
@@ -245,7 +245,7 @@ mod tests {
                 },
             ),
             (
-                "E_INVALID_TOOL_ENVELOPE",
+                "E_TOOL_ENVELOPE_FENCED",
                 Observation {
                     fenced_output: true,
                     ..observation()

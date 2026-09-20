@@ -362,13 +362,14 @@ impl Coordinator {
                         .await?;
                     return Err(code);
                 }
-                let output = match envelope::validate(text.as_bytes(), &request.context(&nonce)) {
-                    Ok(output) => output,
-                    Err(_) => {
-                        self.ledger.transition(id, TurnState::Failed).await?;
-                        return Err("E_INVALID_TOOL_ENVELOPE");
-                    }
-                };
+                let output =
+                    match envelope::validate_detailed(text.as_bytes(), &request.context(&nonce)) {
+                        Ok(output) => output,
+                        Err(code) => {
+                            self.ledger.transition(id, TurnState::Failed).await?;
+                            return Err(code);
+                        }
+                    };
                 if let Err(code) = request.validate_output(&output) {
                     self.ledger.transition(id, TurnState::Failed).await?;
                     return Err(code);
@@ -582,7 +583,7 @@ mod tests {
         for (mode, expected) in [
             (Mode::Checkpoint, "E_CHECKPOINT_KEY"),
             (Mode::BadCheckpoint, "E_CHECKPOINT_SUMMARY"),
-            (Mode::Final, "E_INVALID_TOOL_ENVELOPE"),
+            (Mode::Final, "E_TOOL_ENVELOPE_PURPOSE"),
         ] {
             let browser = MockBrowser::new(mode);
             let ledger = Ledger::in_memory();

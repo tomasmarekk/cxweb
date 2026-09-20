@@ -1,9 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
-import { approveFixtureRead, approveFixturePatch, fixtureReadCommand } from './probe-client-approval.mjs';
+import { approveFixtureRead, approveFixturePatch, completedFixtureRead, fixtureReadCommand } from './probe-client-approval.mjs';
 
 const cwd = resolve('.local/probes/approval-fixture/workspace');
+test('patch admission requires one successful exact read in the same native turn', () => {
+  const event = { method: 'item/completed', params: { threadId: 'thread', turnId: 'turn', item: { type: 'commandExecution', command: fixtureReadCommand, cwd, status: 'completed', exitCode: 0, aggregatedOutput: 'marker\r\n' } } };
+  const verify = events => completedFixtureRead(events, 'thread', 'turn', cwd, 'marker');
+  assert.equal(verify([event]), true);
+  assert.equal(verify([]), false);
+  assert.equal(verify([event, event]), false);
+  for (const patch of [{ threadId: 'foreign' }, { turnId: 'foreign' }]) {
+    assert.equal(verify([{ ...event, params: { ...event.params, ...patch } }]), false);
+  }
+  for (const patch of [{ exitCode: 1 }, { status: 'failed' }, { command: 'other' }, { aggregatedOutput: 'prefix marker' }, { cwd: resolve(cwd, '..') }]) {
+    assert.equal(verify([{ ...event, params: { ...event.params, item: { ...event.params.item, ...patch } } }]), false);
+  }
+});
 test('only the exact fixture read in its assigned directory is approved', () => {
   for (const command of [fixtureReadCommand,
     `'C:\\Program Files\\PowerShell\\7\\pwsh.exe' -NoProfile -Command "${fixtureReadCommand}"`,
