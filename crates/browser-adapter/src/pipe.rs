@@ -546,9 +546,10 @@ impl ManagedBrowser {
         let effort_label = include_str!("dom/effort_label.js");
         let model_families = include_str!("dom/model_families.js");
         let answer_content = include_str!("dom/answer_content.js");
+        let answer_text = include_str!("dom/answer_text.js");
         let well_formed_result = include_str!("dom/well_formed_result.js");
         let guarded = format!(
-            "function(expectedOrigin, args) {{ if (location.origin !== expectedOrigin || (expectedOrigin === 'null' && location.href !== 'about:blank')) throw new Error('E_OFFICIAL_ORIGIN_REQUIRED'); const readEffortLabel = ({effort_label}); const readModelFamilies = ({model_families}); const readAnswerContent = ({answer_content}); const assertWellFormedResult = ({well_formed_result}); const result = ({function})(...args); assertWellFormedResult(result); return result; }}"
+            "function(expectedOrigin, args) {{ if (location.origin !== expectedOrigin || (expectedOrigin === 'null' && location.href !== 'about:blank')) throw new Error('E_OFFICIAL_ORIGIN_REQUIRED'); const readEffortLabel = ({effort_label}); const readModelFamilies = ({model_families}); const readAnswerContent = ({answer_content}); const readAnswerText = ({answer_text}); const assertWellFormedResult = ({well_formed_result}); const result = ({function})(...args); assertWellFormedResult(result); return result; }}"
         );
         let result = self.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":guarded,"arguments":[{"value":if page.fixture {"null"} else {"https://chatgpt.com"}},{"value":arguments}],"returnByValue":true}), Some(&page.session));
         let _ = self.call(
@@ -1734,6 +1735,8 @@ impl ManagedBrowser {
                 "answer_generating",
                 "answer_length",
                 "answer_utf16_pending",
+                "answer_rendered_length",
+                "answer_dom_text_differs",
             ] {
                 if let Some(value) = diagnostic[key].as_u64() {
                     self.attribution_diagnostic.insert(key.into(), value);
@@ -2445,6 +2448,52 @@ mod tests {
         assert!(FAILURE_CAPTURE.lock().unwrap().is_none());
         assert!(!path.exists());
         std::fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires installed Chrome; uses a fresh offscreen fixture profile"]
+    fn answer_projection_preserves_dom_whitespace_inside_json_strings() {
+        let executable = cxweb_platform::state::installed_browser().unwrap();
+        let profile = std::env::temp_dir().join(format!(
+            "cxweb-answer-text-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        cxweb_platform::state::protected_directory(&profile).unwrap();
+        let mut browser = ManagedBrowser::launch_offscreen(&executable, &profile).unwrap();
+        let page = browser.open_hidden_page("about:blank", true).unwrap();
+        let frame = browser
+            .call("Page.getFrameTree", json!({}), Some(&page.session))
+            .unwrap();
+        let html = r#"<!doctype html><form><button type="button" data-testid="model-switcher-dropdown-button" aria-haspopup="menu">Fixture</button><textarea id="prompt-textarea"></textarea></form><div data-turn-id-container="u"><div data-message-author-role="user">Exact fixture</div></div><div data-turn-id-container="a"><div data-message-author-role="assistant"><div class="markdown" id="answer"></div></div><button data-testid="copy-turn-action-button">Copy</button></div>"#;
+        browser
+            .call(
+                "Page.setDocumentContent",
+                json!({"frameId":frame["frameTree"]["frame"]["id"],"html":html}),
+                Some(&page.session),
+            )
+            .unwrap();
+        let expected =
+            r#"{"text":"two  spaces and    four; +  return a + b; C:\\fixture\\input.txt"}"#;
+        let rendered = browser.dom(&page, "function (text) { const answer=document.querySelector('#answer'); const paragraph=document.createElement('p'); paragraph.textContent=text; answer.replaceChildren(paragraph); return {text:answer.textContent,rendered:answer.innerText}; }", vec![json!(expected)]).unwrap();
+        assert_eq!(rendered["text"], expected);
+        assert_ne!(
+            rendered["rendered"], expected,
+            "Fixture must reproduce CSS whitespace collapse"
+        );
+        let baseline = Baseline {
+            ids: vec![],
+            selected_model: "Fixture".into(),
+            composer_empty: true,
+            generating: false,
+        };
+        let observation = browser.observe(&page, &baseline, "Exact fixture").unwrap();
+        browser.close_page_checked(&page).unwrap();
+        browser.close().unwrap();
+        assert_eq!(observation.text, expected);
     }
 
     #[test]

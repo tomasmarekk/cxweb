@@ -430,6 +430,15 @@ try {
           exitCode: Number.isInteger(item.exitCode) ? item.exitCode : null,
           exactRead: approveFixtureCommand(item, cwd, shells, codingApproval.readCommand),
           exactTest: approveFixtureCommand(item, cwd, shells, toolRun.testCommand),
+          testResult: (() => {
+            if (!approveFixtureCommand(item, cwd, shells, toolRun.testCommand)) return null;
+            try {
+              const value = JSON.parse(item.aggregatedOutput);
+              return { total: Number.isInteger(value.total) ? value.total : null, passed: Number.isInteger(value.passed) ? value.passed : null,
+                failed: Number.isInteger(value.failed) ? value.failed : null,
+                error: ['E_FIXTURE_SOURCE', 'E_FIXTURE_CASES', 'E_FIXTURE_INPUT', 'E_FIXTURE_TIMEOUT', 'E_FIXTURE_EVALUATION'].includes(value.error) ? value.error : null };
+            } catch { return null; }
+          })(),
           exactReadOutput: typeof item.aggregatedOutput === 'string' && item.aggregatedOutput.replaceAll('\r\n', '\n').trim() === (toolRun.initial + toolRun.caseJson).trim(),
           outputLength: typeof item.aggregatedOutput === 'string' ? item.aggregatedOutput.length : null,
         })) };

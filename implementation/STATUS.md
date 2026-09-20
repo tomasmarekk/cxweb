@@ -23,6 +23,38 @@ English. The complete installed CLI and App-backend read/patch/final scenarios
 now pass. A fixed message sent from the actual GUI also passed with the owned
 model and effort corroborated by the native turn context.
 
+## Visible DOM whitespace projection (2026-09-20)
+
+- A controlled real-Chrome regression proved that innerText collapses two and
+  four spaces inside JSON string values, including custom patch indentation.
+  The DOM text nodes retained the exact bytes while the response observer lost
+  spaces. The test failed before the projection change and passes afterward.
+- Answer projection now preserves text-node whitespace and explicit paragraph/
+  line-break boundaries, excludes hidden content and UI controls, and bounds
+  length, node count and depth before joining. Numeric diagnostics distinguish
+  projected from rendered text. This does not reconstruct pre-rendered Markdown
+  punctuation; the existing Unicode-escape transport instructions remain needed.
+- Validation: 309 workspace tests passed, 21 opt-in tests ignored; the whitespace
+  and existing Unicode real-Chrome fixtures passed explicitly. All 61 Node DOM/
+  fixture/approval tests passed before the later runner diagnostic addition.
+  Clippy with denied warnings, formatting and release build passed. Final daemon
+  0fc921ba774a4f5c53fb53f862bc04d8fa070efea3763830bd8077aee533d041
+  also runs the bounded projection before collecting rendered-length diagnostics.
+- The initial projection build 8c508b932b023172a1da40cc175fcf539ca5eee1f36898cc415286eb709b46b8
+  let a live CLI sum exercise actually apply the correct patch with both original
+  indentation spaces. That attempt still failed at 20:49:10 UTC: the native
+  retest returned exit 1, then an unexpected further test request was declined.
+  The final source was correct and direct local execution subsequently passed.
+  Its original numeric retest counts/VM error were not retained; the cause is
+  still unknown. The failure remains archived as arithmetic-dom-text-first.json.
+- Extended the isolated actual-native fixture to run read/failing test/patch/
+  passing retest. Both native builds passed that complete sequence against a
+  synthetic local model, with five model responses and one exact patch each.
+  These results do not count as account-live successes. The fixture runner now
+  distinguishes VM timeout/evaluation errors from incorrect arithmetic instead
+  of counting both as wrong answers; all 17 fixture/approval tests passed after
+  this reporting correction. The arithmetic input corpus remains unchanged.
+
 ## Native follow-up and source fidelity investigation (2026-09-20)
 
 - Actual installed CLI 0.155.1 and App backend 0.155.0-alpha.9.2 passed exact

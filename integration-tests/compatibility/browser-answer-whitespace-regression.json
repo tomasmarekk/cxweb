@@ -1,0 +1,24 @@
+{
+  "evidence_level": "mock_integration",
+  "date_utc": "2026-09-20",
+  "browser": "Chrome/153.0.8010.48",
+  "actual_browser": true,
+  "fixture": "Synthetic attributed answer in a fresh offscreen profile",
+  "account_generation": false,
+  "release_qualified": false,
+  "installed_runtime_sha256": "0fc921ba774a4f5c53fb53f862bc04d8fa070efea3763830bd8077aee533d041",
+  "command": "cargo test --locked -p cxweb-browser-adapter answer_projection_preserves_dom_whitespace_inside_json_strings -- --ignored --nocapture",
+  "before_fix": "FAIL: innerText collapses two/four spaces within a valid JSON string, including custom patch indentation",
+  "after_fix": "PASS: exact text-node whitespace survives the response observer",
+  "related_checks": [
+    "The existing incomplete UTF-16 real-Chrome regression still passes",
+    "61 Node DOM/fixture/approval tests pass",
+    "309 workspace tests pass; 21 opt-in tests ignored",
+    "Clippy with denied warnings, formatting and release build pass"
+  ],
+  "limits": [
+    "This is a visible-DOM projection, not reconstruction of pre-rendered Markdown source.",
+    "The prior live one-space patch is consistent with this reproduced defect, but its original model response was not captured.",
+    "No synthetic test is counted as an account-live quality observation."
+  ]
+}

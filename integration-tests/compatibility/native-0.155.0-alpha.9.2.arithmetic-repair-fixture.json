@@ -1,0 +1,40 @@
+{
+  "schema": "cxweb.native-patch-fixture.v1",
+  "evidence_level": "mock_integration",
+  "syntheticModel": true,
+  "actualNativeClient": true,
+  "accountGeneration": false,
+  "build": "0.155.0-alpha.9.2",
+  "executableSha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+  "result": "PASS",
+  "repair": true,
+  "exactNativePatch": true,
+  "observedAt": "2026-09-20T20:53:35.527Z",
+  "modelRequests": 5,
+  "approvedPatches": 1,
+  "approvedActions": 4,
+  "approvedSteps": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "nativeTests": [
+    {
+      "exitCode": 1,
+      "counts": {
+        "total": 4,
+        "passed": 1,
+        "failed": 3
+      }
+    },
+    {
+      "exitCode": 0,
+      "counts": {
+        "total": 4,
+        "passed": 4,
+        "failed": 0
+      }
+    }
+  ]
+}

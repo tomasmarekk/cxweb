@@ -53,7 +53,9 @@ function (baselineIds, expectedPrompt) {
   let prefix = 0;
   while (prefix < plain.length && prefix < expected.length && plain[prefix] === expected[prefix]) prefix++;
   const characterKind = c => c === undefined ? 0 : c === '\n' ? 1 : c === '\r' ? 2 : c === ' ' ? 3 : c === '\t' ? 4 : c === '\u00a0' ? 5 : 6;
-  let text = content?.innerText ?? '';
+  let text = readAnswerText(content);
+  const answerRendered = content?.innerText ?? '';
+  const answerDomDiffers = text !== answerRendered;
   if (text.length > 4 * 1024 * 1024) throw new Error('E_PAYLOAD_LIMIT');
   // A renderer may expose half a character before an already-rendered suffix
   // (including JSON punctuation). While generating, defer everything from the
@@ -84,7 +86,8 @@ function (baselineIds, expectedPrompt) {
       block_count: messageCopy?.querySelectorAll('div, p, pre, li').length ?? 0,
       answer_candidates: answer.candidates, intermediate_blocks: answer.intermediate,
       answer_fenced: Number(!!content?.querySelector('pre')), answer_generating: Number(generating),
-      answer_length: text.length, answer_utf16_pending: Number(pendingUtf16)
+      answer_length: text.length, answer_utf16_pending: Number(pendingUtf16),
+      answer_rendered_length: answerRendered.length, answer_dom_text_differs: Number(answerDomDiffers)
     },
     user_id: user?.getAttribute('data-turn-id-container') ?? null,
     user_matches: userMatches,

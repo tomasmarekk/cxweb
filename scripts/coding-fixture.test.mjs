@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { Script } from 'node:vm';
 import runner from './coding-fixture-runner.cjs';
 import { cases, source, editableSource, fixtureFiles, version, fingerprint } from './coding-fixture.mjs';
 
@@ -59,4 +60,14 @@ test('actual offline test process reports failing, repaired and rejected-source 
   const rejected = run();
   assert.equal(rejected.status, 2);
   assert.deepEqual(JSON.parse(rejected.stdout), { error: 'E_FIXTURE_SOURCE' });
+});
+
+test('VM timeout and evaluation failures are not reported as incorrect arithmetic', () => {
+  const original = Script.prototype.runInNewContext;
+  try {
+    Script.prototype.runInNewContext = () => { throw Object.assign(new Error('fixture timeout'), { code: 'ERR_SCRIPT_EXECUTION_TIMEOUT' }); };
+    assert.throws(() => runner.check(source('a + b'), cases[0].tests), /E_FIXTURE_TIMEOUT/);
+    Script.prototype.runInNewContext = () => { throw new Error('fixture VM failure'); };
+    assert.throws(() => runner.check(source('a + b'), cases[0].tests), /E_FIXTURE_EVALUATION/);
+  } finally { Script.prototype.runInNewContext = original; }
 });

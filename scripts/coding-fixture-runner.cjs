@@ -36,7 +36,10 @@ function check(source, cases) {
         timeout: 25, contextCodeGeneration: { strings: false, wasm: false },
       });
       if (typeof actual === 'number' && Object.is(actual, expected)) passed++;
-    } catch { /* A parseable but invalid arithmetic operation fails the test. */ }
+    } catch (error) {
+      // A watchdog/VM failure is not an incorrect arithmetic result.
+      throw new Error(error.code === 'ERR_SCRIPT_EXECUTION_TIMEOUT' ? 'E_FIXTURE_TIMEOUT' : 'E_FIXTURE_EVALUATION');
+    }
   }
   return { total: cases.length, passed, failed: cases.length - passed };
 }
@@ -50,7 +53,7 @@ if (require.main === module) {
     process.stdout.write(JSON.stringify(result) + '\n');
     process.exitCode = result.failed === 0 ? 0 : 1;
   } catch (error) {
-    process.stdout.write(JSON.stringify({ error: ['E_FIXTURE_SOURCE', 'E_FIXTURE_CASES'].includes(error.message)
+    process.stdout.write(JSON.stringify({ error: ['E_FIXTURE_SOURCE', 'E_FIXTURE_CASES', 'E_FIXTURE_TIMEOUT', 'E_FIXTURE_EVALUATION'].includes(error.message)
       ? error.message : 'E_FIXTURE_INPUT' }) + '\n');
     process.exitCode = 2;
   }
