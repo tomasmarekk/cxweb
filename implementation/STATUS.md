@@ -23,6 +23,39 @@ English. The complete installed CLI and App-backend read/patch/final scenarios
 now pass. A fixed message sent from the actual GUI also passed with the owned
 model and effort corroborated by the native turn context.
 
+## Passive native subscription health (2026-09-20)
+
+- Native HTTP forwarding now records successful transport only after body EOF;
+  a truncated body records a stream failure. Authentication rejection, forbidden
+  access, rate limiting, server failure, redirects and rejected requests have
+  fixed separate observations. Requests, bodies, headers and credentials never
+  enter this tracker. An older response cannot overwrite a newer observation.
+- Subscription WebSocket handshake evidence is distinguished from HTTP response
+  evidence. Handshake rejection and observed stream errors remain failures;
+  a plain HTTP 200 is not a successful WebSocket upgrade. Standalone Realtime
+  sockets use another transport and cannot certify the subscription connection.
+  Wire bytes, statuses, headers and redirect restrictions remain unchanged.
+- Validation: 317 workspace tests passed, 21 opt-in tests ignored. All-target
+  Clippy with denied warnings, formatting, diff checks and release build passed.
+  After a fixture-only partial-read correction, its truncated-body test passed
+  again. Existing socket fixtures now assert handshake/auth/redirect observations
+  and Realtime isolation. The initial whole-suite abort was a test mismatch:
+  the host fixture expected identical health timestamps after the previous real
+  config-read change, then panicked again during cleanup. It now checks identical
+  state/evidence with monotonic observation times and preserves primary failures.
+- Installed daemon 615713fcdd238fa007532d383a253e72a0feb24110d566f92f6fb7afbd80175c
+  recovered the saved browser session. Actual CLI 0.155.1 and App backend
+  0.155.0-alpha.9.2 catalog reads passed at 21:29:56 and 21:30:07 UTC, retaining
+  native models, the owned family and all five reasoning choices. Native config
+  and executable hashes were unchanged. No model generation was requested.
+- Private health now reports native_upstream healthy/local_probe after actual
+  native traffic. Reports: both native-health-catalog.json client records and
+  installed-native-transport-health.json. This is connection evidence, not
+  fresh GUI verification, all-native-feature certification or whole-task success.
+  Overall remains preflight because per-client readiness still lacks independent
+  observations after restart. Continue client compatibility/readiness and lifecycle
+  work without using web generations to manufacture status or retrying limited cases.
+
 ## Installed configuration observations (2026-09-20)
 
 - Private Health exchanges now check the selected native configuration on a

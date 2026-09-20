@@ -1,0 +1,32 @@
+{
+  "evidence_level": "account_live",
+  "account_generation": false,
+  "actual_installed_runtime": true,
+  "runtime_sha256": "615713fcdd238fa007532d383a253e72a0feb24110d566f92f6fb7afbd80175c",
+  "observed_at": "2026-09-20T21:30:36.7057438+00:00",
+  "os": "10.0.26100.0",
+  "procedure": "Both reviewed native app-server clients read account/config/model catalog, without a generation option; inspect private runtime-health afterward.",
+  "before_native_upstream": {
+    "code": null,
+    "evidence": "none",
+    "observed_at": null,
+    "state": "unknown"
+  },
+  "after_native_upstream": {
+    "code": null,
+    "evidence": "local_probe",
+    "observed_at": "2026-09-20T21:30:35.222Z",
+    "state": "healthy"
+  },
+  "overall": "preflight",
+  "result": "PASS",
+  "client_reports": [
+    "cli-0.155.1.native-health-catalog.json",
+    "app-backend-0.155.0-alpha.9.2.native-health-catalog.json"
+  ],
+  "limits": [
+    "This verifies passive subscription HTTP transport observation, not all native features or model-task success.",
+    "No fresh GUI picker or live WebSocket claim.",
+    "Whole-application readiness still requires independent client compatibility and lifecycle evidence."
+  ]
+}
