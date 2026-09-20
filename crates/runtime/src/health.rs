@@ -367,6 +367,18 @@ impl Tracker {
             };
             health.components.native_upstream =
                 component(state, evidence, observed.observed_at.clone(), code);
+            // A known native failure is actionable even while the browser is
+            // recovering. Preserve a concrete browser failure and let config
+            // and removal states below retain their higher priority. Native
+            // authentication never launches the separate ChatGPT login flow.
+            if matches!(health.overall, Overall::Preflight | Overall::Busy) && code.is_some() {
+                health.overall = match observed.outcome {
+                    Outcome::AuthRequired => Overall::AuthRequired,
+                    Outcome::RateLimited => Overall::RateLimited,
+                    _ => Overall::Unavailable,
+                };
+                health.suggested_action = Action::Details;
+            }
         }
         if state == DisconnectState::Idle {
             let (config_state, code) = match self.configuration.state {
@@ -606,7 +618,18 @@ mod tests {
             );
             assert_eq!(health.components.web_auth.state, State::Unknown);
             assert_eq!(health.components.codex_app.state, State::Unknown);
-            assert_eq!(health.overall, Overall::Preflight);
+            assert_eq!(
+                health.overall,
+                match outcome {
+                    Outcome::Received | Outcome::Connected => Overall::Preflight,
+                    Outcome::AuthRequired => Overall::AuthRequired,
+                    Outcome::RateLimited => Overall::RateLimited,
+                    _ => Overall::Unavailable,
+                }
+            );
+            if !matches!(outcome, Outcome::Received | Outcome::Connected) {
+                assert_eq!(health.suggested_action, Action::Details);
+            }
             assert_ne!(
                 health.components.native_upstream.evidence,
                 Evidence::RequestSuccess
@@ -665,6 +688,73 @@ mod tests {
             clients: Default::default(),
             native: None,
         }
+    }
+    #[test]
+    fn native_failures_surface_without_overriding_browser_or_lifecycle_failures() {
+        use crate::native_health::{Observation, Outcome};
+        let mut tracker = Tracker::default();
+        tracker.observe_configuration(Configuration::Installed);
+        let mut source = gateway(ProviderHealth::Verified { observed_at: None });
+        source.native = Some(Observation {
+            outcome: Outcome::AuthRequired,
+            observed_at: None,
+        });
+        let failed = tracker.snapshot(DisconnectState::Idle, source.clone());
+        assert_eq!(failed.overall, Overall::AuthRequired);
+        assert_eq!(failed.suggested_action, Action::Details);
+        assert_eq!(failed.components.web_auth.state, State::Healthy);
+        source.active_turns = 1;
+        assert_eq!(
+            tracker
+                .snapshot(DisconnectState::Idle, source.clone())
+                .overall,
+            Overall::AuthRequired
+        );
+        for (code, overall, action) in [
+            ("E_LOGIN_REQUIRED", Overall::AuthRequired, Action::OpenLogin),
+            (
+                "E_BROWSER_VERSION_CHANGED",
+                Overall::Incompatible,
+                Action::Check,
+            ),
+            (
+                "E_BROWSER_RATE_LIMITED",
+                Overall::RateLimited,
+                Action::Details,
+            ),
+            ("E_BROWSER_CLOSED", Overall::Unavailable, Action::Check),
+        ] {
+            source.provider = ProviderHealth::Unavailable { code };
+            let health = tracker.snapshot(DisconnectState::Idle, source.clone());
+            assert_eq!(health.overall, overall);
+            assert_eq!(health.suggested_action, action);
+        }
+        source.provider = ProviderHealth::Verified { observed_at: None };
+        tracker.observe_configuration(Configuration::Conflict);
+        assert_eq!(
+            tracker
+                .snapshot(DisconnectState::Idle, source.clone())
+                .overall,
+            Overall::ConfigConflict
+        );
+        tracker.observe_configuration(Configuration::Unavailable);
+        assert_eq!(
+            tracker
+                .snapshot(DisconnectState::Idle, source.clone())
+                .overall,
+            Overall::Unavailable
+        );
+        assert_eq!(
+            tracker
+                .snapshot(DisconnectState::PendingRestart, source.clone())
+                .overall,
+            Overall::RemovalPendingRestart
+        );
+        source.accepting = false;
+        assert_eq!(
+            tracker.snapshot(DisconnectState::Idle, source).overall,
+            Overall::Disconnected
+        );
     }
     #[test]
     fn client_request_evidence_is_independent_and_does_not_certify_picker_or_upstream() {

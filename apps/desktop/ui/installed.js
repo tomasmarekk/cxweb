@@ -32,6 +32,28 @@ window.cxwebInstalled = (() => {
     removal_pending_restart: ['Finish removal', 'Close and reopen Codex. The runtime remains available for clients using the previous connection.'],
     disconnected_complete: ['Connection removed', 'The original Codex configuration has been restored.']
   };
+  function connectionWords(health) {
+    const components = health.components;
+    if (health.overall === 'unavailable') {
+      if (components.runtime?.state !== 'healthy') return ['Runtime needs attention', 'Response cleanup or runtime availability could not be confirmed. Review the connection details.'];
+      if (components.config?.state === 'unavailable') return ['Configuration unavailable', 'The Codex configuration could not be checked. Review the connection details.'];
+    }
+    // A concrete browser failure takes precedence over native service failures.
+    // Unknown browser observations do not hide an already observed native error.
+    if (['browser', 'web_auth', 'web_models'].every(key => ['healthy', 'unknown'].includes(components[key]?.state))) {
+      const native = components.native_upstream;
+      if (health.overall === 'auth_required' && native?.code === 'E_NATIVE_AUTH_REQUIRED') {
+        return ['Codex sign-in required', 'The native Codex service rejected its sign-in. Sign in again from Codex, then check status. ChatGPT web sign-in is separate.'];
+      }
+      if (health.overall === 'rate_limited' && native?.code === 'E_NATIVE_RATE_LIMITED') {
+        return ['Codex limit reached', 'The native Codex service limited access. Check its limit information in Codex before trying again. No automatic retry was made.'];
+      }
+      if (health.overall === 'unavailable' && ['E_NATIVE_FORBIDDEN', 'E_NATIVE_SERVER', 'E_NATIVE_REQUEST_REJECTED', 'E_NATIVE_UNAVAILABLE', 'E_NATIVE_REDIRECT', 'E_NATIVE_STREAM'].includes(native?.code)) {
+        return ['Codex connection unavailable', 'The native Codex connection failed. Review the connection details and check status after resolving the service or connection problem.'];
+      }
+    }
+    return wording[health.overall] || wording.unavailable;
+  }
   function controls() {
     node('installed-refresh').disabled = pending || Boolean(confirmation);
     node('installed-choice').disabled = pending || Boolean(confirmation);
@@ -82,7 +104,7 @@ window.cxwebInstalled = (() => {
   function render(value) {
     snapshot = value;
     const health = value.health;
-    const words = wording[health.overall] || wording.unavailable;
+    const words = connectionWords(health);
     node('installed-heading').textContent = words[0];
     node('installed-description').textContent = words[1];
     for (const [id, dimension] of [['chatgpt', 'web_auth'], ['app', 'codex_app'], ['cli', 'codex_cli']]) {

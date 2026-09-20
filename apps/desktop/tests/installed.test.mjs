@@ -225,6 +225,42 @@ test('startup attaches an installed host without starting login or generation', 
   assert.equal(ui.nodes.get('installed-chatgpt').textContent, 'Verified');
 });
 
+test('native connection failures identify Codex without sending users to ChatGPT login', async () => {
+  for (const [overall, state, code, heading, description] of [
+    ['auth_required', 'auth_required', 'E_NATIVE_AUTH_REQUIRED', 'Codex sign-in required', /Sign in again from Codex/],
+    ['rate_limited', 'degraded', 'E_NATIVE_RATE_LIMITED', 'Codex limit reached', /native Codex service/],
+    ['unavailable', 'unavailable', 'E_NATIVE_UNAVAILABLE', 'Codex connection unavailable', /native Codex connection/],
+    ['unavailable', 'degraded', 'E_NATIVE_FORBIDDEN', 'Codex connection unavailable', /native Codex connection/],
+  ]) {
+    const value = health(overall);
+    value.health.components.native_upstream = { state, code };
+    const ui = panel(async command => command === 'installed_list' ? list() : value);
+    await flush();
+    assert.equal(ui.nodes.get('installed-heading').textContent, heading);
+    assert.match(ui.nodes.get('installed-description').textContent, description);
+    assert.equal(ui.nodes.get('installed-chatgpt').textContent, 'Verified');
+    assert.equal(ui.nodes.get('installed-retry').hidden, true);
+    await ui.nodes.get('installed-refresh').click();
+    assert.deepEqual(ui.calls.map(call => call.command), ['installed_list', 'installed_check', 'installed_check']);
+  }
+});
+
+test('native failures cannot relabel a browser or configuration failure', async () => {
+  for (const [overall, key, state, code, heading] of [
+    ['auth_required', 'web_auth', 'auth_required', 'E_LOGIN_REQUIRED', 'ChatGPT sign-in required'],
+    ['rate_limited', 'browser', 'unavailable', 'E_BROWSER_RATE_LIMITED', 'ChatGPT limit reached'],
+    ['unavailable', 'browser', 'unavailable', 'E_BROWSER_CLOSED', 'ChatGPT unavailable'],
+    ['unavailable', 'config', 'unavailable', 'E_CONFIG_OBSERVATION', 'Configuration unavailable'],
+  ]) {
+    const value = health(overall);
+    value.health.components.native_upstream = { state: 'unavailable', code: 'E_NATIVE_UNAVAILABLE' };
+    value.health.components[key] = { state, code };
+    const ui = panel(async command => command === 'installed_list' ? list() : value);
+    await flush();
+    assert.equal(ui.nodes.get('installed-heading').textContent, heading);
+  }
+});
+
 test('catalog readiness is displayed without claiming a generation test', async () => {
   const value = health('ready');
   for (const name of ['codex_app', 'codex_cli']) {
