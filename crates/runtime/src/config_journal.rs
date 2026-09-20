@@ -141,6 +141,45 @@ fn replace(snapshot: &Snapshot, bytes: &[u8]) -> io::Result<()> {
 }
 
 impl ConfigJournal {
+    /// Read only the local attachment identity from an atomic journal snapshot.
+    /// This does not acquire the writer's lock, inspect auth files or authorize a
+    /// config write. Original config and route capabilities never leave here.
+    pub(crate) fn control_target(directory: &Path) -> io::Result<Option<(String, PathBuf)>> {
+        let _guard = cxweb_platform::target_path::TargetPathGuard::capture(directory, true)?;
+        protected_directory(directory)?;
+        let snapshot = Snapshot::capture(&directory.join("integration.json"))?;
+        if !snapshot.existed() {
+            return Ok(None);
+        }
+        let value =
+            strict_json::parse(snapshot.original(), 2 * 1024 * 1024).map_err(|_| invalid())?;
+        let record: Record = serde_json::from_value(value).map_err(|_| invalid())?;
+        if !matches!(record.version, 1 | 2)
+            || record.id.len() != 32
+            || !record
+                .id
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            || !record.target.is_absolute()
+            || record
+                .target
+                .file_name()
+                .is_none_or(|name| name != "config.toml")
+            || hash(record.original.as_bytes()) != record.original_sha256
+            || hash(record.candidate.as_bytes()) != record.candidate_sha256
+            || plan_record(&record)?.1 != record.candidate
+        {
+            return Err(invalid());
+        }
+        if record.phase == Phase::Prepared {
+            return Ok(None);
+        }
+        Ok(Some((
+            record.id,
+            record.target.parent().ok_or_else(invalid)?.into(),
+        )))
+    }
+
     /// Caller has selected/qualified this home and owns the installation lock.
     /// A second lock serializes this journal's writers. Real config is untouched
     /// until the complete private recovery record has been flushed and replaced.

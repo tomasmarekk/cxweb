@@ -1,0 +1,42 @@
+{
+  "schema": "cxweb.desktop-installed-control-evidence.v1",
+  "date": "2026-09-20",
+  "result": "PASS synthetic host/private IPC, UI behavior and browser fixture rendering; authenticated production lifecycle NOT RUN",
+  "verification": {
+    "workspace": { "passed": 236, "ignored": 11 },
+    "desktop_ui": { "passed": 50 },
+    "clippy": "PASS",
+    "format": "PASS",
+    "release_builds": ["CLI", "daemon", "desktop"],
+    "browser_fixture": {
+      "surface": "Local in-app browser fixture, no account or native configuration",
+      "dialog_viewport": { "width": 440, "height": 540 },
+      "horizontal_overflow": false,
+      "initial_focus": "Keep connected",
+      "escape_keeps_connection": true,
+      "confirmed_removal_shows_restart_requirement": true,
+      "console_warnings_or_errors": 0
+    }
+  },
+  "checks": {
+    "prepared_journal_does_not_select_installed_mode": true,
+    "applied_journal_readable_while_runtime_owns_writer_lock": true,
+    "private_config_and_capability_excluded_from_inventory": true,
+    "duplicate_or_invalid_journal_does_not_start_login_runtime": true,
+    "stopped_installed_host_never_triggers_replacement_launch": true,
+    "multiple_homes_require_selection": true,
+    "old_runtime_instance_cannot_remove_current_connection": true,
+    "idle_disconnect_refuses_active_work_without_cancelling_or_restoring_config": true,
+    "idle_operation_receipt_cannot_be_changed_into_force_removal": true,
+    "task_started_after_snapshot_requires_confirmation": true,
+    "failed_health_read_clears_stale_verified_ui": true,
+    "idle_poll_interval_30_seconds_and_hidden_ui_stops_polling": true,
+    "restored_config_retains_restart_required_state": true
+  },
+  "not_run": [
+    "Actual installed Tauri window driving an authenticated browser lifecycle",
+    "Actual Codex App picker and native subscription coexistence",
+    "Production activation and complete coding qualification",
+    "Full accessibility and 200 percent zoom audit"
+  ]
+}

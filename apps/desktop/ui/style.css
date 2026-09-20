@@ -11,5 +11,12 @@
 .native-form { margin-top:20px; } .native-form h2 { font-size:16px; } .native-form label { display:block; margin:12px 0 5px; }
 .native-form input, .native-form select { width:100%; min-height:36px; padding:7px 9px; border:1px solid var(--line); border-radius:6px; background:var(--panel); color:inherit; font:inherit; }
 .native-form p { margin-top:12px; } #native-preflight-result { margin-top:14px; }
+#installed-remove { margin-top:12px; }
+#installed-error { padding:12px; border:1px solid var(--line); border-radius:8px; margin-top:16px; }
+#installed-components { margin-top:16px; }
+dialog { max-width:min(400px, calc(100vw - 32px)); border:1px solid var(--line); border-radius:12px; background:var(--panel); color:inherit; padding:22px; }
+dialog::backdrop { background:rgb(0 0 0 / 55%); }
+dialog h2 { font-size:20px; margin-top:0; }
+dialog button + button { margin-top:10px; }
 @media(prefers-color-scheme:dark) { :root { background:#18191f; color:#ebedf5; --muted:#a0a5b5; --line:#30323d; --accent:#7774ed; --panel:#202129; } #error { background:#382521; color:#ffb5aa; } }
 @media(max-width:380px) { main { padding:22px 18px; } header { align-items:flex-start; } .badge { max-width:115px; } }

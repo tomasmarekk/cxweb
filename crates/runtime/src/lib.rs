@@ -24,6 +24,8 @@ mod generation_handoff;
 mod health;
 #[cfg(windows)]
 pub mod host;
+#[cfg(windows)]
+pub mod installed_control;
 pub mod ledger;
 #[cfg(windows)]
 pub mod lifecycle;

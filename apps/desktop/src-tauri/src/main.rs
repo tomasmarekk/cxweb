@@ -10,6 +10,31 @@ mod desktop {
     }
 
     #[tauri::command]
+    async fn installed_list() -> Result<cxweb_runtime::installed_control::Inventory, String> {
+        cxweb_runtime::installed_control::list()
+            .await
+            .map_err(str::to_owned)
+    }
+    #[tauri::command]
+    async fn installed_check(
+        installation: String,
+    ) -> Result<cxweb_runtime::installed_control::Snapshot, String> {
+        cxweb_runtime::installed_control::check(&installation)
+            .await
+            .map_err(str::to_owned)
+    }
+    #[tauri::command]
+    async fn installed_disconnect(
+        installation: String,
+        instance: String,
+        allow_active: bool,
+    ) -> Result<cxweb_runtime::installed_control::Snapshot, String> {
+        cxweb_runtime::installed_control::disconnect(&installation, instance, allow_active)
+            .await
+            .map_err(str::to_owned)
+    }
+
+    #[tauri::command]
     async fn native_discover() -> cxweb_runtime::native_discovery::Report {
         cxweb_runtime::native_discovery::discover().await
     }
@@ -174,7 +199,10 @@ mod desktop {
                 native_preflight,
                 native_text,
                 native_cancel,
-                reset_test
+                reset_test,
+                installed_list,
+                installed_check,
+                installed_disconnect
             ])
             .run(tauri::generate_context!())
             .expect("cxweb desktop runtime");

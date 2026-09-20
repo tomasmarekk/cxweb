@@ -21,6 +21,44 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Desktop attachment and guarded removal (2026-09-20)
+
+- Desktop startup now inventories owned applied/restoring/restored integration
+  journals before attaching to the login controller. Prepared-only journals do
+  not imply installation. A single connection opens its private health view;
+  multiple homes require local selection. Missing, corrupt, duplicate or stopped
+  installed connections never launch a replacement runtime or login browser.
+- Inventory uses bounded enumeration, protected directories, path identity
+  guards and atomic journal snapshots without taking the live writer's lock.
+  It returns only installation identity and the local home label, never original
+  config, account credentials, route capability or proxy URL. Every check/removal
+  revalidates membership. This inventory is not a diagnostic export.
+- The new local Tauri commands expose passive health and explicit removal. The
+  UI shows separate ChatGPT/App/CLI states and component observations in Details.
+  Idle checks run at 30-second intervals and stop while hidden. Failed checks
+  clear stale verified rows. Existing login/qualification controls remain for
+  the no-installation case; activation eligibility is unchanged.
+- Idle removal atomically closes web admission only with no active generation.
+  A turn that starts after the displayed snapshot returns ActiveWork and opens
+  the same confirmation dialog used for an already busy snapshot. Escape keeps
+  the connection; focus returns to the removal button. Confirmed cancellation
+  remains bound to the exact displayed runtime instance. An idle operation ID
+  cannot be upgraded into a force-removal receipt. Ambiguous acknowledgements
+  are inspected, never resubmitted automatically.
+- An accepted removal survives the UI caller. Cleanup and configuration undo
+  still use the existing lifecycle owner; the retained native listener is not
+  stopped. The UI preserves the requirement to restart Codex after restoration.
+- Validation: workspace 236 passed / 11 opt-in ignored; all desktop UI tests
+  50 passed; Clippy, formatting, included-file formatting and diff checks passed.
+  CLI, daemon and desktop release builds passed. A local synthetic UI fixture
+  was inspected in the in-app browser, including the 440x540 dialog layout,
+  focus, Escape and completed-removal feedback; no console warnings/errors were
+  observed. The temporary preview tab and server were closed afterward.
+- NOT RUN: actual installed Tauri-to-authenticated-browser lifecycle, App picker,
+  native subscription coexistence and production activation. Browser fixture
+  rendering is not evidence for those paths. ChatGPT desktop was not used.
+  Evidence: integration-tests/compatibility/desktop-installed-control-windows.json.
+
 ## Passive installed-runtime health (2026-09-20)
 
 - Added the PRD health contract to domain types and private runtime IPC. The

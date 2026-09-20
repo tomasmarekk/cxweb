@@ -12,6 +12,9 @@ fn main() {
             "native_text",
             "native_cancel",
             "reset_test",
+            "installed_list",
+            "installed_check",
+            "installed_disconnect",
         ]),
     ))
     .expect("Tauri build configuration");

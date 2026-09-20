@@ -27,6 +27,9 @@ pub trait Lifecycle: Send + Sync + 'static {
         cxweb_domain::health::Health::default()
     }
     fn disconnect(&self) -> Work;
+    fn disconnect_when_idle(&self) -> Work {
+        Box::pin(async { Err("E_IDLE_DISCONNECT_UNSUPPORTED") })
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -69,10 +72,19 @@ impl LoginBackend for Control {
 #[derive(Clone, PartialEq, Eq)]
 enum OperationKind {
     Disconnect,
+    DisconnectWhenIdle,
     Login(LoginAction),
     NativeText(crate::setup_owner::NativeTarget),
 }
 impl Lifecycle for DisconnectController {
+    fn disconnect_when_idle(&self) -> Work {
+        let controller = self.clone();
+        Box::pin(async move {
+            controller
+                .disconnect_when_idle(Duration::from_secs(30))
+                .await
+        })
+    }
     fn health(&self) -> cxweb_domain::health::Health {
         DisconnectController::health(self)
     }
@@ -115,6 +127,10 @@ pub enum Command {
         instance: String,
         operation: String,
     },
+    DisconnectWhenIdle {
+        instance: String,
+        operation: String,
+    },
     Operation {
         instance: String,
         operation: String,
@@ -150,6 +166,7 @@ pub enum Reply {
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Outcome {
     Running {},
+    ActiveWork {},
     Completed { result: DisconnectState },
     Failed {},
     LoginCompleted { status: Box<ControlStatus> },
@@ -355,6 +372,10 @@ impl Service {
                 instance,
                 operation,
             } => (instance, operation, Some(OperationKind::Disconnect)),
+            Command::DisconnectWhenIdle {
+                instance,
+                operation,
+            } => (instance, operation, Some(OperationKind::DisconnectWhenIdle)),
             Command::Operation {
                 instance,
                 operation,
@@ -396,7 +417,10 @@ impl Service {
         let Some(kind) = start else {
             return error(ErrorCode::UnknownOperation);
         };
-        if (kind == OperationKind::Disconnect && self.backend.is_none())
+        if (matches!(
+            kind,
+            OperationKind::Disconnect | OperationKind::DisconnectWhenIdle
+        ) && self.backend.is_none())
             || (matches!(
                 &kind,
                 OperationKind::Login(_) | OperationKind::NativeText(_)
@@ -440,14 +464,19 @@ impl Service {
             let work_kind = kind.clone();
             let worker = tokio::spawn(async move {
                 match work_kind {
-                    OperationKind::Disconnect => match backend
-                        .expect("validated disconnect backend")
-                        .disconnect()
-                        .await
-                    {
-                        Ok(result) => Outcome::Completed { result },
-                        Err(_) => Outcome::Failed {},
-                    },
+                    action @ (OperationKind::Disconnect | OperationKind::DisconnectWhenIdle) => {
+                        let backend = backend.expect("validated disconnect backend");
+                        let work = if action == OperationKind::DisconnectWhenIdle {
+                            backend.disconnect_when_idle()
+                        } else {
+                            backend.disconnect()
+                        };
+                        match work.await {
+                            Ok(result) => Outcome::Completed { result },
+                            Err("E_WEB_ACTIVE") => Outcome::ActiveWork {},
+                            Err(_) => Outcome::Failed {},
+                        }
+                    }
                     action @ (OperationKind::Login(_) | OperationKind::NativeText(_)) => {
                         let backend = login.expect("validated login backend");
                         let reset_test =
@@ -457,7 +486,9 @@ impl Service {
                             OperationKind::NativeText(target) => {
                                 backend.native_text(target, cancellation)
                             }
-                            OperationKind::Disconnect => unreachable!(),
+                            OperationKind::Disconnect | OperationKind::DisconnectWhenIdle => {
+                                unreachable!()
+                            }
                         }
                         .await;
                         match result {
@@ -589,6 +620,7 @@ pub async fn exchange(installation: &str, request: &Request) -> io::Result<Reply
             }
             (
                 Command::Disconnect { operation, .. }
+                | Command::DisconnectWhenIdle { operation, .. }
                 | Command::Operation { operation, .. }
                 | Command::Browser { operation, .. }
                 | Command::NativeText { operation, .. }
@@ -647,6 +679,62 @@ mod tests {
     fn dispatch(service: &Service, command: Command) -> Reply {
         service.handle(&serde_json::to_vec(&request(command)).unwrap())
     }
+    #[tokio::test]
+    async fn idle_removal_receipt_cannot_be_upgraded_to_force() {
+        struct Active;
+        impl Lifecycle for Active {
+            fn state(&self) -> DisconnectState {
+                DisconnectState::Idle
+            }
+            fn disconnect(&self) -> Work {
+                panic!("force was not authorized")
+            }
+            fn disconnect_when_idle(&self) -> Work {
+                Box::pin(async { Err("E_WEB_ACTIVE") })
+            }
+        }
+        let service = Service::new(Arc::new(Active));
+        let command = || Command::DisconnectWhenIdle {
+            instance: service.instance.clone(),
+            operation: "a".repeat(32),
+        };
+        let reply = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let reply = dispatch(&service, command());
+                if !matches!(
+                    reply,
+                    Reply::Operation {
+                        outcome: Outcome::Running {},
+                        ..
+                    }
+                ) {
+                    break reply;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(matches!(
+            reply,
+            Reply::Operation {
+                outcome: Outcome::ActiveWork {},
+                ..
+            }
+        ));
+        assert_eq!(dispatch(&service, command()), reply);
+        assert_eq!(
+            dispatch(
+                &service,
+                Command::Disconnect {
+                    instance: service.instance.clone(),
+                    operation: "a".repeat(32)
+                }
+            ),
+            error(ErrorCode::OperationConflict)
+        );
+    }
+
     #[tokio::test]
     async fn native_test_receipt_survives_requester_drop_and_binds_all_target_fields() {
         struct NativeBackend {

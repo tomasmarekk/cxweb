@@ -455,4 +455,9 @@ $('reset-test').addEventListener('click', async () => {
   if (pending || nativeOperation || preflightPending || discoveryPending || !resetReady) return;
   await runAction('reset_test');
 });
-if (invoke) check(false, false); else showError('E_DESKTOP_IPC');
+async function start() {
+  if (invoke && window.cxwebInstalled && await window.cxwebInstalled.attach()) return;
+  $('setup-view').hidden = false;
+  if (invoke) await check(false, false); else showError('E_DESKTOP_IPC');
+}
+start();

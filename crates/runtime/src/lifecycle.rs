@@ -192,13 +192,30 @@ impl DisconnectController {
     /// and explicit retry. No path automatically terminates native connections.
     pub async fn disconnect(&self, timeout: Duration) -> Result<DisconnectState, &'static str> {
         let controller = self.clone();
-        tokio::spawn(async move { controller.run(timeout).await })
+        tokio::spawn(async move { controller.run(timeout, false).await })
             .await
             .map_err(|_| "E_DISCONNECT_WORKER")?
     }
 
-    async fn run(self, timeout: Duration) -> Result<DisconnectState, &'static str> {
+    pub async fn disconnect_when_idle(
+        &self,
+        timeout: Duration,
+    ) -> Result<DisconnectState, &'static str> {
+        let controller = self.clone();
+        tokio::spawn(async move { controller.run(timeout, true).await })
+            .await
+            .map_err(|_| "E_DISCONNECT_WORKER")?
+    }
+
+    async fn run(
+        self,
+        timeout: Duration,
+        idle_only: bool,
+    ) -> Result<DisconnectState, &'static str> {
         let _operation = self.serial.lock().await;
+        if idle_only {
+            self.gateway.close_if_idle()?;
+        }
         self.state.send_replace(DisconnectState::Draining);
         if let Err(error) = self.gateway.disconnect_web(timeout).await {
             self.state.send_replace(DisconnectState::DrainFailed);
@@ -448,6 +465,24 @@ mod tests {
             .unwrap();
         let controller = DisconnectController::new(gateway, journal, vec![], vec![]).unwrap();
         let mut status = controller.subscribe();
+        assert_eq!(
+            controller
+                .disconnect_when_idle(Duration::from_secs(1))
+                .await,
+            Err("E_WEB_ACTIVE")
+        );
+        assert_eq!(*status.borrow(), DisconnectState::Idle);
+        assert_eq!(controller.health().active_web_turns, 1);
+        assert!(
+            std::fs::read_to_string(fixture.config())
+                .unwrap()
+                .contains("openai_base_url")
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), cancelled.notified())
+                .await
+                .is_err()
+        );
         let caller = controller.clone();
         let waiter = tokio::spawn(async move { caller.disconnect(Duration::from_secs(3)).await });
         tokio::time::timeout(Duration::from_secs(1), cancelled.notified())

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-installed-check"
+description = "Enables the installed_check command without any pre-configured scope."
+commands.allow = ["installed_check"]
+
+[[permission]]
+identifier = "deny-installed-check"
+description = "Denies the installed_check command without any pre-configured scope."
+commands.deny = ["installed_check"]

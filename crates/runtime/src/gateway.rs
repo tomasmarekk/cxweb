@@ -154,6 +154,18 @@ impl WebAdmission {
 }
 
 impl Gateway {
+    /// Atomically stop new web admission only if no generation is in flight.
+    /// The normal disconnect path then drains recovery and catalog leases.
+    #[cfg(windows)]
+    pub(crate) fn close_if_idle(&self) -> Result<(), &'static str> {
+        let mut state = self.admission.state.lock().map_err(|_| "E_WEB_STATE")?;
+        if state.active_turns != 0 {
+            return Err("E_WEB_ACTIVE");
+        }
+        state.accepting = false;
+        Ok(())
+    }
+
     #[cfg(windows)]
     pub(crate) fn health(&self) -> GatewayHealth {
         let provider = self.web.health();
