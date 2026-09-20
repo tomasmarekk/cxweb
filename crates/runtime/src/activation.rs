@@ -160,8 +160,10 @@ mod tests {
     struct Fixture(PathBuf);
     impl Fixture {
         fn new() -> Self {
-            let root = std::env::temp_dir()
-                .join(format!("cxweb-activation-{:032x}", rand::random::<u128>()));
+            Self::under(&std::env::temp_dir())
+        }
+        fn under(base: &Path) -> Self {
+            let root = base.join(format!("cxweb-activation-{:032x}", rand::random::<u128>()));
             protected_directory(&root).unwrap();
             Self(root)
         }
@@ -207,7 +209,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "registers temporary owned Windows tasks; requires CXWEB_ACTIVATION_DAEMON pointing to the built windowless daemon"]
+    #[ignore = "registers temporary owned Windows tasks; requires CXWEB_ACTIVATION_DAEMON and CXWEB_QUALIFIED_FIXTURE_ROOT with qualified ancestor permissions"]
     async fn supervised_activation_verifies_registration_and_refuses_a_removed_task() {
         use cxweb_platform::scheduled_runtime::RegistrationReceipt;
         let executable = PathBuf::from(
@@ -215,8 +217,16 @@ mod tests {
         );
         assert!(executable.is_absolute() && executable.is_file());
         assert_eq!(executable.file_name().unwrap(), "cxweb-daemon.exe");
+        let base = PathBuf::from(
+            std::env::var_os("CXWEB_QUALIFIED_FIXTURE_ROOT")
+                .expect("select an existing qualified test directory"),
+        );
+        cxweb_platform::target_path::TargetPathGuard::capture(&base, true)
+            .unwrap()
+            .capture_access()
+            .expect("test root ancestor permissions must qualify");
         for removed_before_apply in [false, true] {
-            let fixture = Fixture::new();
+            let fixture = Fixture::under(&base);
             // Cargo's top-level binary is a hard link to its deps output.
             // Exercise an installed copy; production correctly refuses aliases.
             let installed = fixture.0.join("cxweb-daemon.exe");

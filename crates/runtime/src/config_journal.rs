@@ -475,6 +475,28 @@ impl ConfigJournal {
         }
     }
 
+    /// Production activation requires current access evidence for both writes.
+    /// A read-only preflight report or durable journal cannot supply this proof.
+    /// Refusal happens before taking the prepared snapshot or creating staging.
+    pub(crate) fn apply_qualified(&mut self) -> io::Result<()> {
+        self.journal.verify_unchanged()?;
+        self.prepared
+            .as_ref()
+            .ok_or_else(|| io::Error::other("E_PREFLIGHT_REQUIRED"))?
+            .verify_unchanged()?;
+        self.prepared
+            .as_mut()
+            .ok_or_else(|| io::Error::other("E_PREFLIGHT_REQUIRED"))?
+            .require_ancestor_access()
+            .map_err(|_| io::Error::other("E_ACTIVATION_TARGET_PERMISSIONS"))?;
+        self.journal
+            .require_ancestor_access()
+            .map_err(|_| io::Error::other("E_ACTIVATION_TARGET_PERMISSIONS"))?;
+        self.apply()
+    }
+
+    /// Low-level journal transaction; production activation uses apply_qualified.
+    /// This entry point also supports isolated journal/recovery fixtures.
     pub fn apply(&mut self) -> io::Result<()> {
         self.journal.verify_unchanged()?;
         if self
@@ -649,6 +671,34 @@ mod tests {
             std::fs::remove_dir_all(&self.root).unwrap();
         }
     }
+    #[test]
+    fn qualified_apply_refuses_changed_input_without_consuming_preparation() {
+        let f = Fixture::new();
+        std::fs::write(&f.target, "model = 'native'\n").unwrap();
+        let mut journal = ConfigJournal::prepare(&f.state, &f.target, 12345, CAP).unwrap();
+        let receipt = std::fs::read(f.state.join("integration.json")).unwrap();
+        std::fs::write(&f.target, "model = 'user-edit'\n").unwrap();
+        assert_eq!(
+            journal.apply_qualified().unwrap_err().to_string(),
+            "E_CONFIG_CHANGED"
+        );
+        assert_eq!(journal.phase(), Phase::Prepared);
+        assert!(journal.prepared.is_some());
+        assert_eq!(
+            std::fs::read(f.state.join("integration.json")).unwrap(),
+            receipt
+        );
+        assert_eq!(
+            std::fs::read_to_string(&f.target).unwrap(),
+            "model = 'user-edit'\n"
+        );
+        assert!(
+            !f.root
+                .join(format!(".cxweb-{}-config.tmp", journal.installation_id()))
+                .exists()
+        );
+    }
+
     #[test]
     fn web_recovery_requires_applied_unchanged_ownership_and_valid_private_evidence() {
         let f = Fixture::new();

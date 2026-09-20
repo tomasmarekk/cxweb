@@ -21,6 +21,39 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Activation-time configuration access requirements (2026-09-20)
+
+- The production ActivationHandle path now calls a qualified journal transaction.
+  Before consuming preparation or staging any candidate, it checks unchanged
+  inputs and requires current ancestor owner/DACL evidence for both selected
+  configuration and recovery journal. A failed permission qualification returns
+  E_ACTIVATION_TARGET_PERMISSIONS and retains the prepared state. A changed user
+  config remains a configuration conflict rather than a permission diagnosis.
+- Qualified atomic snapshots retain opaque access evidence in memory. Stage,
+  replace and remove recheck the same ancestor descriptors before their OS
+  mutation and keep identity handles through the operation; stage/replacement
+  also verify afterward. Calling qualification again cannot silently accept
+  changed permissions. No descriptor, user SID or new policy override is stored
+  in a recovery record. This does not claim a filesystem compare-and-swap.
+- Existing low-level journal/recovery fixtures retain their explicit unqualified
+  transaction path. Only the cfg(test) fixture activation variant uses it through
+  lifecycle orchestration; the registered production activation variant always
+  uses apply_qualified. Native forwarding/recovery/removal behavior is unchanged.
+- New regressions prove an exposed owned test ancestor is refused without
+  staging, config changes or ACL repair, and an edited config does not consume
+  prepared state or change the durable receipt. The complete qualified mutation
+  success/changed-ancestor exercise requires CXWEB_QUALIFIED_FIXTURE_ROOT; the
+  existing supervised activation test now requires that same qualified root.
+  Both validate the root before creating fixtures or registering a task.
+- Validation: workspace 247 passed / 12 opt-in ignored; desktop UI 51 passed;
+  Clippy with warnings denied, formatting, diff checks and release CLI/daemon/
+  desktop builds passed.
+- NOT RUN: positive qualified mutation/supervised activation on this host. The
+  available C: ancestor permissions already failed qualification and D: exposes
+  an unsupported owner/access layout. No host ACL, ownership, volume or startup
+  entry was changed to manufacture a pass. Full activation still also requires
+  client/picker, native coexistence, browser/coding and release qualification.
+
 ## Selected target owner and ancestor access qualification (2026-09-20)
 
 - Read-only preflight now captures and rechecks owner/DACL evidence for every

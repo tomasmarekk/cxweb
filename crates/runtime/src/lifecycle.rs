@@ -136,7 +136,18 @@ impl DisconnectController {
                 if matches!(supervision, ApplySupervision::Registered) {
                     journal.registered_scheduler().map_err(supervision_error)?;
                 }
-                journal.apply().map_err(|_| "E_CONFIG_APPLY")
+                let result = match supervision {
+                    ApplySupervision::Registered => journal.apply_qualified(),
+                    #[cfg(test)]
+                    ApplySupervision::Fixture => journal.apply(),
+                };
+                result.map_err(|error| {
+                    if error.to_string() == "E_ACTIVATION_TARGET_PERMISSIONS" {
+                        "E_ACTIVATION_TARGET_PERMISSIONS"
+                    } else {
+                        "E_CONFIG_APPLY"
+                    }
+                })
             })
             .await
             .map_err(|_| "E_ACTIVATION_WORKER")?

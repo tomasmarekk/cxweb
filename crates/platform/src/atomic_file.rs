@@ -73,6 +73,7 @@ pub struct Snapshot {
     bytes: Vec<u8>,
     access: Option<crate::config_access::AccessSnapshot>,
     parent_access: crate::config_access::AccessSnapshot,
+    ancestor_access: Option<crate::target_path::PathAccessSnapshot>,
 }
 impl Snapshot {
     /// Inspect the selected path before canonicalization, refusing reparse
@@ -106,6 +107,7 @@ impl Snapshot {
                     bytes,
                     access: Some(access),
                     parent_access,
+                    ancestor_access: None,
                 })
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Self {
@@ -115,6 +117,7 @@ impl Snapshot {
                 bytes: Vec::new(),
                 access: None,
                 parent_access,
+                ancestor_access: None,
             }),
             Err(error) => Err(error),
         }?;
@@ -131,6 +134,10 @@ impl Snapshot {
         self.identity.is_some()
     }
     pub fn verify_unchanged(&self) -> io::Result<()> {
+        if let Some(access) = &self.ancestor_access {
+            crate::target_path::TargetPathGuard::capture(self.selected_parent()?, true)?
+                .verify_access(access)?;
+        }
         let current = Self::capture(&self.selected_path)?;
         if current.path != self.path
             || current.identity != self.identity
@@ -143,16 +150,40 @@ impl Snapshot {
         Ok(())
     }
 
+    /// Bind this snapshot to current qualified ancestor ownership and ACLs.
+    /// Repeated calls verify the existing evidence rather than accepting changed
+    /// permissions. Mutation methods retain/check it until their OS operation
+    /// completes. This changes no permissions and persists no security descriptor.
+    pub fn require_ancestor_access(&mut self) -> io::Result<()> {
+        let ancestors = self.guard_parent()?;
+        if self.ancestor_access.is_none() {
+            self.ancestor_access = Some(ancestors.capture_access()?);
+        }
+        Ok(())
+    }
+
+    fn selected_parent(&self) -> io::Result<&Path> {
+        self.selected_path
+            .parent()
+            .ok_or_else(|| io::Error::other("E_CONFIG_PATH"))
+    }
+
+    fn verify_parent(&self, ancestors: &crate::target_path::TargetPathGuard) -> io::Result<()> {
+        ancestors.verify_unchanged()?;
+        if let Some(access) = &self.ancestor_access {
+            ancestors.verify_access(access)?;
+        }
+        Ok(())
+    }
+
     /// Retain rename/delete exclusion through each mutation, without pinning
     /// user directories for the entire lifetime of a configuration journal.
-    /// Ancestor ACL qualification and in-place reparse races remain separate.
+    /// Qualified snapshots also retain their exact ancestor access requirement.
     fn guard_parent(&self) -> io::Result<crate::target_path::TargetPathGuard> {
-        let parent = self
-            .selected_path
-            .parent()
-            .ok_or_else(|| io::Error::other("E_CONFIG_PATH"))?;
-        let ancestors = crate::target_path::TargetPathGuard::capture(parent, true)?;
+        let ancestors =
+            crate::target_path::TargetPathGuard::capture(self.selected_parent()?, true)?;
         self.verify_unchanged()?;
+        self.verify_parent(&ancestors)?;
         Ok(ancestors)
     }
 
@@ -177,7 +208,7 @@ impl Snapshot {
             return Err(io::Error::other("E_CONFIG_CHANGED"));
         }
         let disposition = FILE_DISPOSITION_INFO { DeleteFile: true };
-        ancestors.verify_unchanged()?;
+        self.verify_parent(&ancestors)?;
         // SAFETY: valid exclusively mutable file handle and correctly sized POD
         // input. Deletion applies to this checked file object upon handle close.
         if unsafe {
@@ -208,13 +239,14 @@ impl Snapshot {
             return Err(io::Error::other("E_CONFIG_STAGE"));
         }
         let path = self.path.with_file_name(name);
+        self.verify_parent(&ancestors)?;
         let mut file = crate::state::create_private_file_with_owner(
             &path,
             self.access.as_ref().map(|access| access.owner()),
         )?;
         file.write_all(candidate)?;
         file.sync_all()?;
-        ancestors.verify_unchanged()?;
+        self.verify_parent(&ancestors)?;
         Ok(path)
     }
 
@@ -256,7 +288,7 @@ impl Snapshot {
         };
         let destination = wide(&self.path)?;
         let source = wide(staged)?;
-        ancestors.verify_unchanged()?;
+        self.verify_parent(&ancestors)?;
         // SAFETY: live NUL-terminated paths. No ignore-ACL flags and no replace
         // flag for a previously absent file. Any API error requires recovery.
         let success = unsafe {
@@ -293,7 +325,7 @@ impl Snapshot {
         if read(&mut committed)? != candidate {
             return Err(io::Error::other("E_CONFIG_POST_COMMIT_CHANGED"));
         }
-        ancestors.verify_unchanged()?;
+        self.verify_parent(&ancestors)?;
         Ok(())
     }
 }
@@ -360,8 +392,11 @@ pub(crate) mod tests {
     struct Fixture(PathBuf);
     impl Fixture {
         fn new() -> Self {
+            Self::under(&std::env::temp_dir())
+        }
+        fn under(base: &Path) -> Self {
             static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-            let path = std::env::temp_dir().join(format!(
+            let path = base.join(format!(
                 "cxweb-atomic-{}-{}-{}",
                 std::process::id(),
                 std::time::SystemTime::now()
@@ -487,6 +522,73 @@ pub(crate) mod tests {
         drop(guard);
         std::fs::rename(&ancestor, fixture.0.join("renamed")).unwrap();
         assert!(snapshot.verify_unchanged().is_err());
+    }
+
+    #[test]
+    fn qualification_refuses_an_unsafe_ancestor_before_staging_or_acl_repair() {
+        let fixture = Fixture::new();
+        let parent = fixture.0.join("home");
+        crate::state::protected_directory(&parent).unwrap();
+        let config = parent.join("config.toml");
+        std::fs::write(&config, b"original").unwrap();
+        // Expose only the fixture ancestor, preserving the private child's ACL.
+        set_fixture_acl(&fixture.0, Some("(A;;FA;;;CURRENT_USER)(A;;FW;;;WD)"));
+        let mut snapshot = Snapshot::capture(&config).unwrap();
+        assert!(snapshot.require_ancestor_access().is_err());
+        assert!(snapshot.ancestor_access.is_none());
+        assert_eq!(std::fs::read(&config).unwrap(), b"original");
+        assert_eq!(std::fs::read_dir(&parent).unwrap().count(), 1);
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
+            .open(&fixture.0)
+            .unwrap();
+        assert!(crate::config_access::AccessSnapshot::capture_path(&file, true).is_err());
+    }
+
+    #[test]
+    #[ignore = "requires CXWEB_QUALIFIED_FIXTURE_ROOT on a path whose complete ancestor chain qualifies; never changes host ancestor ACLs"]
+    fn qualified_mutations_recheck_evidence_and_never_rebase_a_changed_acl() {
+        let base = PathBuf::from(
+            std::env::var_os("CXWEB_QUALIFIED_FIXTURE_ROOT")
+                .expect("select an existing qualified test directory"),
+        );
+        crate::target_path::TargetPathGuard::capture(&base, true)
+            .unwrap()
+            .capture_access()
+            .expect("test root ancestor permissions must qualify");
+        for existed in [false, true] {
+            let fixture = Fixture::under(&base);
+            let parent = fixture.0.join("home");
+            crate::state::protected_directory(&parent).unwrap();
+            let config = parent.join("config.toml");
+            if existed {
+                std::fs::write(&config, b"original").unwrap();
+            }
+            let mut snapshot = Snapshot::capture(&config).unwrap();
+            snapshot.require_ancestor_access().unwrap();
+            snapshot.require_ancestor_access().unwrap();
+            let staged = snapshot
+                .stage(".cxweb-qualified.tmp", b"candidate")
+                .unwrap();
+            snapshot.commit(&staged, b"candidate").unwrap();
+            let mut snapshot = Snapshot::capture(&config).unwrap();
+            snapshot.require_ancestor_access().unwrap();
+            let staged = snapshot.stage(".cxweb-rejected.tmp", b"changed").unwrap();
+            // Change an earlier ancestor, keeping the immediate parent and file
+            // private and unchanged. The old unqualified snapshot accepted this.
+            set_fixture_acl(&fixture.0, Some("(A;;FA;;;CURRENT_USER)(A;;FR;;;SY)"));
+            assert!(snapshot.require_ancestor_access().is_err());
+            assert!(snapshot.stage(".cxweb-changed.tmp", b"changed").is_err());
+            assert!(snapshot.commit(&staged, b"changed").is_err());
+            assert!(snapshot.remove().is_err());
+            assert_eq!(std::fs::read(&config).unwrap(), b"candidate");
+            assert_eq!(std::fs::read(&staged).unwrap(), b"changed");
+            let mut fresh = Snapshot::capture(&config).unwrap();
+            fresh.require_ancestor_access().unwrap();
+            fresh.remove().unwrap();
+            assert!(!config.exists());
+        }
     }
 
     #[test]
