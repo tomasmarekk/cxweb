@@ -7,6 +7,12 @@
     <div class="rows"><div><span>ChatGPT</span><strong id="installed-chatgpt">Unverified</strong></div><div><span>Codex App</span><strong id="installed-app">Unverified</strong></div><div><span>Codex CLI</span><strong id="installed-cli">Unverified</strong></div></div>
     <button id="installed-refresh" class="primary">Check status</button>
     <button id="installed-retry" class="secondary" hidden disabled>Retry background verification</button>
+    <section id="installed-reasoning" class="model-results" hidden aria-live="polite">
+      <h2>ChatGPT reasoning</h2>
+      <div id="installed-reasoning-list"></div>
+      <p id="installed-reasoning-help" hidden>Verify the remaining reasoning choices with eight fixed test messages. This uses your ChatGPT allowance. No coding tools run and no project files change. Verification continues if you close this window.</p>
+      <button id="installed-qualify-reasoning" class="secondary" hidden disabled>Verify reasoning choices</button>
+    </section>
     <button id="installed-remove" class="secondary" disabled>Remove connection</button>
     <details><summary>Connection details</summary><div class="details-body native-form">
       <label for="installed-choice">Connected Codex home</label><select id="installed-choice"></select>

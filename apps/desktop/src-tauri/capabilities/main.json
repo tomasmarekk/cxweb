@@ -22,6 +22,7 @@
     "allow-installed-list",
     "allow-installed-check",
     "allow-installed-disconnect",
-    "allow-installed-retry-web"
+    "allow-installed-retry-web",
+    "allow-installed-qualify-reasoning"
   ]
 }

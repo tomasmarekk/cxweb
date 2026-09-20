@@ -25,6 +25,27 @@ model and effort corroborated by the native turn context.
 
 ## Reasoning family publication (2026-09-20)
 
+- The desktop's installed view now reads the actually published family through
+  a passive private-control command and lists its English choices. A newly
+  activated single-choice installation offers explicit background qualification;
+  its eight-message allowance cost is disclosed. Already complete families do
+  not offer redundant qualification. Successful activation opens this view
+  immediately. Duplicate clicks, active work, missing metadata, sign-out and
+  stale runtime instances cannot start another test. Failure clears stale UI
+  claims and never retries generation.
+- Health and reasoning responses must belong to the same runtime instance.
+  Older hosts without the metadata command remain readable with no reasoning
+  action. Only public catalog names/efforts cross this command, with no browser
+  identities, account scope, credentials or configuration contents.
+- Actual desktop inspection confirmed Instant, Medium, High, Extra High and Pro
+  with the Low/Light and Max aliases explained, and no redundant test button.
+  The installed daemon recovered all five choices in the background. The current
+  health tracker still leaves App/CLI verification unknown; these live test
+  reports are not yet reflected automatically in its component state.
+- Desktop follow-up checks: Rust workspace 278 passed / 15 ignored; all 63
+  desktop tests passed, including five new installed-flow cases. Clippy with
+  warnings denied, formatting, diff checks, and Windows release builds passed.
+
 - An installed route can now expose multiple independently qualified reasoning
   choices under one model family. The native request's explicit effort selects
   its exact observed browser position; unsupported efforts fail before opening a

@@ -56,6 +56,16 @@ mod desktop {
     }
 
     #[tauri::command]
+    async fn installed_qualify_reasoning(
+        installation: String,
+        instance: String,
+    ) -> Result<cxweb_runtime::installed_control::Snapshot, String> {
+        cxweb_runtime::installed_control::qualify_reasoning(&installation, instance)
+            .await
+            .map_err(str::to_owned)
+    }
+
+    #[tauri::command]
     async fn installed_disconnect(
         installation: String,
         instance: String,
@@ -236,6 +246,7 @@ mod desktop {
                 installed_list,
                 installed_check,
                 installed_disconnect,
+                installed_qualify_reasoning,
                 installed_retry_web
             ])
             .run(tauri::generate_context!())

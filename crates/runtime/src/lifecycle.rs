@@ -52,6 +52,12 @@ fn supervision_error(error: std::io::Error) -> &'static str {
 }
 
 impl DisconnectController {
+    pub(crate) fn reasoning_status(&self) -> Option<Vec<crate::control_protocol::ReasoningFamily>> {
+        if *self.state.borrow() != DisconnectState::Idle {
+            return None;
+        }
+        self.recovery.as_ref()?.reasoning_status()
+    }
     pub(crate) async fn qualify_reasoning(&self) -> Result<DisconnectState, &'static str> {
         let controller = self.clone();
         tokio::spawn(async move {

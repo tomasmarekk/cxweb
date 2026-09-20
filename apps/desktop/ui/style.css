@@ -12,6 +12,9 @@
 .native-form input, .native-form select { width:100%; min-height:36px; padding:7px 9px; border:1px solid var(--line); border-radius:6px; background:var(--panel); color:inherit; font:inherit; }
 .native-form p { margin-top:12px; } #native-preflight-result { margin-top:14px; }
 #installed-retry, #installed-remove { margin-top:12px; }
+#installed-reasoning { margin:16px 0 0; }
+#installed-reasoning h2 { font-size:16px; margin:0 0 10px; color:inherit; }
+#installed-reasoning-help, #installed-qualify-reasoning { margin-top:12px; }
 #installed-error { padding:12px; border:1px solid var(--line); border-radius:8px; margin-top:16px; }
 #installed-components { margin-top:16px; }
 dialog { max-width:min(400px, calc(100vw - 32px)); border:1px solid var(--line); border-radius:12px; background:var(--panel); color:inherit; padding:22px; }

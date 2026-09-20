@@ -572,6 +572,28 @@ pub(crate) struct RecoveryController {
     directory: PathBuf,
 }
 impl RecoveryController {
+    pub(crate) fn reasoning_status(&self) -> Option<Vec<crate::control_protocol::ReasoningFamily>> {
+        // Read the actually published catalog. Discovery and generation remain
+        // explicit operations; status never touches the browser or journal.
+        let provider = self.pending.ready().ok()?;
+        let catalog = provider
+            .catalog(CatalogCodec::Cli01551)
+            .or_else(|| provider.catalog(CatalogCodec::App01550Alpha92))?;
+        catalog
+            .entries
+            .iter()
+            .map(|entry| {
+                Some(crate::control_protocol::ReasoningFamily {
+                    model: entry.get("slug")?.as_str()?.into(),
+                    name: entry.get("display_name")?.as_str()?.into(),
+                    levels: serde_json::from_value(
+                        entry.get("supported_reasoning_levels")?.clone(),
+                    )
+                    .ok()?,
+                })
+            })
+            .collect()
+    }
     pub(crate) fn new(pending: PendingProvider, receipt: Receipt, directory: PathBuf) -> Self {
         Self {
             pending,

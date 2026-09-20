@@ -279,7 +279,11 @@ async function runAction(command, params = {}) {
   if (command === 'native_text') { nativeWaiting = true; scheduleNativeStatus(); }
   if (command === 'native_text') for (const id of nativeControls) $(id).disabled = true;
   for (const id of actionButtons) $(id).disabled = true;
-  try { render(await invoke(command, params)); }
+  try {
+    const status = await invoke(command, params);
+    render(status);
+    if (status.routing_installed && window.cxwebInstalled) await window.cxwebInstalled.attach();
+  }
   catch (error) {
     // A failed operation invalidates qualification in the runtime. Read its
     // cached receipt without repeating browser work or retaining stale success.

@@ -41,6 +41,102 @@ function panel(respond) {
 }
 const list = (targets = [target], diagnostics = []) => ({ targets, diagnostics });
 
+function reasoningStatus(complete = false) {
+  const value = health();
+  value.health.components.web_models.state = 'healthy';
+  const levels = complete ? [['low', 'Instant'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'Extra High'], ['max', 'Pro']] : [['xhigh', 'Latest · Extra High']];
+  value.reasoning = [{ model: 'webbridge/fixture', name: 'ChatGPT Web · Latest', levels: levels.map(([effort, description]) => ({ effort, description })) }];
+  return value;
+}
+
+test('reasoning verification is explicit, instance-bound and sends only once', async () => {
+  let finish;
+  const ui = panel(async command => command === 'installed_list' ? list() : command === 'installed_qualify_reasoning'
+    ? new Promise(resolve => { finish = resolve; }) : reasoningStatus());
+  await flush();
+  assert.deepEqual(ui.calls.map(call => call.command), ['installed_list', 'installed_check']);
+  const button = ui.nodes.get('installed-qualify-reasoning');
+  assert.equal(button.hidden, false); assert.equal(button.disabled, false);
+  assert.match(ui.nodes.get('installed-reasoning-help').textContent, /eight fixed test messages/);
+  const pending = button.click(); await button.click();
+  assert.equal(button.disabled, true);
+  assert.equal(ui.nodes.get('installed-refresh').disabled, true);
+  assert.equal(ui.calls.filter(call => call.command === 'installed_qualify_reasoning').length, 1);
+  assert.deepEqual({ ...ui.calls.at(-1).params }, { installation: target.installation, instance: 'b'.repeat(32) });
+  finish(reasoningStatus(true)); await pending;
+  assert.equal(button.hidden, true);
+  const levels = ui.nodes.get('installed-reasoning-list').children[1].children.map(item => item.textContent);
+  assert.deepEqual(levels, ['Instant — Low in CLI, Light in App', 'Medium', 'High', 'Extra High', 'Pro — Max in Codex']);
+  assert.match(ui.nodes.get('installed-description').textContent, /Fully restart Codex/);
+  await button.click();
+  assert.equal(ui.calls.filter(call => call.command === 'installed_qualify_reasoning').length, 1);
+});
+
+test('a newly activated connection opens installed reasoning controls without restarting the desktop', async () => {
+  let connected = false;
+  const setup = { phase: 'generation_ready', background_session: true, tool_qualified_model: 'webbridge/fixture' };
+  const ui = panel(async command => {
+    if (command === 'installed_list') return list(connected ? [target] : []);
+    if (command === 'installed_check') return reasoningStatus();
+    if (command === 'activate_codex') { connected = true; return { ...setup, routing_installed: true }; }
+    return setup;
+  });
+  await flush();
+  for (const [id, value] of [['native-client', 'C:\\fixture\\codex.exe'], ['native-home', target.home], ['native-cwd', 'C:\\fixture\\work']]) ui.nodes.get(id).value = value;
+  await ui.nodes.get('activate-codex').click();
+  assert.equal(ui.nodes.get('setup-view').hidden, true);
+  assert.equal(ui.nodes.get('installed-view').hidden, false);
+  assert.equal(ui.nodes.get('installed-qualify-reasoning').disabled, false);
+  assert.deepEqual(ui.calls.map(call => call.command), ['installed_list', 'status', 'activate_codex', 'installed_list', 'installed_check']);
+});
+
+test('unavailable, busy, signed-out and already qualified hosts cannot run reasoning tests', async () => {
+  for (const mutate of [
+    value => { delete value.reasoning; },
+    value => { value.reasoning = []; },
+    value => { value.health.active_web_turns = 1; },
+    value => { value.health.components.web_auth.state = 'auth_required'; },
+    value => { value.health.components.web_models.state = 'unknown'; },
+    value => { value.health.components.runtime.state = 'unavailable'; },
+    value => { value.health.overall = 'removal_pending_restart'; },
+    value => { value.reasoning.push(value.reasoning[0]); },
+    value => { value.reasoning = reasoningStatus(true).reasoning; }
+  ]) {
+    const value = reasoningStatus(); mutate(value);
+    const ui = panel(async command => command === 'installed_list' ? list() : value);
+    await flush(); await ui.nodes.get('installed-qualify-reasoning').click();
+    assert.equal(ui.nodes.get('installed-qualify-reasoning').hidden, true);
+    assert.ok(ui.calls.every(call => call.command !== 'installed_qualify_reasoning'));
+  }
+});
+
+test('failed reasoning verification clears stale claims and never retries generation', async () => {
+  const ui = panel(async command => {
+    if (command === 'installed_list') return list();
+    if (command === 'installed_qualify_reasoning') throw 'E_QUALIFICATION_PROTOCOL';
+    return reasoningStatus();
+  });
+  await flush(); await ui.nodes.get('installed-qualify-reasoning').click();
+  assert.equal(ui.nodes.get('installed-reasoning').hidden, true);
+  assert.equal(ui.nodes.get('installed-reasoning-list').children.length, 0);
+  assert.match(ui.nodes.get('installed-error').textContent, /invalid response.*No automatic retry/);
+  assert.equal(ui.nodes.get('installed-app').textContent, 'Unverified');
+  await ui.nodes.get('installed-refresh').click();
+  assert.equal(ui.calls.filter(call => call.command === 'installed_qualify_reasoning').length, 1);
+  assert.equal(ui.nodes.get('installed-qualify-reasoning').disabled, false);
+});
+
+test('reasoning labels render as text without promoting account or client verification', async () => {
+  const value = reasoningStatus(true);
+  value.reasoning[0].name = '<untrusted family>';
+  const ui = panel(async command => command === 'installed_list' ? list() : value);
+  await flush();
+  assert.equal(ui.nodes.get('installed-reasoning-list').children[0].textContent, '<untrusted family>');
+  assert.equal(ui.nodes.get('installed-app').textContent, 'Unverified');
+  assert.equal(ui.nodes.get('installed-cli').textContent, 'Unverified');
+  assert.equal(ui.nodes.get('installed-qualify-reasoning').hidden, true);
+});
+
 function transient(code = 'E_ALREADY_RUNNING') {
   const value = health('unavailable');
   value.health.components.browser = { state: 'unavailable', code };

@@ -26,6 +26,7 @@ pub struct Inventory {
 pub struct Snapshot {
     pub instance: String,
     pub health: Health,
+    pub reasoning: Option<Vec<control_protocol::ReasoningFamily>>,
 }
 
 fn inventory(root: &Path) -> Result<Inventory, &'static str> {
@@ -127,7 +128,7 @@ async fn selected(installation: &str) -> Result<(), &'static str> {
 }
 
 async fn read(installation: &str) -> Result<Snapshot, &'static str> {
-    match control_protocol::exchange(
+    let (instance, health) = match control_protocol::exchange(
         installation,
         &Request {
             version: 1,
@@ -138,13 +139,37 @@ async fn read(installation: &str) -> Result<Snapshot, &'static str> {
     {
         Ok(Reply::Health {
             instance, health, ..
-        }) => Ok(Snapshot {
-            instance,
-            health: *health,
-        }),
-        Ok(_) => Err("E_INSTALLED_PROTOCOL"),
-        Err(_) => Err("E_INSTALLED_UNAVAILABLE"),
-    }
+        }) => (instance, *health),
+        Ok(_) => return Err("E_INSTALLED_PROTOCOL"),
+        Err(_) => return Err("E_INSTALLED_UNAVAILABLE"),
+    };
+    let reasoning = match control_protocol::exchange(
+        installation,
+        &Request {
+            version: 1,
+            command: Command::ReasoningStatus {},
+        },
+    )
+    .await
+    {
+        Ok(Reply::ReasoningStatus {
+            instance: current,
+            families,
+            ..
+        }) if current == instance => families,
+        Ok(Reply::ReasoningStatus { .. }) => return Err("E_INSTALLED_CHANGED"),
+        // Older installed hosts remain readable during a desktop update.
+        Ok(Reply::Error {
+            code: ErrorCode::Unsupported | ErrorCode::Protocol,
+        }) => None,
+        Ok(_) => return Err("E_INSTALLED_PROTOCOL"),
+        Err(_) => return Err("E_INSTALLED_UNAVAILABLE"),
+    };
+    Ok(Snapshot {
+        instance,
+        health,
+        reasoning,
+    })
 }
 
 pub async fn check(installation: &str) -> Result<Snapshot, &'static str> {

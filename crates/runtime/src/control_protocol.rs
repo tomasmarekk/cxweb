@@ -22,6 +22,9 @@ const EXCHANGE: Duration = Duration::from_secs(2);
 pub type Work = Pin<Box<dyn Future<Output = Result<DisconnectState, &'static str>> + Send>>;
 
 pub trait Lifecycle: Send + Sync + 'static {
+    fn reasoning_status(&self) -> Option<Vec<ReasoningFamily>> {
+        None
+    }
     fn qualify_reasoning(&self) -> Work {
         Box::pin(async { Err("E_REASONING_UNSUPPORTED") })
     }
@@ -89,6 +92,9 @@ enum OperationKind {
     NativeText(crate::setup_owner::NativeTarget),
 }
 impl Lifecycle for DisconnectController {
+    fn reasoning_status(&self) -> Option<Vec<ReasoningFamily>> {
+        self.reasoning_status()
+    }
     fn qualify_reasoning(&self) -> Work {
         let controller = self.clone();
         Box::pin(async move { controller.qualify_reasoning().await })
@@ -126,6 +132,7 @@ pub struct Request {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    ReasoningStatus {},
     QualifyReasoning {
         instance: String,
         operation: String,
@@ -172,6 +179,11 @@ pub enum Command {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Reply {
+    ReasoningStatus {
+        version: u32,
+        instance: String,
+        families: Option<Vec<ReasoningFamily>>,
+    },
     Health {
         version: u32,
         instance: String,
@@ -194,6 +206,15 @@ pub enum Reply {
     Error {
         code: ErrorCode,
     },
+}
+
+/// Public picker metadata only. Never includes browser identities or account scope.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReasoningFamily {
+    pub model: String,
+    pub name: String,
+    pub levels: Vec<cxweb_codex_adapter::catalog_codec::ReasoningLevel>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
@@ -381,6 +402,16 @@ impl Service {
         }
         let cancel_native = matches!(&request.command, Command::CancelNative { .. });
         let (instance, operation, start) = match request.command {
+            Command::ReasoningStatus {} => {
+                let Some(backend) = &self.backend else {
+                    return error(ErrorCode::Unsupported);
+                };
+                return Reply::ReasoningStatus {
+                    version: VERSION,
+                    instance: self.instance.clone(),
+                    families: backend.reasoning_status(),
+                };
+            }
             Command::QualifyReasoning {
                 instance,
                 operation,
@@ -741,6 +772,9 @@ pub async fn exchange(installation: &str, request: &Request) -> io::Result<Reply
             (Command::BrowserStatus {}, Reply::BrowserStatus { version, .. }) => {
                 *version == VERSION
             }
+            (Command::ReasoningStatus {}, Reply::ReasoningStatus { version, .. }) => {
+                *version == VERSION
+            }
             (
                 Command::Disconnect { operation, .. }
                 | Command::DisconnectWhenIdle { operation, .. }
@@ -851,6 +885,16 @@ mod tests {
         release: Arc<Semaphore>,
     }
     impl Lifecycle for Backend {
+        fn reasoning_status(&self) -> Option<Vec<ReasoningFamily>> {
+            Some(vec![ReasoningFamily {
+                model: "webbridge/fixture".into(),
+                name: "ChatGPT Web · Latest".into(),
+                levels: vec![cxweb_codex_adapter::catalog_codec::ReasoningLevel {
+                    effort: "low".into(),
+                    description: "Instant".into(),
+                }],
+            }])
+        }
         fn qualify_reasoning(&self) -> Work {
             self.retry_web()
         }
@@ -890,6 +934,29 @@ mod tests {
     fn dispatch(service: &Service, command: Command) -> Reply {
         service.handle(&serde_json::to_vec(&request(command)).unwrap())
     }
+    #[tokio::test]
+    async fn reasoning_status_is_passive_and_contains_only_published_picker_metadata() {
+        let (service, backend) = fixture();
+        let reply = dispatch(&service, Command::ReasoningStatus {});
+        let Reply::ReasoningStatus {
+            version,
+            instance,
+            families,
+        } = reply
+        else {
+            panic!("expected reasoning snapshot");
+        };
+        assert_eq!(version, VERSION);
+        assert_eq!(instance, service.instance);
+        let families = families.unwrap();
+        assert_eq!(families[0].model, "webbridge/fixture");
+        assert_eq!(families[0].levels[0].description, "Instant");
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 0);
+        assert!(service.receipts.lock().unwrap().is_empty());
+        let json = serde_json::to_value(&families[0]).unwrap();
+        assert_eq!(json.as_object().unwrap().len(), 3);
+    }
+
     #[tokio::test]
     async fn reasoning_receipts_deduplicate_generation_and_allow_explicit_disconnect() {
         let (service, backend) = fixture();

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-installed-qualify-reasoning"
+description = "Enables the installed_qualify_reasoning command without any pre-configured scope."
+commands.allow = ["installed_qualify_reasoning"]
+
+[[permission]]
+identifier = "deny-installed-qualify-reasoning"
+description = "Denies the installed_qualify_reasoning command without any pre-configured scope."
+commands.deny = ["installed_qualify_reasoning"]

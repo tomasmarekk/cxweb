@@ -7,6 +7,13 @@ window.cxwebInstalled = (() => {
   let targets = [], selected = '', snapshot = null, pending = false, confirmation = null;
   let timer = null, epoch = 0, attached = false;
   const stateText = { healthy: 'Verified', degraded: 'Degraded', unavailable: 'Unavailable', unknown: 'Unverified', not_installed: 'Not installed', restart_required: 'Restart required', auth_required: 'Sign-in required', incompatible: 'Incompatible', conflict: 'Conflict' };
+  const reasoningHelp = 'Verify the remaining reasoning choices with eight fixed test messages. This uses your ChatGPT allowance. No coding tools run and no project files change. Verification continues if you close this window.';
+  function canQualifyReasoning() {
+    const health = snapshot?.health;
+    return snapshot?.reasoning?.length === 1 && snapshot.reasoning[0].levels.length === 1 &&
+      ['preflight', 'ready', 'restart_required'].includes(health.overall) && health.active_web_turns === 0 &&
+      ['runtime', 'web_auth', 'web_models'].every(key => health.components[key]?.state === 'healthy');
+  }
   const wording = {
     disconnected: ['Connection inactive', 'The runtime is available. Web model routing is not active.'],
     preflight: ['Verifying connection', 'Some parts of the connection still need verification.'],
@@ -33,6 +40,10 @@ window.cxwebInstalled = (() => {
       ['E_ALREADY_RUNNING', 'E_BROWSER_RUNTIME_MISSING', 'E_BROWSER_START', 'E_BACKGROUND_NAVIGATION', 'E_BROWSER_OBSERVATION'].includes(snapshot.health.components.browser?.code);
     node('installed-retry').hidden = !retryable;
     node('installed-retry').disabled = !retryable || pending || Boolean(confirmation);
+    const canQualify = canQualifyReasoning();
+    node('installed-qualify-reasoning').hidden = !canQualify;
+    node('installed-qualify-reasoning').disabled = !canQualify || pending || Boolean(confirmation);
+    node('installed-reasoning-help').hidden = !canQualify;
   }
   function error(code) {
     const messages = {
@@ -44,7 +55,18 @@ window.cxwebInstalled = (() => {
       E_INSTALLED_UNCONFIRMED: 'The runtime did not confirm the request. Check status before trying again.',
       E_CONTROL_BUSY: 'Another operation is running. Check status before trying again.'
     };
-    node('installed-error').textContent = messages[code] || 'The installed connection could not be verified. No browser or replacement runtime was started.';
+    const reasoningErrors = {
+      E_REASONING_DISCOVERY: 'The expected reasoning choices could not be verified.',
+      E_QUALIFICATION_PROTOCOL: 'A reasoning test returned an invalid response.',
+      E_QUALIFICATION_TIMEOUT: 'A reasoning test did not finish within its time limit.',
+      E_SESSION_SCOPE: 'The signed-in account or workspace could not be verified.',
+      E_WEB_CLEANUP_UNCONFIRMED: 'Browser cleanup could not be confirmed. New web requests are blocked.',
+      E_CANCELLED: 'Reasoning verification was cancelled.',
+      E_WEB_RECOVERY_RECEIPT: 'The verified choices could not be published.',
+      E_REASONING_QUALIFICATION: 'Reasoning verification could not be completed.',
+      E_WEB_ACTIVE: 'Another web operation is running.'
+    };
+    node('installed-error').textContent = messages[code] || (reasoningErrors[code] ? `${reasoningErrors[code]} No automatic retry was made. Check status before continuing.` : 'The installed connection could not be verified. No browser or replacement runtime was started.');
     node('installed-error').hidden = false;
   }
   function unavailable() {
@@ -53,6 +75,8 @@ window.cxwebInstalled = (() => {
     node('installed-description').textContent = 'The current runtime state could not be verified. Check status before taking further action.';
     for (const id of ['chatgpt', 'app', 'cli']) node(`installed-${id}`).textContent = 'Unverified';
     node('installed-components').replaceChildren();
+    node('installed-reasoning').hidden = true;
+    node('installed-reasoning-list').replaceChildren();
   }
   function render(value) {
     snapshot = value;
@@ -70,6 +94,21 @@ window.cxwebInstalled = (() => {
       const row = document.createElement('p');
       row.textContent = `${label}: ${stateText[component?.state] || 'Unverified'}${component?.observed_at ? `; observed ${component.observed_at}` : ''}${component?.code ? `; ${component.code}` : ''}`;
       details.append(row);
+    }
+    const families = value.reasoning || [];
+    node('installed-reasoning').hidden = !families.length;
+    const reasoning = node('installed-reasoning-list'); reasoning.replaceChildren();
+    node('installed-reasoning-help').textContent = reasoningHelp;
+    for (const family of families) {
+      const name = document.createElement('p'); name.textContent = family.name; reasoning.append(name);
+      const list = document.createElement('ul');
+      for (const level of family.levels) {
+        const item = document.createElement('li');
+        const alias = level.effort === 'low' && level.description === 'Instant' ? ' — Low in CLI, Light in App'
+          : level.effort === 'max' && ['Pro', '6 PRO'].includes(level.description) ? ' — Max in Codex' : '';
+        item.textContent = `${level.description}${alias}`; list.append(item);
+      }
+      reasoning.append(list);
     }
     controls();
   }
@@ -149,6 +188,17 @@ window.cxwebInstalled = (() => {
     if (selected) await refresh();
   });
   node('installed-refresh').addEventListener('click', refresh);
+  node('installed-qualify-reasoning').addEventListener('click', async () => {
+    if (pending || confirmation || !canQualifyReasoning()) return;
+    const receipt = { installation: selected, instance: snapshot.instance };
+    pending = true; clearTimer(); ++epoch; controls(); node('installed-error').hidden = true;
+    node('installed-description').textContent = 'Verifying reasoning choices in the background. This can take several minutes. No test is retried automatically.';
+    try {
+      render(await invoke('installed_qualify_reasoning', receipt));
+      node('installed-description').textContent = 'Reasoning verification finished. The verified choices are shown below. Fully restart Codex to refresh its picker.';
+    } catch (code) { unavailable(); error(code); }
+    finally { pending = false; controls(); schedule(); }
+  });
   node('installed-retry').addEventListener('click', async () => {
     if (pending || confirmation || !snapshot || node('installed-retry').disabled) return;
     const receipt = { installation: selected, instance: snapshot.instance };
