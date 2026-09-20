@@ -54,6 +54,8 @@
       <button id="native-text" class="secondary" disabled>Test selected client</button>
       <button id="native-tools" class="secondary" disabled>Test read and patch</button>
       <p>This separate tool test asks Codex to read one test file and create one file in a disposable workspace. It uses additional ChatGPT responses. Only the exact fixture operations are allowed.</p>
+      <button id="native-denial" class="secondary" disabled>Test command denial</button>
+      <p>This test asks Codex to read one test file, declines the request and verifies the denial reaches the final response. It uses additional ChatGPT responses.</p>
       <button id="native-cancel" class="secondary" hidden disabled>Cancel client test</button>
       <button id="reset-test" class="secondary" hidden disabled>Reset client test session</button>
       <p id="reset-test-help" hidden>Release the idle test session to verify another route or sign in again. Your saved sign-in remains on this device. No test message is sent.</p>

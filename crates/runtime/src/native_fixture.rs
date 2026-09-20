@@ -10,9 +10,11 @@ use std::{
 };
 
 pub(crate) const READ: &str = "Get-Content -LiteralPath './probe-input.txt'";
+pub(crate) const DENIED: &str = "cxweb native read was denied";
 const ERROR: &str = "E_NATIVE_PROBE_ACTION";
 
 pub(crate) struct Fixture {
+    pub denial: bool,
     pub cwd: PathBuf,
     pub marker: String,
     shells: Vec<PathBuf>,
@@ -40,13 +42,22 @@ impl Fixture {
             }
         }
         Self {
+            denial: false,
             cwd,
             marker,
             shells,
             deliveries: Mutex::new(BTreeMap::new()),
         }
     }
+    pub fn expected(&self) -> &str {
+        if self.denial { DENIED } else { &self.marker }
+    }
     pub fn prompt(&self) -> String {
+        if self.denial {
+            return format!(
+                "Use exec_command exactly once with cmd exactly {READ:?}, login=false and the current working directory. The user will deny this test command. Wait for the actual tool result. If the command is denied, return exactly: {DENIED}. Do not retry, run a different command, modify files, request elevated permissions or claim you read the file."
+            );
+        }
         format!(
             "Use exec_command exactly once with cmd exactly {READ:?}, login=false and the current working directory. Read probe-input.txt. Then use the apply_patch custom tool exactly once to add probe-output.txt with that exact line followed by a newline. Wait for the successful tool results. Do not use other tools, run other commands, change other files, request elevated permissions or access the network. Return exactly the line read from probe-input.txt as your final answer, without extra text."
         )
@@ -88,7 +99,7 @@ impl Fixture {
                         .as_str()
                         .is_some_and(|a| self.read_arguments(a))
             }
-            1 => {
+            1 if !self.denial => {
                 item["type"] == "custom_tool_call"
                     && item["name"] == "apply_patch"
                     && namespace(item)
@@ -96,13 +107,13 @@ impl Fixture {
                         .as_str()
                         .is_some_and(|s| s == self.patch() || s == self.patch() + "\n")
             }
-            2 => {
+            step if step == if self.denial { 1 } else { 2 } => {
                 item["type"] == "message"
                     && item["role"] == "assistant"
                     && item["content"].as_array().is_some_and(|content| {
                         content.len() == 1
                             && content[0]["type"] == "output_text"
-                            && content[0]["text"] == self.marker
+                            && content[0]["text"] == self.expected()
                     })
             }
             _ => false,
@@ -302,6 +313,41 @@ mod tests {
             Err(ERROR)
         );
         assert_eq!(fixture.check_delivery(&first), Ok(()));
+    }
+    #[test]
+    fn denial_allows_only_one_read_then_exact_acknowledgement() {
+        let mut fixture = fixture();
+        fixture.denial = true;
+        assert!(!fixture.prompt().contains(&fixture.marker));
+        let first = response("read", read(json!({"cmd":READ,"login":false})));
+        let final_text = response(
+            "final",
+            json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":DENIED}]}),
+        );
+        assert_eq!(fixture.check_delivery(&final_text), Err(ERROR));
+        assert_eq!(fixture.check_delivery(&first), Ok(()));
+        assert_eq!(fixture.check_delivery(&first), Ok(()));
+        assert_eq!(
+            fixture.check_delivery(&response("retry", read(json!({"cmd":READ,"login":false})))),
+            Err(ERROR)
+        );
+        assert_eq!(
+            fixture.check_delivery(&response(
+                "patch",
+                json!({"type":"custom_tool_call","name":"apply_patch","input":fixture.patch()})
+            )),
+            Err(ERROR)
+        );
+        assert_eq!(
+            fixture.check_delivery(&final_text.replace(DENIED, &fixture.marker)),
+            Err(ERROR)
+        );
+        assert_eq!(fixture.check_delivery(&final_text), Ok(()));
+        assert_eq!(fixture.check_delivery(&final_text), Ok(()));
+        assert_eq!(
+            fixture.check_delivery(&final_text.replace("final", "extra")),
+            Err(ERROR)
+        );
     }
     #[test]
     fn additional_commands_permissions_arguments_and_namespaces_never_reach_native_client() {

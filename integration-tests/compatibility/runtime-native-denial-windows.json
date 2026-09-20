@@ -1,0 +1,57 @@
+{
+  "schema": "cxweb.runtime-native-denial.v1",
+  "date": "2026-09-20",
+  "result": "PASS native command denial against both reviewed backends with synthetic local model responses; authenticated desktop flow NOT RUN",
+  "verification": {
+    "workspace": {
+      "passed": 221,
+      "ignored": 10
+    },
+    "desktop_ui": {
+      "passed": 40
+    },
+    "clippy": "PASS",
+    "format": "PASS",
+    "release_builds": [
+      "CLI",
+      "daemon",
+      "desktop"
+    ]
+  },
+  "native_backends": [
+    {
+      "build": "0.155.1",
+      "sha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+      "text_and_cancellation": "PASS",
+      "read_and_patch": "PASS",
+      "command_denial": "PASS"
+    },
+    {
+      "build": "0.155.0-alpha.9.2",
+      "sha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+      "text_and_cancellation": "PASS",
+      "read_and_patch": "PASS",
+      "command_denial": "PASS"
+    }
+  ],
+  "checks": {
+    "fresh_isolated_native_home_and_workspace": true,
+    "native_approval_declined_once_for_exact_read": true,
+    "native_completed_command_status_declined": true,
+    "native_tool_result_contains_rejection_and_no_file_marker": true,
+    "exact_attributed_final_denial_acknowledgement": true,
+    "input_unchanged_and_no_output_file_or_patch_event": true,
+    "retry_commands_and_patch_blocked_before_delivery": true,
+    "no_auth_headers_sent_to_synthetic_endpoint": true,
+    "receipt_distinguishes_text_read_patch_and_denied_read": true,
+    "desktop_serializes_actions_and_reports_denial_as_zero_tools_executed": true,
+    "production_routing_installed": false,
+    "actual_picker_verified": false
+  },
+  "limits": [
+    "Synthetic responses verify the native protocol; they do not measure model compliance or qualify a live ChatGPT route.",
+    "This is one additional deterministic exercise, not the full PRD coding corpus or reliability sample.",
+    "The authenticated desktop flow has not run because the previous manual-login browser still owns its profile.",
+    "Actual Codex App picker and native subscription coexistence remain unverified."
+  ]
+}

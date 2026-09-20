@@ -21,6 +21,35 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Native command denial exercise (2026-09-20)
+
+- Added an explicit Test command denial action to selected-client diagnostics.
+  The typed exercise field travels through Tauri, the private control protocol,
+  the operation receipt and the persistent setup owner. Omitted exercise means
+  text; receipt reuse with either different tool exercise is refused.
+- The runner declines exactly one fixture-bound read approval. It then requires
+  an attributed native completed command with status declined, no file-change
+  event, no input marker in command output, unchanged input and absent output
+  file, and the exact final denial acknowledgement. It never approves the read
+  or a patch in this exercise. The existing cancellation and process-tree cleanup
+  apply. Unexpected approval requests still fail the diagnostic.
+- The buffered response policy permits only the exact read followed by the
+  denial acknowledgement. Early final output, a second read, patches, claims of
+  successful reading and additional responses fail before reaching the native
+  client. Exact ledger replay does not advance the sequence twice.
+- Actual CLI 0.155.1 and App backend 0.155.0-alpha.9.2 passed text/cancellation,
+  read/patch and denial exercises using synthetic local responses. The denial
+  check observed the native rejection in the next model request and zero file
+  content leakage. No ChatGPT desktop application was launched or automated.
+- Workspace: 221 passed, 10 opt-in ignored. Desktop UI: 40 passed. Clippy,
+  formatting, explicit native-context include formatting and diff checks passed.
+  Release CLI, daemon and desktop builds passed.
+  Evidence: integration-tests/compatibility/runtime-native-denial-windows.json.
+- These checks do not certify live model compliance, the required coding corpus,
+  the actual Codex App picker or subscription coexistence. The previous manual
+  login still owns the browser profile, so the authenticated desktop action is
+  not yet run. Production activation remains disabled.
+
 ## Runtime-owned native read and patch exercise (2026-09-20)
 
 - Added Test read and patch to the desktop's selected-client diagnostics. It uses

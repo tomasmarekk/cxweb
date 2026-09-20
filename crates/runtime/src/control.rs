@@ -149,7 +149,7 @@ mod qualification_tests {
                     home: "nonexistent".into(),
                     cwd: "nonexistent".into(),
                     route: "webbridge/fixture".into(),
-                    tools: false,
+                    exercise: crate::native_probe::Exercise::Text,
                 },
                 tokio_util::sync::CancellationToken::new(),
             )
@@ -180,7 +180,7 @@ mod qualification_tests {
                         home: "nonexistent".into(),
                         cwd: "nonexistent".into(),
                         route: "webbridge/fixture".into(),
-                        tools: false,
+                        exercise: crate::native_probe::Exercise::Text,
                     },
                     cancellation,
                 )

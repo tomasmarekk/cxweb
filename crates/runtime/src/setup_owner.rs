@@ -18,7 +18,7 @@ pub struct NativeTarget {
     pub cwd: PathBuf,
     pub route: String,
     #[serde(default)]
-    pub tools: bool,
+    pub exercise: native_probe::Exercise,
 }
 
 struct PreparedTarget {
@@ -161,8 +161,8 @@ async fn qualify(
         .await?;
     // Retain the browser receipt before any model request, including failures.
     prepared.session = Some(session.clone());
-    let result = if target.tools {
-        native_probe::qualify_tools(&target.client, session, cancellation).await
+    let result = if target.exercise != native_probe::Exercise::Text {
+        native_probe::qualify_tools(&target.client, session, target.exercise, cancellation).await
     } else {
         native_probe::qualify_text(&target.client, session, false, cancellation).await
     };
@@ -189,6 +189,7 @@ pub(crate) fn native_error(code: &str) -> &'static str {
         "E_NATIVE_PROBE_GENERATION" => "E_NATIVE_PROBE_GENERATION",
         "E_NATIVE_PROBE_AUTH" | "E_NATIVE_PROBE_CONFIG" => "E_NATIVE_PROBE_CONFIG",
         "E_NATIVE_PROBE_ACTION" => "E_NATIVE_PROBE_ACTION",
+        "E_NATIVE_PROBE_DENIAL" => "E_NATIVE_PROBE_DENIAL",
         "E_BROWSER_IN_USE" => "E_BROWSER_IN_USE",
         "E_BROWSER_CLOSED" => "E_BROWSER_CLOSED",
         "E_HANDOFF_UNQUALIFIED" | "E_HANDOFF_BACKGROUND_REQUIRED" => "E_NATIVE_TEST_BACKGROUND",
@@ -207,6 +208,7 @@ mod tests {
         for code in [
             "E_NATIVE_PROBE_TIMEOUT",
             "E_NATIVE_PROBE_TEXT",
+            "E_NATIVE_PROBE_DENIAL",
             "E_BROWSER_CLOSED",
             "E_NATIVE_TEST_TARGET_CHANGED",
         ] {

@@ -442,6 +442,7 @@ mod tests {
                             executable_sha256: "a".repeat(64),
                             exact_text_received: true,
                             native_tools_executed: 0,
+                            exercise: crate::native_probe::Exercise::Text,
                             browser_reused: true,
                             routing_installed: false,
                             actual_picker_verified: false,
@@ -472,7 +473,7 @@ mod tests {
                     home: r"C:\fixture\home".into(),
                     cwd: r"C:\fixture\workspace".into(),
                     route: "webbridge/fixture".into(),
-                    tools: false,
+                    exercise: crate::native_probe::Exercise::Text,
                 })
                 .await
         });
@@ -555,7 +556,7 @@ mod tests {
             home: r"C:\fixture\home".into(),
             cwd: r"C:\fixture\workspace".into(),
             route: "webbridge/fixture".into(),
-            tools: false,
+            exercise: crate::native_probe::Exercise::Text,
         };
         let waiting = tokio::spawn({
             let remote = remote.clone();

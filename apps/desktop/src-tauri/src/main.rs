@@ -58,7 +58,7 @@ mod desktop {
         home: std::path::PathBuf,
         cwd: std::path::PathBuf,
         route: String,
-        tools: Option<bool>,
+        exercise: Option<cxweb_runtime::native_probe::Exercise>,
     ) -> Result<ControlStatus, String> {
         state
             .control
@@ -69,7 +69,7 @@ mod desktop {
                 home,
                 cwd,
                 route,
-                tools: tools.unwrap_or(false),
+                exercise: exercise.unwrap_or_default(),
             })
             .await
             .map_err(str::to_owned)
