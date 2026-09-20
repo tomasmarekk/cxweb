@@ -23,6 +23,55 @@ English. The complete installed CLI and App-backend read/patch/final scenarios
 now pass. A fixed message sent from the actual GUI also passed with the owned
 model and effort corroborated by the native turn context.
 
+## Frozen protocol quality corpus and evaluator (2026-09-20)
+
+- Added 200 deterministic generation cases in ten equal categories, including
+  exact text, nested JSON, typed functions, custom literals/pinned apply_patch
+  grammar, namespace collisions, parallel calls, denials, untrusted context and
+  checkpoints. Forty cases are adversarial and sixty require custom/namespaced
+  output. Checkpoint inputs do not inflate the latter count.
+- Inputs and semantic expectations are frozen in
+  integration-tests/quality/protocol-corpus-v1.json, hash
+  ebbaf51a3c453a614ed4c126b81aeba48bb3acae4bd89c7763fc143f0d5e34f1.
+  A contract test compares the complete generated manifest with that snapshot.
+- Evaluation reuses the production envelope and contextual request validators,
+  then separately measures exact task completion. Wrong but schema-valid answers
+  and valid final refusals do not become false task passes or disappear.
+- First-attempt accounting rejects duplicate starts and terminal replacements.
+  Started/unfinished cases remain visible; failures stay in the denominator.
+  Category counts and a 95% Wilson interval accompany complete observations.
+  The 99% envelope screen cannot mark a release qualified.
+- The live 200-case experiment is NOT RUN. The tally is in memory; a durable
+  runner binding all relevant implementation/route identities is still required
+  before its output can count toward G2. See
+  integration-tests/quality/PROTOCOL-CORPUS.md. Synthetic unit responses are
+  not included in any live quality denominator.
+- Validation: 301 workspace tests passed (18 opt-in tests ignored), Clippy with
+  warnings denied, formatting and diff checks passed. After tightening pending
+  interval behavior, the four corpus/tally unit tests and Clippy passed again.
+
+## App tool checkpoint after generation backoff (2026-09-20)
+
+- A new App-backend 0.155.0-alpha.9.2 run passed at 19:04:16 UTC after about
+  fifteen minutes without ChatGPT generation since the last rate-limit failure.
+  The installed daemon was
+  11f8a96d75ecbaf5908e959d2e067a4d5dd8e7faef6d580190ed4d32bcb7a6d8.
+  The native client performed one actual read, one manual compaction and exact
+  final recall, with four WebSocket requests and confirmed cleanup.
+- There was no runtime failure, native-upstream model frame or original
+  assistant/tool plaintext in the continuation. Evidence:
+  app-0.155.0-alpha.9.2.post-history-validation-tool-checkpoint.json.
+  Earlier failures remain retained. This is one Extra High completed-tool
+  scenario, not pending-process qualification or a reliability rate. Production
+  checkpoint publication remains disabled.
+- Ordinary installed text requests then passed for App at 19:07:37 UTC and CLI
+  at 19:10:21 UTC. Both retained all five reasoning choices, native model rows,
+  and unchanged configuration/executable hashes. The reports are
+  app-backend-0.155.0-alpha.9.2.post-history-validation-text.json and
+  cli-0.155.1.post-history-validation-text.json. Neither probe claims a new GUI
+  interaction. The quality corpus work does not replace the running daemon or
+  alter production routing; it is preparation for the larger quality gate.
+
 ## Full-history tool-result validation (2026-09-20)
 
 - The ordinary request decoder had the same missing call/result relationship
