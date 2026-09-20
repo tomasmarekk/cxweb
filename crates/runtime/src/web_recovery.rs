@@ -572,6 +572,35 @@ pub(crate) struct RecoveryController {
     directory: PathBuf,
 }
 impl RecoveryController {
+    pub(crate) async fn verify_compaction(
+        &self,
+        cancel: CancellationToken,
+    ) -> Result<(), &'static str> {
+        self.pending.ready()?;
+        let (driver, coordinator) = self
+            .pending
+            .1
+            .lock()
+            .map_err(|_| "E_WEB_RECOVERY_STATE")?
+            .clone()
+            .ok_or("E_WEB_RECOVERY_STATE")?;
+        let receipt = self
+            .receipt
+            .lock()
+            .map_err(|_| "E_WEB_RECOVERY_STATE")?
+            .clone();
+        driver.verify_idle().await?;
+        // The probe shares the browser owner but never publishes its checkpoint codec.
+        // It verifies cleanup before allowing normal web admission to resume.
+        crate::compaction_probe::run(
+            coordinator,
+            &driver,
+            &receipt.binding,
+            &self.directory,
+            cancel,
+        )
+        .await
+    }
     pub(crate) fn reasoning_status(&self) -> Option<Vec<crate::control_protocol::ReasoningFamily>> {
         // Read the actually published catalog. Discovery and generation remain
         // explicit operations; status never touches the browser or journal.

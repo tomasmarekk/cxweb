@@ -290,6 +290,7 @@ pub(crate) fn temporary_chat_error(code: &str) -> &'static str {
 }
 
 enum Command {
+    VerifyIdle(Reply<()>),
     QualifyReasoning(
         std::path::PathBuf,
         tokio_util::sync::CancellationToken,
@@ -321,6 +322,10 @@ pub struct ManagedDriver {
 }
 
 impl ManagedDriver {
+    pub(crate) fn verify_idle(&self) -> BrowserFuture<()> {
+        let result = self.request(Command::VerifyIdle);
+        Box::pin(async move { result.await.map_err(|_| "E_WEB_CLEANUP_UNCONFIRMED") })
+    }
     pub(crate) fn qualify_reasoning(
         &self,
         directory: std::path::PathBuf,
@@ -403,6 +408,14 @@ impl ManagedDriver {
                             }
                             shutdown_reply = Some(reply);
                             break;
+                        }
+                        Command::VerifyIdle(reply) => {
+                            let result = if !leases.is_empty() || !orphaned.is_empty() {
+                                Err("E_WEB_CLEANUP_UNCONFIRMED")
+                            } else {
+                                browser.ensure_no_other_pages(None).map_err(|_| "E_WEB_CLEANUP_UNCONFIRMED")
+                            };
+                            let _ = reply.send(result);
                         }
                         Command::Diagnostic(reply) => {
                             let _ = reply.send(Ok(serde_json::json!({"attribution":browser.attribution_diagnostic(), "scope":browser.scope_diagnostic(), "model":browser.model_diagnostic(), "output_shape":output_shape})));
@@ -904,6 +917,14 @@ mod tests {
         let mut foreign = binding();
         foreign.routes[0].id = "native".into();
         assert!(foreign.validate().is_err());
+    }
+
+    #[tokio::test]
+    async fn missing_worker_cannot_confirm_cleanup() {
+        let (commands, incoming) = mpsc::channel(1);
+        let driver = ManagedDriver { commands };
+        drop(incoming);
+        assert_eq!(driver.verify_idle().await, Err("E_WEB_CLEANUP_UNCONFIRMED"));
     }
 
     #[tokio::test]

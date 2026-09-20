@@ -52,6 +52,25 @@ fn supervision_error(error: std::io::Error) -> &'static str {
 }
 
 impl DisconnectController {
+    pub(crate) async fn verify_compaction(&self) -> Result<DisconnectState, &'static str> {
+        let controller = self.clone();
+        tokio::spawn(async move {
+            {
+                let _operation = controller.serial.lock().await;
+                if *controller.state.borrow() != DisconnectState::Idle {
+                    return Err("E_WEB_RECOVERY_STATE");
+                }
+            }
+            let recovery = controller.recovery.as_ref().ok_or("E_WEB_RECOVERY_STATE")?;
+            controller
+                .gateway
+                .maintain_web(|cancel| recovery.verify_compaction(cancel))
+                .await?;
+            Ok(*controller.state.borrow())
+        })
+        .await
+        .map_err(|_| "E_COMPACTION_PROBE")?
+    }
     pub(crate) fn reasoning_status(&self) -> Option<Vec<crate::control_protocol::ReasoningFamily>> {
         if *self.state.borrow() != DisconnectState::Idle {
             return None;

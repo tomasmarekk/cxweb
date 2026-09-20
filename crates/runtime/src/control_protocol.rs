@@ -22,6 +22,9 @@ const EXCHANGE: Duration = Duration::from_secs(2);
 pub type Work = Pin<Box<dyn Future<Output = Result<DisconnectState, &'static str>> + Send>>;
 
 pub trait Lifecycle: Send + Sync + 'static {
+    fn verify_compaction(&self) -> Work {
+        Box::pin(async { Err("E_COMPACTION_UNQUALIFIED") })
+    }
     fn reasoning_status(&self) -> Option<Vec<ReasoningFamily>> {
         None
     }
@@ -83,6 +86,7 @@ impl LoginBackend for Control {
 }
 #[derive(Clone, PartialEq, Eq)]
 enum OperationKind {
+    VerifyCompaction,
     QualifyReasoning,
     Activate(crate::setup_owner::ActivationTarget),
     RetryWeb,
@@ -92,6 +96,10 @@ enum OperationKind {
     NativeText(crate::setup_owner::NativeTarget),
 }
 impl Lifecycle for DisconnectController {
+    fn verify_compaction(&self) -> Work {
+        let controller = self.clone();
+        Box::pin(async move { controller.verify_compaction().await })
+    }
     fn reasoning_status(&self) -> Option<Vec<ReasoningFamily>> {
         self.reasoning_status()
     }
@@ -132,6 +140,10 @@ pub struct Request {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    VerifyCompaction {
+        instance: String,
+        operation: String,
+    },
     ReasoningStatus {},
     QualifyReasoning {
         instance: String,
@@ -412,6 +424,10 @@ impl Service {
                     families: backend.reasoning_status(),
                 };
             }
+            Command::VerifyCompaction {
+                instance,
+                operation,
+            } => (instance, operation, Some(OperationKind::VerifyCompaction)),
             Command::QualifyReasoning {
                 instance,
                 operation,
@@ -544,6 +560,7 @@ impl Service {
                 | OperationKind::DisconnectWhenIdle
                 | OperationKind::RetryWeb
                 | OperationKind::QualifyReasoning
+                | OperationKind::VerifyCompaction
         ) && self.backend.is_none())
             || (matches!(
                 &kind,
@@ -555,7 +572,10 @@ impl Service {
         if receipts.values().any(|(running, outcome)| {
             *outcome == Outcome::Running {}
                 && !(kind == OperationKind::Disconnect
-                    && *running == OperationKind::QualifyReasoning)
+                    && matches!(
+                        running,
+                        OperationKind::QualifyReasoning | OperationKind::VerifyCompaction
+                    ))
         }) {
             return error(ErrorCode::Busy);
         }
@@ -589,6 +609,17 @@ impl Service {
             let work_kind = kind.clone();
             let worker = tokio::spawn(async move {
                 match work_kind {
+                    OperationKind::VerifyCompaction => {
+                        match backend
+                            .expect("validated lifecycle backend")
+                            .verify_compaction()
+                            .await
+                        {
+                            Ok(result) => Outcome::Completed { result },
+                            Err("E_WEB_ACTIVE") => Outcome::ActiveWork {},
+                            Err(_) => Outcome::Failed {},
+                        }
+                    }
                     OperationKind::QualifyReasoning => {
                         match backend
                             .expect("validated lifecycle backend")
@@ -640,7 +671,8 @@ impl Service {
                             OperationKind::Disconnect
                             | OperationKind::DisconnectWhenIdle
                             | OperationKind::RetryWeb
-                            | OperationKind::QualifyReasoning => {
+                            | OperationKind::QualifyReasoning
+                            | OperationKind::VerifyCompaction => {
                                 unreachable!()
                             }
                         }
@@ -780,6 +812,7 @@ pub async fn exchange(installation: &str, request: &Request) -> io::Result<Reply
                 | Command::DisconnectWhenIdle { operation, .. }
                 | Command::RetryWeb { operation, .. }
                 | Command::QualifyReasoning { operation, .. }
+                | Command::VerifyCompaction { operation, .. }
                 | Command::Operation { operation, .. }
                 | Command::Browser { operation, .. }
                 | Command::NativeText { operation, .. }
@@ -885,6 +918,9 @@ mod tests {
         release: Arc<Semaphore>,
     }
     impl Lifecycle for Backend {
+        fn verify_compaction(&self) -> Work {
+            self.retry_web()
+        }
         fn reasoning_status(&self) -> Option<Vec<ReasoningFamily>> {
             Some(vec![ReasoningFamily {
                 model: "webbridge/fixture".into(),
@@ -933,6 +969,76 @@ mod tests {
     }
     fn dispatch(service: &Service, command: Command) -> Reply {
         service.handle(&serde_json::to_vec(&request(command)).unwrap())
+    }
+    #[tokio::test]
+    async fn compaction_verification_is_instance_bound_deduplicated_and_disconnectable() {
+        let (service, backend) = fixture();
+        let command = || Command::VerifyCompaction {
+            instance: service.instance.clone(),
+            operation: "d".repeat(32),
+        };
+        assert_eq!(
+            dispatch(
+                &service,
+                Command::VerifyCompaction {
+                    instance: "old".into(),
+                    operation: "d".repeat(32)
+                }
+            ),
+            error(ErrorCode::Instance)
+        );
+        for _ in 0..2 {
+            assert!(matches!(
+                dispatch(&service, command()),
+                Reply::Operation {
+                    outcome: Outcome::Running {},
+                    ..
+                }
+            ));
+        }
+        assert_eq!(
+            dispatch(
+                &service,
+                Command::VerifyCompaction {
+                    instance: service.instance.clone(),
+                    operation: "e".repeat(32)
+                }
+            ),
+            error(ErrorCode::Busy)
+        );
+        assert!(matches!(
+            dispatch(
+                &service,
+                Command::Disconnect {
+                    instance: service.instance.clone(),
+                    operation: "f".repeat(32)
+                }
+            ),
+            Reply::Operation {
+                outcome: Outcome::Running {},
+                ..
+            }
+        ));
+        backend.release.add_permits(2);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if matches!(
+                    dispatch(&service, command()),
+                    Reply::Operation {
+                        outcome: Outcome::Completed {
+                            result: DisconnectState::Idle
+                        },
+                        ..
+                    }
+                ) && backend.calls.load(Ordering::SeqCst) == 2
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
     }
     #[tokio::test]
     async fn reasoning_status_is_passive_and_contains_only_published_picker_metadata() {

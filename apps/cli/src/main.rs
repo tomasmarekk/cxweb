@@ -10,6 +10,11 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Verify a fixed checkpoint and continuation in the installed browser. Uses ChatGPT allowance.
+    RuntimeVerifyCompaction {
+        #[arg(long)]
+        installation: String,
+    },
     /// Qualify every observed reasoning choice in the installed family. Uses ChatGPT allowance.
     RuntimeQualifyReasoning {
         #[arg(long)]
@@ -125,6 +130,23 @@ enum BrowserAction {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match Args::parse().command {
+        Command::RuntimeVerifyCompaction { installation } => {
+            #[cfg(windows)]
+            {
+                let current = cxweb_runtime::installed_control::check(&installation).await?;
+                let result = cxweb_runtime::installed_control::verify_compaction(
+                    &installation,
+                    current.instance,
+                )
+                .await?;
+                print_json(&serde_json::to_value(result.health)?);
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = installation;
+                return Err("runtime verification requires Windows".into());
+            }
+        }
         Command::RuntimeQualifyReasoning { installation } => {
             #[cfg(windows)]
             {

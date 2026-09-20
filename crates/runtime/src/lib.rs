@@ -10,6 +10,8 @@ pub mod checkpoint;
 #[cfg(windows)]
 mod compaction;
 #[cfg(windows)]
+mod compaction_probe;
+#[cfg(windows)]
 pub mod config_journal;
 mod context_boundary;
 mod context_budget;

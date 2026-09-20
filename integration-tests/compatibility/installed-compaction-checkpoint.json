@@ -1,0 +1,32 @@
+{
+  "schema": "cxweb.installed-compaction-checkpoint.v1",
+  "evidenceLevel": "account_live",
+  "observedAt": "2026-09-20T15:50:09.475Z",
+  "runtimeVersion": "0.1.0",
+  "daemonSha256": "d33e3aa760db82c1d53cbc8bcae171034c02fc90d0e75eb7cbadfd552eac0127",
+  "browserVersion": "Chrome/153.0.8010.48",
+  "osVersion": "Microsoft Windows NT 10.0.26100.0",
+  "accountPlan": "not captured",
+  "procedure": "cxweb runtime-verify-compaction --installation <installed-id>",
+  "syntheticHistory": true,
+  "realBrowserGeneration": true,
+  "realNativeClient": false,
+  "selectedReasoning": "Extra High",
+  "checks": {
+    "liveStructuredSummary": true,
+    "authenticatedEncryptedCheckpoint": true,
+    "replayByteIdentical": true,
+    "newContextContainsOnlyCheckpointAndRecallQuestion": true,
+    "exactRandomToolResultRecalled": true,
+    "noToolExecution": true,
+    "cleanupConfirmed": true,
+    "finalActiveWebTurns": 0,
+    "productionCheckpointPublication": false
+  },
+  "result": "PASS",
+  "limitations": [
+    "The history contains a generated fixture call/result; no native client executed that read in this diagnostic.",
+    "This verifies the default Extra High route only, not every reasoning choice.",
+    "Actual native compaction transport, automatic long-history recovery and full G2 qualification remain open."
+  ]
+}

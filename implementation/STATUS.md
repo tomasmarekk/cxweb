@@ -23,6 +23,47 @@ English. The complete installed CLI and App-backend read/patch/final scenarios
 now pass. A fixed message sent from the actual GUI also passed with the owned
 model and effort corroborated by the native turn context.
 
+## Installed live checkpoint diagnostic (2026-09-20)
+
+- Added explicit `runtime-verify-compaction --installation <id>` through private,
+  instance-bound operation receipts. Duplicate delivery cannot generate twice.
+  It obtains the installed gateway's exclusive web lease; native forwarding
+  remains independent and explicit disconnect may cancel/drain the diagnostic.
+  No second browser owner, native configuration override or re-login is needed.
+- The diagnostic clones the installed coordinator with a private checkpoint key
+  and the reviewed v2 codec. Synthetic fixed history contains a random completed
+  tool result. The live web model produces the structured summary; the runtime
+  encrypts it, verifies byte-identical completed-request replay, then requests
+  recall in a new context containing only the checkpoint and a fixed question.
+  The diagnostic codec is never assigned to the published production provider.
+- Managed browser idle verification checks both owned leases/orphans and browser
+  targets before and after the operation. Unconfirmed cleanup blocks normal web
+  admission. The report records only stages, booleans, fixed codes and sanitized
+  output shape; it exports no prompt, marker, checkpoint ciphertext or account ID.
+- The complete live diagnostic passed at 15:40:15 UTC using Extra High. Exact
+  recall, encrypted checkpoint, identical replay and target cleanup all passed;
+  the installed runtime returned to idle. See
+  `integration-tests/compatibility/installed-compaction-checkpoint.json`.
+  Repeated against the final release build at 15:50:09 UTC after adding the
+  missing-worker cleanup guard; all checks passed again. The report records
+  that final deployed executable hash and observation time.
+  Earlier failed standalone probes remain historical failures, not overwritten.
+- After releasing diagnostic maintenance, actual CLI 0.155.1 passed web/native/
+  web generation in one process at 15:43:04 UTC. All five reasoning choices and
+  native models remained present, with unchanged config and executable hashes.
+  App backend 0.155.0-alpha.9.2 then passed an ordinary web response at 15:44:01
+  UTC with the same catalog and integrity checks. Both sanitized reports are
+  stored as `*.post-compaction-maintenance.json` in the compatibility directory.
+- This is account-live evidence with synthetic input history. Actual native
+  compaction transport and automatic long-history recovery still need live
+  qualification before publishing the capability. No broader context capacity or
+  reliability claim is made from this two-generation exercise.
+- Validation: 283 Rust workspace tests passed, 15 opt-in tests ignored. Clippy
+  with warnings denied, formatting, diff checks and explicit Windows CLI/daemon
+  release builds passed. New tests cover exact response shapes and instance-bound,
+  deduplicated private control, including explicit concurrent disconnect and a
+  missing browser worker being treated as unconfirmed cleanup.
+
 ## Installed failed-test repair exercise (2026-09-20)
 
 - Added `--repair` to the installed-client probe. The disposable workspace starts

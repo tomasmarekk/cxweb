@@ -193,6 +193,15 @@ pub async fn retry_web(installation: &str, instance: String) -> Result<Snapshot,
     read(installation).await
 }
 
+pub async fn verify_compaction(
+    installation: &str,
+    instance: String,
+) -> Result<Snapshot, &'static str> {
+    selected(installation).await?;
+    mutate(installation, instance, Action::VerifyCompaction).await?;
+    read(installation).await
+}
+
 pub async fn qualify_reasoning(
     installation: &str,
     instance: String,
@@ -204,6 +213,7 @@ pub async fn qualify_reasoning(
 
 #[derive(Clone, Copy)]
 enum Action {
+    VerifyCompaction,
     QualifyReasoning,
     Remove(bool),
     RetryWeb,
@@ -221,6 +231,10 @@ async fn remove(
 async fn mutate(installation: &str, instance: String, action: Action) -> Result<(), &'static str> {
     let operation = format!("{:032x}", rand::random::<u128>());
     let command = match action {
+        Action::VerifyCompaction => Command::VerifyCompaction {
+            instance: instance.clone(),
+            operation: operation.clone(),
+        },
         Action::QualifyReasoning => Command::QualifyReasoning {
             instance: instance.clone(),
             operation: operation.clone(),
@@ -247,13 +261,15 @@ async fn mutate(installation: &str, instance: String, action: Action) -> Result<
     )
     .await;
     let deadline = tokio::time::Instant::now()
-        + Duration::from_secs(if matches!(action, Action::QualifyReasoning) {
-            2700
-        } else if matches!(action, Action::RetryWeb) {
-            90
-        } else {
-            45
-        });
+        + Duration::from_secs(
+            if matches!(action, Action::QualifyReasoning | Action::VerifyCompaction) {
+                2700
+            } else if matches!(action, Action::RetryWeb) {
+                90
+            } else {
+                45
+            },
+        );
     loop {
         match reply {
             Ok(Reply::Operation {
@@ -272,7 +288,9 @@ async fn mutate(installation: &str, instance: String, action: Action) -> Result<
                 outcome: Outcome::Failed {},
                 ..
             }) => {
-                return Err(if matches!(action, Action::RetryWeb) {
+                return Err(if matches!(action, Action::VerifyCompaction) {
+                    "E_INSTALLED_COMPACTION"
+                } else if matches!(action, Action::RetryWeb) {
                     "E_INSTALLED_RECOVERY"
                 } else {
                     "E_INSTALLED_REMOVE"
