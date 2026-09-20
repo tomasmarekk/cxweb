@@ -1,0 +1,31 @@
+{
+  "schema": "cxweb.reused-generation-probe.v1",
+  "date": "2026-09-20",
+  "result": "PASS",
+  "commands": [
+    "cargo test -p cxweb-runtime generation_session_binds_to_reserved_installation_without_another_browser -- --ignored --nocapture",
+    "cargo test -p cxweb-runtime cancelled_request_retains_consumer -- --nocapture"
+  ],
+  "fixture": "One actual headless Chrome with a fresh protected profile; synthetic session scope and local HTTP/WebSocket clients; no authenticated page",
+  "checks": {
+    "selected_route_preserved_in_descriptor_and_catalog": true,
+    "same_browser_used_for_http_and_websocket_probes": true,
+    "native_http_rejected_locally": true,
+    "native_websocket_rejected_locally": true,
+    "competing_probe_refused": true,
+    "existing_output_not_overwritten": true,
+    "driver_alive_after_success_and_output_error": true,
+    "profile_lock_retained": true,
+    "prepared_host_binds_same_session_after_probes": true,
+    "host_excludes_another_session_consumer": true,
+    "cancelled_request_holds_lease_through_detached_cleanup": true,
+    "profile_lock_released_after_explicit_driver_shutdown": true
+  },
+  "limits": [
+    "No ChatGPT desktop or Codex App UI was launched.",
+    "No authenticated browser generation or actual native client was exercised in this test.",
+    "The prepared host uses an explicit test-only supervision substitute and disposable configuration.",
+    "The new probe entry point is in-process only; desktop/native qualification orchestration remains to be connected.",
+    "Production activation, native subscription coexistence and actual Codex App picker remain unqualified."
+  ]
+}

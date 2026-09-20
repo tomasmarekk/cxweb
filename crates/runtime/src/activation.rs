@@ -95,8 +95,10 @@ impl PreparedInstallation {
         {
             return Err("E_ACTIVATION_CATALOG");
         }
+        let consumer = session.claim()?;
         let ledger = Ledger::open(&self.directory.join("turns.sqlite")).await?;
-        let coordinator = Coordinator::new(ledger, Arc::new(session.driver.clone()));
+        let coordinator =
+            Coordinator::new(ledger, Arc::new(session.driver.clone())).with_consumer(consumer);
         let provider =
             CoordinatorProvider::new(coordinator, scope, vec![session.route.id.clone()])?
                 .with_catalog(1, qualified)?;

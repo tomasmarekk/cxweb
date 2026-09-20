@@ -134,11 +134,7 @@ pub async fn serve(
     compaction: bool,
     stop: impl Future<Output = ()> + Send + 'static,
 ) -> Result<Value, &'static str> {
-    if !output.is_absolute() || output.exists() {
-        return Err("E_PROBE_OUTPUT");
-    }
-    let directory = output.parent().ok_or("E_PROBE_OUTPUT")?;
-    protected_directory(directory).map_err(|_| "E_PROBE_OUTPUT")?;
+    validate_output(output)?;
     let installation = format!("cxweb-live-probe-{:032x}", rand::random::<u128>());
     let observed_installation = installation.clone();
     let (driver, scope, label, effort) = tokio::task::spawn_blocking(move || {
@@ -248,27 +244,146 @@ pub async fn serve(
     .await
     .map_err(|_| "E_BROWSER_WORKER")??;
 
-    // Once transferred, every exit path requests driver shutdown and profile release.
-    let result = async {
-        let ledger = Ledger::open(&directory.join("turns.sqlite")).await?;
-        let coordinator = Coordinator::new(ledger, Arc::new(driver.clone()));
-        let key = if compaction { Some(Arc::new(crate::checkpoint::Codec::load_or_create(&directory.join("checkpoint-key.dpapi"), &installation)?)) } else { None };
-        let mut provider = CoordinatorProvider::new(coordinator, ProviderScope {
-            installation, account: scope.account, workspace: scope.workspace, epoch: 0,
-        }, vec![ROUTE.into()])?;
-        let budget = cxweb_codex_adapter::context_budget::LocalContextBudget::DIAGNOSTIC;
-        if let Some(key) = key { provider = provider.with_checkpoints(key, codec)?.with_context_budget(budget)?; }
-        let native_listener = TcpListener::bind("127.0.0.1:0").await.map_err(|_| "E_PROBE_LISTENER")?;
-        let native_address = native_listener.local_addr().map_err(|_| "E_PROBE_LISTENER")?;
-        let native = NativeTransport::new(format!("http://{native_address}"))?;
-        let native_stop = CancellationToken::new();
-        let _native_guard = native_stop.clone().drop_guard();
-        let socket_upgrades = Arc::new(AtomicUsize::new(0));
-        let socket_frames = Arc::new(AtomicUsize::new(0));
-        let upgrades = socket_upgrades.clone();
-        let frames = socket_frames.clone();
-        let peer_stop = native_stop.clone();
-        tokio::spawn(axum::serve(native_listener, axum::Router::new().route("/responses", axum::routing::get(move |upgrade: axum::extract::WebSocketUpgrade| {
+    // A standalone diagnostic owns this driver and must close it on completion.
+    let result = run_probe(
+        output,
+        ProbeSession {
+            driver: &driver,
+            scope: ProviderScope {
+                installation,
+                account: scope.account,
+                workspace: scope.workspace,
+                epoch: 0,
+            },
+            route: ROUTE.into(),
+            label,
+            effort,
+            consumer: None,
+        },
+        websocket,
+        codec,
+        coding,
+        compaction,
+        stop,
+    )
+    .await;
+    driver.shutdown().await?;
+    result.map(|mut report| {
+        report["browser_closed"] = json!(true);
+        report
+    })
+}
+
+/// Qualify an existing background session without opening or closing its browser.
+/// Only the diagnostic endpoint is stopped. This never applies client configuration
+/// or publishes a coding qualification to the production catalog.
+pub async fn serve_generation(
+    output: &Path,
+    session: &crate::control::GenerationSession,
+    websocket: bool,
+    codec: cxweb_codex_adapter::catalog_codec::CatalogCodec,
+    coding: bool,
+    compaction: bool,
+    stop: impl Future<Output = ()> + Send + 'static,
+) -> Result<Value, &'static str> {
+    validate_output(output)?;
+    let consumer = session.claim()?;
+    let effort = session.route.effort.clone().ok_or("E_MODEL_UNAVAILABLE")?;
+    let mut report = run_probe(
+        output,
+        ProbeSession {
+            driver: &session.driver,
+            scope: session.scope(),
+            route: session.route.id.clone(),
+            label: session.route.label.clone(),
+            effort,
+            consumer: Some(consumer),
+        },
+        websocket,
+        codec,
+        coding,
+        compaction,
+        stop,
+    )
+    .await?;
+    report["browser_closed"] = json!(false);
+    report["browser_reused"] = json!(true);
+    Ok(report)
+}
+
+fn validate_output(output: &Path) -> Result<&Path, &'static str> {
+    if !output.is_absolute() || output.exists() {
+        return Err("E_PROBE_OUTPUT");
+    }
+    let directory = output.parent().ok_or("E_PROBE_OUTPUT")?;
+    protected_directory(directory).map_err(|_| "E_PROBE_OUTPUT")?;
+    Ok(directory)
+}
+
+struct ProbeSession<'a> {
+    driver: &'a ManagedDriver,
+    scope: ProviderScope,
+    route: String,
+    label: String,
+    effort: String,
+    consumer: Option<crate::generation_handoff::ConsumerLease>,
+}
+
+async fn run_probe(
+    output: &Path,
+    session: ProbeSession<'_>,
+    websocket: bool,
+    codec: cxweb_codex_adapter::catalog_codec::CatalogCodec,
+    coding: bool,
+    compaction: bool,
+    stop: impl Future<Output = ()> + Send + 'static,
+) -> Result<Value, &'static str> {
+    let directory = validate_output(output)?;
+    let ProbeSession {
+        driver,
+        scope,
+        route,
+        label,
+        effort,
+        consumer,
+    } = session;
+    let installation = scope.installation.clone();
+    let ledger = Ledger::open(&directory.join("turns.sqlite")).await?;
+    let coordinator = Coordinator::new(ledger, Arc::new(driver.clone()));
+    let coordinator = match consumer {
+        Some(lease) => coordinator.with_consumer(lease),
+        None => coordinator,
+    };
+    let key = if compaction {
+        Some(Arc::new(crate::checkpoint::Codec::load_or_create(
+            &directory.join("checkpoint-key.dpapi"),
+            &installation,
+        )?))
+    } else {
+        None
+    };
+    let mut provider = CoordinatorProvider::new(coordinator, scope, vec![route.clone()])?;
+    let budget = cxweb_codex_adapter::context_budget::LocalContextBudget::DIAGNOSTIC;
+    if let Some(key) = key {
+        provider = provider
+            .with_checkpoints(key, codec)?
+            .with_context_budget(budget)?;
+    }
+    let native_listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|_| "E_PROBE_LISTENER")?;
+    let native_address = native_listener
+        .local_addr()
+        .map_err(|_| "E_PROBE_LISTENER")?;
+    let native = NativeTransport::new(format!("http://{native_address}"))?;
+    let native_stop = CancellationToken::new();
+    let _native_guard = native_stop.clone().drop_guard();
+    let socket_upgrades = Arc::new(AtomicUsize::new(0));
+    let socket_frames = Arc::new(AtomicUsize::new(0));
+    let upgrades = socket_upgrades.clone();
+    let frames = socket_frames.clone();
+    let peer_stop = native_stop.clone();
+    tokio::spawn(axum::serve(native_listener, axum::Router::new().route("/responses", axum::routing::get(move |upgrade: axum::extract::WebSocketUpgrade| {
             let upgrades = upgrades.clone();
             let frames = frames.clone();
             let stop = peer_stop.clone();
@@ -297,48 +412,78 @@ pub async fn serve(
                     }
                 })
             }
+        }).post(|| async {
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
         })).fallback(|| async {
             axum::http::StatusCode::SERVICE_UNAVAILABLE
         })).with_graceful_shutdown(native_stop.cancelled_owned()).into_future());
-        let listener = TcpListener::bind("127.0.0.1:0").await.map_err(|_| "E_PROBE_LISTENER")?;
-        let failures = Arc::new(Mutex::new(Vec::new()));
-        let search_requests = Arc::new(AtomicUsize::new(0));
-        let output_formats = Arc::new(Mutex::new(Vec::new()));
-        let websocket_requests = Arc::new(AtomicUsize::new(0));
-        let warmups = Arc::new(AtomicUsize::new(0));
-        let compaction_requests = Arc::new(AtomicUsize::new(0));
-        let checkpoint_continuations = Arc::new(AtomicUsize::new(0));
-        let checkpoint_plaintext_history = Arc::new(AtomicUsize::new(0));
-        let gateway = Gateway::new(listener.local_addr().map_err(|_| "E_PROBE_LISTENER")?.port(), native, Arc::new(ProbeProvider { provider, failures: failures.clone(), search_requests: search_requests.clone(), output_formats: output_formats.clone(), websocket_requests: websocket_requests.clone(), warmups: warmups.clone(), compaction_requests: compaction_requests.clone(), checkpoint_continuations: checkpoint_continuations.clone(), checkpoint_plaintext_history: checkpoint_plaintext_history.clone() }));
-        // Exercise the exact reviewed encoder in isolation; this diagnostic
-        // catalog does not publish a production qualification snapshot.
-        let catalog_route = cxweb_codex_adapter::catalog_codec::CatalogRoute {
-            id: ROUTE.into(), observed_label: label.clone(), effort, coding,
-        };
-        let model = if compaction { codec.encode_with_context_budget(&catalog_route, budget)? } else { codec.encode(&catalog_route)? };
-        let mut descriptor = std::fs::OpenOptions::new().write(true).create_new(true).open(output).map_err(|_| "E_PROBE_OUTPUT")?;
-        descriptor.write_all(json!({"base_url":gateway.base_url(),"model":ROUTE,"catalog":{"models":[model]},"catalog_codec":codec.id(),"live":true}).to_string().as_bytes()).map_err(|_| "E_PROBE_OUTPUT")?;
-        descriptor.sync_all().map_err(|_| "E_PROBE_OUTPUT")?;
-        let server_stop = CancellationToken::new();
-        let server = axum::serve(listener, gateway.clone().router()).with_graceful_shutdown(server_stop.clone().cancelled_owned()).into_future();
-        tokio::pin!(server);
-        tokio::select! {
-            result = &mut server => { result.map_err(|_| "E_PROBE_SERVER")?; }
-            () = stop => {
-                gateway.disconnect_web(Duration::from_secs(60)).await?;
-                server_stop.cancel();
-                server.await.map_err(|_| "E_PROBE_SERVER")?;
-            }
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|_| "E_PROBE_LISTENER")?;
+    let failures = Arc::new(Mutex::new(Vec::new()));
+    let search_requests = Arc::new(AtomicUsize::new(0));
+    let output_formats = Arc::new(Mutex::new(Vec::new()));
+    let websocket_requests = Arc::new(AtomicUsize::new(0));
+    let warmups = Arc::new(AtomicUsize::new(0));
+    let compaction_requests = Arc::new(AtomicUsize::new(0));
+    let checkpoint_continuations = Arc::new(AtomicUsize::new(0));
+    let checkpoint_plaintext_history = Arc::new(AtomicUsize::new(0));
+    let provider: Arc<dyn crate::gateway::WebProvider> = Arc::new(ProbeProvider {
+        provider,
+        failures: failures.clone(),
+        search_requests: search_requests.clone(),
+        output_formats: output_formats.clone(),
+        websocket_requests: websocket_requests.clone(),
+        warmups: warmups.clone(),
+        compaction_requests: compaction_requests.clone(),
+        checkpoint_continuations: checkpoint_continuations.clone(),
+        checkpoint_plaintext_history: checkpoint_plaintext_history.clone(),
+    });
+    let gateway = Gateway::new(
+        listener
+            .local_addr()
+            .map_err(|_| "E_PROBE_LISTENER")?
+            .port(),
+        native,
+        provider,
+    );
+    // Exercise the exact reviewed encoder in isolation; this diagnostic
+    // catalog does not publish a production qualification snapshot.
+    let catalog_route = cxweb_codex_adapter::catalog_codec::CatalogRoute {
+        id: route.clone(),
+        observed_label: label.clone(),
+        effort,
+        coding,
+    };
+    let model = if compaction {
+        codec.encode_with_context_budget(&catalog_route, budget)?
+    } else {
+        codec.encode(&catalog_route)?
+    };
+    let mut descriptor = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)
+        .map_err(|_| "E_PROBE_OUTPUT")?;
+    descriptor.write_all(json!({"base_url":gateway.base_url(),"model":route,"catalog":{"models":[model]},"catalog_codec":codec.id(),"live":true}).to_string().as_bytes()).map_err(|_| "E_PROBE_OUTPUT")?;
+    descriptor.sync_all().map_err(|_| "E_PROBE_OUTPUT")?;
+    let server_stop = CancellationToken::new();
+    let server = axum::serve(listener, gateway.clone().router())
+        .with_graceful_shutdown(server_stop.clone().cancelled_owned())
+        .into_future();
+    tokio::pin!(server);
+    tokio::select! {
+        result = &mut server => { result.map_err(|_| "E_PROBE_SERVER")?; }
+        () = stop => {
+            gateway.disconnect_web(Duration::from_secs(60)).await?;
+            server_stop.cancel();
+            server.await.map_err(|_| "E_PROBE_SERVER")?;
         }
-        let diagnostic = driver.diagnostic().await?;
-        Ok(json!({"live":true,"route":ROUTE,"browser_label":label,"native_upstream":"local rejection stub","routing_installed":false,"diagnostic":diagnostic,"optional_web_search_requests":search_requests.load(Ordering::Relaxed),"output_formats":output_formats.lock().map_err(|_| "E_PROBE_STATE")?.clone(),"failures":failures.lock().map_err(|_| "E_PROBE_STATE")?.clone(),"websocket_enabled":websocket,"websocket_upgrades":socket_upgrades.load(Ordering::Relaxed),"native_websocket_frames":socket_frames.load(Ordering::Relaxed),"websocket_requests":websocket_requests.load(Ordering::Relaxed),"websocket_warmups":warmups.load(Ordering::Relaxed),"compaction_requests":compaction_requests.load(Ordering::Relaxed),"checkpoint_continuations":checkpoint_continuations.load(Ordering::Relaxed),"checkpoint_continuations_with_plaintext_assistant_or_tools":checkpoint_plaintext_history.load(Ordering::Relaxed)}))
-    }.await;
-    let closed = driver.shutdown().await;
-    closed?;
-    result.map(|mut report| {
-        report["browser_closed"] = json!(true);
-        report
-    })
+    }
+    let diagnostic = driver.diagnostic().await?;
+    Ok(
+        json!({"live":true,"route":route,"browser_label":label,"native_upstream":"local rejection stub","routing_installed":false,"diagnostic":diagnostic,"optional_web_search_requests":search_requests.load(Ordering::Relaxed),"output_formats":output_formats.lock().map_err(|_| "E_PROBE_STATE")?.clone(),"failures":failures.lock().map_err(|_| "E_PROBE_STATE")?.clone(),"websocket_enabled":websocket,"websocket_upgrades":socket_upgrades.load(Ordering::Relaxed),"native_websocket_frames":socket_frames.load(Ordering::Relaxed),"websocket_requests":websocket_requests.load(Ordering::Relaxed),"websocket_warmups":warmups.load(Ordering::Relaxed),"compaction_requests":compaction_requests.load(Ordering::Relaxed),"checkpoint_continuations":checkpoint_continuations.load(Ordering::Relaxed),"checkpoint_continuations_with_plaintext_assistant_or_tools":checkpoint_plaintext_history.load(Ordering::Relaxed)}),
+    )
 }
 
 #[cfg(test)]

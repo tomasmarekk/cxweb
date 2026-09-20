@@ -87,6 +87,7 @@ pub struct Coordinator {
     scheduler: Scheduler,
     browser: Arc<dyn BrowserDriver>,
     replay: Arc<Mutex<VecDeque<(String, Delivery)>>>,
+    _consumer: Option<crate::generation_handoff::ConsumerLease>,
 }
 impl Coordinator {
     pub fn new(ledger: Ledger, browser: Arc<dyn BrowserDriver>) -> Self {
@@ -95,7 +96,14 @@ impl Coordinator {
             scheduler: Scheduler::default(),
             browser,
             replay: Arc::default(),
+            _consumer: None,
         }
+    }
+    /// The detached coordinator retains exclusive session use through cancellation
+    /// cleanup, even if its gateway or requesting UI has already disappeared.
+    pub(crate) fn with_consumer(mut self, lease: crate::generation_handoff::ConsumerLease) -> Self {
+        self._consumer = Some(lease);
+        self
     }
     pub async fn execute(
         &self,
@@ -442,6 +450,7 @@ mod tests {
         nonce: Mutex<String>,
         observing: Notify,
         released: Notify,
+        release_gate: Option<Arc<Notify>>,
     }
     impl MockBrowser {
         fn new(mode: Mode) -> Arc<Self> {
@@ -453,6 +462,7 @@ mod tests {
                 nonce: Mutex::new(String::new()),
                 observing: Notify::new(),
                 released: Notify::new(),
+                release_gate: None,
             })
         }
     }
@@ -539,7 +549,13 @@ mod tests {
         fn release(&self, _: String) -> BrowserFuture<()> {
             self.releases.fetch_add(1, Ordering::SeqCst);
             self.released.notify_one();
-            Box::pin(async { Ok(()) })
+            let gate = self.release_gate.clone();
+            Box::pin(async move {
+                if let Some(gate) = gate {
+                    gate.notified().await;
+                }
+                Ok(())
+            })
         }
     }
     fn input() -> TurnInput {
@@ -707,6 +723,39 @@ mod tests {
         assert_eq!(response["output"][0]["type"], "function_call");
         assert_eq!(response["output"][0]["name"], "read_file");
         assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
+    }
+    #[tokio::test]
+    async fn cancelled_request_retains_consumer_until_detached_browser_cleanup_finishes() {
+        use crate::generation_handoff::ConsumerLease;
+        let consumer = Arc::new(tokio::sync::Mutex::new(()));
+        let gate = Arc::new(Notify::new());
+        let mut browser = MockBrowser::new(Mode::Waiting);
+        Arc::get_mut(&mut browser).unwrap().release_gate = Some(gate.clone());
+        let coordinator = Coordinator::new(Ledger::in_memory(), browser.clone())
+            .with_consumer(ConsumerLease::acquire(consumer.clone()).unwrap());
+        let task =
+            tokio::spawn(
+                async move { coordinator.execute(input(), CancellationToken::new()).await },
+            );
+        tokio::time::timeout(Duration::from_secs(2), browser.observing.notified())
+            .await
+            .unwrap();
+        task.abort();
+        assert!(task.await.err().unwrap().is_cancelled());
+        tokio::time::timeout(Duration::from_secs(2), browser.released.notified())
+            .await
+            .unwrap();
+        assert!(matches!(
+            ConsumerLease::acquire(consumer.clone()),
+            Err("E_BROWSER_IN_USE")
+        ));
+        gate.notify_one();
+        let lease = tokio::time::timeout(Duration::from_secs(2), consumer.lock())
+            .await
+            .unwrap();
+        drop(lease);
+        assert!(ConsumerLease::acquire(consumer).is_ok());
+        assert_eq!(browser.stops.load(Ordering::SeqCst), 1);
     }
     #[tokio::test]
     async fn dropped_client_future_still_stops_browser_and_persists_terminal_state() {

@@ -15,9 +15,19 @@ pub struct GenerationSession {
     pub route: Route,
     pub protocol_evidence: String,
     scope: ProviderScope,
+    consumer: std::sync::Arc<tokio::sync::Mutex<()>>,
 }
 
 impl GenerationSession {
+    /// A diagnostic and an installed gateway must not run separate coordinators
+    /// against the same browser at once. The lease follows requests, not the UI.
+    pub(crate) fn claim(&self) -> Result<ConsumerLease, &'static str> {
+        if self.driver.is_closed() {
+            return Err("E_BROWSER_CLOSED");
+        }
+        ConsumerLease::acquire(self.consumer.clone())
+    }
+
     pub fn scope(&self) -> ProviderScope {
         ProviderScope {
             installation: self.scope.installation.clone(),
@@ -39,6 +49,24 @@ impl GenerationSession {
         } else {
             Err("E_BROWSER_IN_USE")
         }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct ConsumerLease {
+    _guard: std::sync::Arc<tokio::sync::OwnedMutexGuard<()>>,
+}
+
+impl ConsumerLease {
+    pub(crate) fn acquire(
+        consumer: std::sync::Arc<tokio::sync::Mutex<()>>,
+    ) -> Result<Self, &'static str> {
+        consumer
+            .try_lock_owned()
+            .map(|guard| Self {
+                _guard: std::sync::Arc::new(guard),
+            })
+            .map_err(|_| "E_BROWSER_IN_USE")
     }
 }
 
@@ -194,6 +222,7 @@ impl PreparedHandoff {
             route: self.route,
             protocol_evidence: self.evidence,
             scope,
+            consumer: std::sync::Arc::default(),
         })
     }
 }
@@ -377,6 +406,120 @@ mod tests {
         }
         .start(browser, paths.lock().unwrap())
         .unwrap();
+        // Reuse the actual browser owner for isolated HTTP and WebSocket
+        // diagnostics. No authenticated page or user profile is opened here.
+        for websocket in [false, true] {
+            let output = root.join(if websocket {
+                "probe-ws/connection.json"
+            } else {
+                "probe-http/connection.json"
+            });
+            let stop = tokio_util::sync::CancellationToken::new();
+            let probe = crate::live_probe::serve_generation(
+                &output,
+                &session,
+                websocket,
+                CatalogCodec::Cli01551,
+                true,
+                false,
+                stop.clone().cancelled_owned(),
+            );
+            let client = async {
+                let descriptor: serde_json::Value =
+                    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                        loop {
+                            if let Ok(bytes) = std::fs::read(&output)
+                                && let Ok(value) = serde_json::from_slice(&bytes)
+                            {
+                                break value;
+                            }
+                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                        }
+                    })
+                    .await
+                    .unwrap();
+                assert_eq!(descriptor["model"], session.route.id);
+                assert_eq!(descriptor["catalog"]["models"][0]["slug"], session.route.id);
+                assert!(matches!(session.claim(), Err("E_BROWSER_IN_USE")));
+                let competing = root.join("competing/connection.json");
+                assert_eq!(
+                    crate::live_probe::serve_generation(
+                        &competing,
+                        &session,
+                        false,
+                        CatalogCodec::Cli01551,
+                        true,
+                        false,
+                        std::future::ready(()),
+                    )
+                    .await
+                    .err(),
+                    Some("E_BROWSER_IN_USE")
+                );
+                assert!(!competing.exists());
+                let base = descriptor["base_url"].as_str().unwrap();
+                let client = reqwest::Client::new();
+                let response = client
+                    .post(format!("{base}/responses"))
+                    .header("authorization", "Bearer synthetic-loopback-only")
+                    .header("content-type", "application/json")
+                    .body(
+                        serde_json::json!({"model":"native-fixture","input":"synthetic"})
+                            .to_string(),
+                    )
+                    .send()
+                    .await
+                    .unwrap();
+                assert_eq!(response.status().as_u16(), 503);
+                if websocket {
+                    use futures_util::{SinkExt, StreamExt};
+                    let (mut socket, _) = tokio_tungstenite::connect_async(format!(
+                        "{}/responses",
+                        base.replacen("http:", "ws:", 1)
+                    ))
+                    .await
+                    .unwrap();
+                    socket.send(tokio_tungstenite::tungstenite::Message::Text(
+                        serde_json::json!({"type":"response.create","model":"native-fixture","input":[]}).to_string().into()
+                    )).await.unwrap();
+                    let frame = socket.next().await.unwrap().unwrap();
+                    assert!(
+                        frame
+                            .to_text()
+                            .unwrap()
+                            .contains("E_NATIVE_REJECTED_IN_PROBE")
+                    );
+                    socket.close(None).await.unwrap();
+                }
+                stop.cancel();
+            };
+            let (report, ()) = tokio::join!(probe, client);
+            let report = report.unwrap();
+            assert_eq!(report["browser_closed"], false);
+            assert_eq!(report["browser_reused"], true);
+            assert_eq!(report["routing_installed"], false);
+            assert!(!session.driver.is_closed());
+            assert!(paths.lock().is_err());
+            assert!(session.claim().is_ok());
+            // A failed retry cannot overwrite its endpoint or close the owner.
+            let before = std::fs::read(&output).unwrap();
+            assert_eq!(
+                crate::live_probe::serve_generation(
+                    &output,
+                    &session,
+                    false,
+                    CatalogCodec::Cli01551,
+                    true,
+                    false,
+                    std::future::ready(()),
+                )
+                .await
+                .err(),
+                Some("E_PROBE_OUTPUT")
+            );
+            assert_eq!(std::fs::read(&output).unwrap(), before);
+            assert!(session.driver.diagnostic().await.is_ok());
+        }
         let (host, activation) = reserved
             .bind_generation(
                 &session,
@@ -395,6 +538,7 @@ mod tests {
             .unwrap();
         assert!(!config.exists());
         assert!(paths.lock().is_err());
+        assert!(matches!(session.claim(), Err("E_BROWSER_IN_USE")));
         assert_eq!(activation.apply().await, Err("E_RUNTIME_NOT_READY"));
         let serving = tokio::spawn(host.serve());
         tokio::time::timeout(std::time::Duration::from_secs(2), async {

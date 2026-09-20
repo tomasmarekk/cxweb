@@ -21,6 +21,38 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Reuse the generation session for isolated qualification (2026-09-20)
+
+- The live probe now accepts a handed-off GenerationSession. Its endpoint keeps
+  the selected route ID, observed English label, effort and account/workspace
+  scope. It neither launches another browser nor closes the existing owner when
+  the diagnostic finishes. The original standalone probe still closes its own
+  browser on normal completion and reported errors.
+- Diagnostic native traffic stays at a local rejection server for HTTP and
+  WebSocket. HTTP POST now explicitly returns 503 instead of the router's default
+  405. The diagnostic catalog remains separate from production qualification;
+  this API does not modify native configuration or certify coding support.
+- A session consumer lease excludes a second probe or installed coordinator.
+  The coordinator retains that lease through its detached cancellation cleanup,
+  even after the caller and gateway disappear. PreparedInstallation acquires
+  the same lease before opening its generation ledger.
+- The actual Chrome integration test reuses one fresh headless profile for both
+  diagnostic transports and the prepared host. It checks route preservation,
+  local native rejection, competing-consumer refusal, preserved existing output,
+  continued driver/profile ownership after tests, and subsequent host binding.
+  A deterministic unit test holds cleanup open and verifies a cancelled request
+  cannot release exclusive ownership prematurely.
+- Verification: cargo test --workspace --quiet (203 passed, 8 ignored);
+  cargo test -p cxweb-runtime generation_session_binds_to_reserved_installation_without_another_browser -- --ignored --nocapture
+  (passed); cargo clippy --workspace --all-targets -- -D warnings, cargo fmt
+  --all --check, explicit native_context_probe.rs rustfmt and git diff --check
+  passed. Release CLI, daemon and desktop builds also passed. Evidence:
+  integration-tests/compatibility/reused-generation-probe-windows.json.
+- Remaining: an activation owner must run the selected native client against this
+  isolated endpoint and connect the result to desktop progress. This change does
+  not establish authenticated browser generation, actual App picker behavior or
+  native subscription coexistence. Production integration remains disabled.
+
 ## Mandatory supervisor receipt for public activation (2026-09-20)
 
 - ActivationHandle now registers the independently qualified installed daemon
