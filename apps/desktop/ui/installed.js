@@ -88,7 +88,8 @@ window.cxwebInstalled = (() => {
     for (const [id, dimension] of [['chatgpt', 'web_auth'], ['app', 'codex_app'], ['cli', 'codex_cli']]) {
       const component = health.components[dimension];
       node(`installed-${id}`).textContent = component?.state === 'healthy' && component.evidence === 'request_success'
-        ? 'Request verified' : stateText[component?.state] || 'Unverified';
+        ? 'Request verified' : component?.state === 'healthy' && component.evidence === 'client_handshake'
+          ? 'Catalog available' : stateText[component?.state] || 'Unverified';
     }
     const details = node('installed-components'); details.replaceChildren();
     const labels = { runtime: 'Runtime', browser: 'Browser', web_auth: 'ChatGPT sign-in', web_models: 'Web models', native_upstream: 'Native Codex connection', codex_app: 'Codex App', codex_cli: 'Codex CLI', config: 'Configuration' };
@@ -97,6 +98,11 @@ window.cxwebInstalled = (() => {
       const row = document.createElement('p');
       row.textContent = `${label}: ${stateText[component?.state] || 'Unverified'}${component?.observed_at ? `; observed ${component.observed_at}` : ''}${component?.code ? `; ${component.code}` : ''}`;
       if (component?.evidence === 'request_success') row.textContent += '; successful web request from a reviewed client build; picker verification is separate';
+      if (['codex_app', 'codex_cli'].includes(key) && component?.evidence === 'client_handshake') {
+        row.textContent += component.state === 'healthy' ? '; qualified catalog offered to the reported client build; no generation test'
+          : component.code === 'E_CLIENT_CATALOG_CHANGED' ? '; catalog changed since the client last requested it'
+            : '; catalog response could not be verified';
+      }
       details.append(row);
     }
     const families = value.reasoning || [];

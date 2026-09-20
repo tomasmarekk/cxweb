@@ -257,13 +257,47 @@ impl Tracker {
                 }
             }
         }
-        for (observed, dimension) in [
-            (&gateway.clients.cli, &mut health.components.codex_cli),
-            (&gateway.clients.app, &mut health.components.codex_app),
+        for (observed, catalog, dimension) in [
+            (
+                &gateway.clients.cli,
+                &gateway.clients.cli_catalog,
+                &mut health.components.codex_cli,
+            ),
+            (
+                &gateway.clients.app,
+                &gateway.clients.app_catalog,
+                &mut health.components.codex_app,
+            ),
         ] {
             if gateway.accepting
                 && state == DisconnectState::Idle
+                && let Some(catalog) = catalog
+            {
+                *dimension = component(
+                    if !catalog.valid {
+                        State::Degraded
+                    } else if catalog.current {
+                        State::Healthy
+                    } else {
+                        State::RestartRequired
+                    },
+                    Evidence::ClientHandshake,
+                    catalog.observed_at.clone(),
+                    if !catalog.valid {
+                        Some("E_CLIENT_CATALOG_RESPONSE")
+                    } else if catalog.current {
+                        None
+                    } else {
+                        Some("E_CLIENT_CATALOG_CHANGED")
+                    },
+                );
+            }
+            if gateway.accepting
+                && state == DisconnectState::Idle
                 && let Some(observed) = observed
+                && catalog
+                    .as_ref()
+                    .is_none_or(|catalog| catalog.current && catalog.valid)
             {
                 *dimension = component(
                     if observed.succeeded {
@@ -362,6 +396,37 @@ impl Tracker {
             health.overall = Overall::Disconnected;
             health.suggested_action = Action::Connect;
         }
+        if state == DisconnectState::Idle
+            && gateway.accepting
+            && !gateway.cleanup_failed
+            && gateway.active_turns == 0
+            && health.overall == Overall::Preflight
+            && [
+                &health.components.runtime,
+                &health.components.browser,
+                &health.components.web_auth,
+                &health.components.web_models,
+                &health.components.native_upstream,
+                &health.components.config,
+            ]
+            .iter()
+            .all(|component| component.state == State::Healthy)
+        {
+            let clients = [&health.components.codex_cli, &health.components.codex_app];
+            if clients
+                .iter()
+                .all(|component| component.state == State::Healthy)
+            {
+                health.overall = Overall::Ready;
+                health.suggested_action = Action::None;
+            } else if clients
+                .iter()
+                .all(|component| matches!(component.state, State::Healthy | State::RestartRequired))
+            {
+                health.overall = Overall::RestartRequired;
+                health.suggested_action = Action::Details;
+            }
+        }
         if gateway.cleanup_failed {
             health.overall = Overall::Unavailable;
             health.suggested_action = Action::Details;
@@ -413,6 +478,105 @@ impl Tracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ready_requires_every_dimension_and_catalog_cannot_erase_failed_generation() {
+        let mut source = gateway(ProviderHealth::Verified { observed_at: None });
+        let catalog = crate::gateway::ClientCatalog {
+            observed_at: Some("2026-09-20T00:00:00.000Z".into()),
+            web_scope: "scope".into(),
+            generation: 1,
+            current: true,
+            valid: true,
+        };
+        source.clients.cli_catalog = Some(catalog.clone());
+        source.clients.app_catalog = Some(catalog);
+        source.native = Some(crate::native_health::Observation {
+            outcome: crate::native_health::Outcome::Received,
+            observed_at: None,
+        });
+        let mut tracker = Tracker::default();
+        assert_ne!(
+            tracker
+                .snapshot(DisconnectState::Idle, source.clone())
+                .overall,
+            Overall::Ready
+        );
+        tracker.observe_configuration(Configuration::Installed);
+        let ready = tracker.snapshot(DisconnectState::Idle, source.clone());
+        assert_eq!(ready.overall, Overall::Ready);
+        assert_eq!(
+            ready.components.codex_cli.evidence,
+            Evidence::ClientHandshake
+        );
+        assert_eq!(
+            ready.components.codex_app.evidence,
+            Evidence::ClientHandshake
+        );
+        let mut changed = source.clone();
+        changed.clients.cli_catalog = None;
+        assert_eq!(
+            tracker.snapshot(DisconnectState::Idle, changed).overall,
+            Overall::Preflight
+        );
+        let mut changed = source.clone();
+        changed.clients.cli_catalog.as_mut().unwrap().current = false;
+        assert_eq!(
+            tracker.snapshot(DisconnectState::Idle, changed).overall,
+            Overall::RestartRequired
+        );
+        let mut changed = source.clone();
+        changed.clients.cli_catalog.as_mut().unwrap().valid = false;
+        assert_eq!(
+            tracker
+                .snapshot(DisconnectState::Idle, changed)
+                .components
+                .codex_cli
+                .state,
+            State::Degraded
+        );
+        let mut changed = source.clone();
+        changed.clients.cli = Some(crate::gateway::ClientRequest {
+            succeeded: false,
+            observed_at: None,
+        });
+        assert_eq!(
+            tracker
+                .snapshot(DisconnectState::Idle, changed)
+                .components
+                .codex_cli
+                .state,
+            State::Degraded
+        );
+        let mut changed = source.clone();
+        changed.native = None;
+        assert_eq!(
+            tracker.snapshot(DisconnectState::Idle, changed).overall,
+            Overall::Preflight
+        );
+        let mut changed = source.clone();
+        changed.provider = ProviderHealth::Recovering;
+        assert_eq!(
+            tracker.snapshot(DisconnectState::Idle, changed).overall,
+            Overall::Preflight
+        );
+        let mut changed = source.clone();
+        changed.active_turns = 1;
+        assert_eq!(
+            tracker.snapshot(DisconnectState::Idle, changed).overall,
+            Overall::Busy
+        );
+        let mut changed = source.clone();
+        changed.cleanup_failed = true;
+        assert_eq!(
+            tracker.snapshot(DisconnectState::Idle, changed).overall,
+            Overall::Unavailable
+        );
+        tracker.observe_configuration(Configuration::Conflict);
+        assert_eq!(
+            tracker.snapshot(DisconnectState::Idle, source).overall,
+            Overall::ConfigConflict
+        );
+    }
     #[test]
     fn native_transport_evidence_is_independent_of_browser_and_task_qualification() {
         use crate::native_health::{Observation, Outcome};

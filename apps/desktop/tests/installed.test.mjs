@@ -224,6 +224,30 @@ test('startup attaches an installed host without starting login or generation', 
   assert.equal(ui.nodes.get('installed-cli').textContent, 'Unverified');
   assert.equal(ui.nodes.get('installed-chatgpt').textContent, 'Verified');
 });
+
+test('catalog readiness is displayed without claiming a generation test', async () => {
+  const value = health('ready');
+  for (const name of ['codex_app', 'codex_cli']) {
+    value.health.components[name] = { state: 'healthy', evidence: 'client_handshake', observed_at: '2026-09-20T00:00:00Z', code: null };
+  }
+  const ui = panel(async command => command === 'installed_list' ? list() : value);
+  await flush();
+  assert.equal(ui.nodes.get('installed-heading').textContent, 'Connected');
+  assert.equal(ui.nodes.get('installed-app').textContent, 'Catalog available');
+  assert.equal(ui.nodes.get('installed-cli').textContent, 'Catalog available');
+  assert.ok(ui.nodes.get('installed-components').children.some(row => /no generation test/.test(row.textContent)));
+  assert.deepEqual(ui.calls.map(call => call.command), ['installed_list', 'installed_check']);
+});
+
+test('failed catalog verification never displays a successful catalog claim', async () => {
+  const value = health();
+  value.health.components.codex_cli = { state: 'degraded', evidence: 'client_handshake', code: 'E_CLIENT_CATALOG_RESPONSE' };
+  const ui = panel(async command => command === 'installed_list' ? list() : value);
+  await flush();
+  assert.equal(ui.nodes.get('installed-cli').textContent, 'Degraded');
+  assert.ok(ui.nodes.get('installed-components').children.some(row => /catalog response could not be verified/.test(row.textContent)));
+  assert.ok(!ui.nodes.get('installed-components').children.some(row => /qualified catalog offered/.test(row.textContent)));
+});
 test('only a complete empty inventory falls through to the login controller', async () => {
   const ui = panel(async command => command === 'installed_list' ? list([]) : { phase: 'disconnected' });
   await flush();

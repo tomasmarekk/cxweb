@@ -52,6 +52,10 @@ pub struct OwnedCatalog {
     pub entries: Vec<Value>,
 }
 
+/// Only a validated merged representation can produce this local marker.
+#[derive(Clone)]
+pub(crate) struct CatalogEvidence;
+
 pub async fn forward(
     native: &NativeTransport,
     query: Option<&str>,
@@ -133,6 +137,9 @@ pub async fn forward(
     };
     component(&bytes);
     let tag = format!("\"{:x}\"", hash.finalize());
+    if !catalog.entries.is_empty() {
+        parts.extensions.insert(CatalogEvidence);
+    }
     let unchanged = conditional
         .iter()
         .flat_map(|value| value.split(','))

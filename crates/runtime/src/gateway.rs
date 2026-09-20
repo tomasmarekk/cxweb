@@ -59,6 +59,17 @@ pub(crate) struct GatewayHealth {
 pub(crate) struct ClientActivity {
     pub cli: Option<ClientRequest>,
     pub app: Option<ClientRequest>,
+    pub cli_catalog: Option<ClientCatalog>,
+    pub app_catalog: Option<ClientCatalog>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ClientCatalog {
+    pub observed_at: Option<String>,
+    pub(crate) web_scope: String,
+    pub(crate) generation: u64,
+    pub current: bool,
+    pub valid: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -233,11 +244,23 @@ impl Gateway {
     #[cfg(windows)]
     pub(crate) fn health(&self) -> GatewayHealth {
         let provider = self.web.health();
-        let clients = self
+        let mut clients = self
             .clients
             .lock()
             .map(|value| value.clone())
             .unwrap_or_default();
+        for (codec, observed) in [
+            (CatalogCodec::Cli01551, &mut clients.cli_catalog),
+            (CatalogCodec::App01550Alpha92, &mut clients.app_catalog),
+        ] {
+            if let Some(observed) = observed {
+                observed.current = self.web.catalog(codec).is_some_and(|catalog| {
+                    catalog.codec == codec.id()
+                        && catalog.web_scope == observed.web_scope
+                        && catalog.generation == observed.generation
+                });
+            }
+        }
         match self.admission.state.lock() {
             Ok(state) => GatewayHealth {
                 accepting: state.accepting,
@@ -505,8 +528,29 @@ async fn handle(
             return response;
         }
         if let Some(catalog) = gateway.web.catalog(codec) {
-            return crate::catalog_proxy::forward(&gateway.native, uri.query(), headers, catalog)
-                .await;
+            let observed = (catalog.codec == codec.id()).then(|| ClientCatalog {
+                observed_at: cxweb_platform::clock::utc_timestamp(),
+                web_scope: catalog.web_scope.clone(),
+                generation: catalog.generation,
+                current: true,
+                valid: false,
+            });
+            let response =
+                crate::catalog_proxy::forward(&gateway.native, uri.query(), headers, catalog).await;
+            if let Some(mut observed) = observed
+                && let Ok(mut clients) = gateway.clients.lock()
+            {
+                observed.valid = response
+                    .extensions()
+                    .get::<crate::catalog_proxy::CatalogEvidence>()
+                    .is_some();
+                observed.observed_at = cxweb_platform::clock::utc_timestamp();
+                match codec {
+                    CatalogCodec::Cli01551 => clients.cli_catalog = Some(observed),
+                    CatalogCodec::App01550Alpha92 => clients.app_catalog = Some(observed),
+                }
+            }
+            return response;
         }
     }
     let inspected = if method == Method::POST {
@@ -604,6 +648,94 @@ async fn handle(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn catalog_handshake_requires_valid_merge_and_tracks_snapshot_changes() {
+        struct CatalogOnly(Arc<std::sync::atomic::AtomicU64>);
+        impl WebProvider for CatalogOnly {
+            fn respond(&self, _: WebRequest) -> WebFuture {
+                panic!("catalog must not generate")
+            }
+            fn catalog(&self, codec: CatalogCodec) -> Option<crate::catalog_proxy::OwnedCatalog> {
+                Some(crate::catalog_proxy::OwnedCatalog {
+                    codec: codec.id().into(),
+                    web_scope: "fixture-scope".into(),
+                    generation: self.0.load(std::sync::atomic::Ordering::SeqCst),
+                    entries: vec![cxweb_codex_adapter::catalog::synthetic_model()],
+                })
+            }
+        }
+        let status = Arc::new(std::sync::atomic::AtomicU16::new(200));
+        let upstream_status = status.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let native =
+            NativeTransport::new(format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route(
+                    "/models",
+                    axum::routing::get(move || {
+                        let status = upstream_status.load(std::sync::atomic::Ordering::SeqCst);
+                        async move {
+                            (
+                                StatusCode::from_u16(status).unwrap(),
+                                axum::Json(serde_json::json!({"models":[{"slug":"native"}]})),
+                            )
+                        }
+                    }),
+                ),
+            )
+            .await
+            .unwrap();
+        });
+        let generation = Arc::new(std::sync::atomic::AtomicU64::new(1));
+        let gateway = Gateway::new(12345, native, Arc::new(CatalogOnly(generation.clone())));
+        for (version, agent, conditional, expected) in [
+            ("unknown", "fixture/unknown", false, 200),
+            ("0.155.1", "fixture/0.155.1", false, 200),
+            ("0.155.0", "fixture/0.155.0-alpha.9.2", false, 200),
+            ("0.155.1", "fixture/0.155.1", true, 304),
+            ("0.155.1", "fixture/0.155.1", false, 401),
+        ] {
+            if expected == 401 {
+                status.store(401, std::sync::atomic::Ordering::SeqCst);
+            }
+            let mut request = Request::builder()
+                .uri(format!(
+                    "{}/models?client_version={version}",
+                    gateway.base_url()
+                ))
+                .header("host", "127.0.0.1:12345")
+                .header("user-agent", agent);
+            if conditional {
+                request = request.header("if-none-match", "*");
+            }
+            let response = gateway
+                .clone()
+                .router()
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status().as_u16(), expected);
+            response.into_body().collect().await.unwrap();
+            let activity = gateway.health().clients;
+            if version == "unknown" {
+                assert_eq!(activity, ClientActivity::default());
+            } else if version == "0.155.1" {
+                let catalog = activity.cli_catalog.unwrap();
+                assert!(catalog.current);
+                assert_eq!(catalog.valid, expected != 401);
+            } else {
+                assert!(activity.app_catalog.unwrap().valid);
+            }
+            assert!(activity.cli.is_none() && activity.app.is_none());
+        }
+        generation.store(2, std::sync::atomic::Ordering::SeqCst);
+        assert!(!gateway.health().clients.app_catalog.unwrap().current);
+        server.abort();
+    }
 
     #[cfg(windows)]
     #[tokio::test]
