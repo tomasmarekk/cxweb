@@ -14,7 +14,47 @@ implemented and production routing is installed on this machine. Verification of
 the installed catalogs and authenticated text requests passed both native builds.
 The real installed CLI /model picker displays the owned row. The running App
 still has its old catalog; a full restart and actual App picker pass remain open.
-Scheduled browser recovery also has a Windows launch-context issue described below.
+Scheduled browser recovery now passes after removing an MSIX data-path ambiguity.
+
+## Shared browser state across Windows launch contexts (2026-09-20)
+
+- Identified the recovery failure using OS file-handle paths, without reading
+  browser credential values. A browser launched under the Codex MSIX context
+  opened its data in the package's LocalCache overlay. Task Scheduler opened
+  the unvirtualized AppData files. Chrome reported the same profile path in
+  both cases, so string/path comparisons had concealed the different files.
+- User, logon session, elevation, profile environment, synthetic DPAPI access,
+  working directory, process priority and an additional job restriction did
+  not explain the difference. The earlier elevation hypothesis was incorrect.
+  Neither task privileges nor the native app package/manifest were changed.
+- Active browser and application state now live under the protected
+  OS-selected user profile at .cxweb-runtime/data. Registration inventory still
+  checks the old state directory without importing its ambiguous profile view.
+  Fresh installations do not borrow data from another application's package.
+- Migrated this development installation's dedicated cxweb profile and local
+  qualification database into the private location while its browser was
+  stopped. No personal browser profile or native authentication store was used.
+  The old dedicated data remains protected and unused for rollback; explicit
+  legacy-data cleanup remains part of the lifecycle acceptance work.
+- Private ACL validation accepts the Windows auto-inherited bookkeeping flag
+  only when the DACL remains protected and its owner and exact grants match.
+  Missing protection, inherited ACEs, changed ownership and foreign access
+  remain rejected. No system ACL was changed.
+- Added an opt-in saved-session regression test. The same test executable passed
+  directly and under an interactive-token scheduled task, without a prompt,
+  login action, startup delay workaround or page reload. The disposable test
+  registration was removed. Actual installed daemon recovery then passed from
+  its original scheduled registration and retained the previously verified
+  account, model binding and English browser UI.
+- Both actual native builds again passed catalog and text generation through
+  the scheduled runtime, with existing subscription authentication and unchanged
+  native configuration/executables. This is backend evidence, not a GUI picker
+  pass. The actual Codex App picker/restart remains under verification.
+- Validation: cargo test --workspace --locked --quiet (261 passed / 14 ignored),
+  cargo clippy --workspace --all-targets -- -D warnings, desktop Node tests
+  (58 passed), and release builds for CLI/daemon/desktop passed.
+- Microsoft documents this AppData redirection for packaged desktop apps:
+  https://learn.microsoft.com/en-us/windows/msix/desktop/desktop-to-uwp-behind-the-scenes
 
 Earlier manual check: the user reports `ChatGPT: Session detected` and
 `Codex connection: Awaiting verification` after checking the desktop status.
@@ -85,17 +125,11 @@ entry was visible, which is the expected evidence while activation remains absen
   a full native process restart is required. Other user tasks are running in this
   app, so they were not interrupted to force this test. No actual App picker pass
   is inferred from the passing embedded-backend check.
-- Scheduled launch does start the installed executable. However, its least-
-  privilege context reports E_LOGIN_REQUIRED even after the hydration deadline.
-  The same installation/profile recovers and completes both real native requests
-  when started in this session's original (elevated) context. The exact cause
-  remains unproven; do not label the scheduled session-recovery test passed or
-  change task privileges to conceal it. Cookie data and native auth stores were
-  not read/exported. The healthy runtime currently runs in the original context;
-  the registered task remains least-privilege and enabled.
-- Next: make login/runtime launch context consistent without credential export
-  or an elevated scheduled task; then verify full App restart/picker and native
-  subscription response coexistence. Broader PRD/release gates remain open.
+- Initial scheduled recovery failed with E_LOGIN_REQUIRED despite successful
+  direct launches. The cause was subsequently traced to MSIX AppData redirection,
+  not elevation; see the shared-state correction and passing live evidence above.
+- Next: verify full App restart/picker and native subscription response
+  coexistence. Broader PRD/release gates remain open.
 
 ## Connect models to both native clients (2026-09-20)
 

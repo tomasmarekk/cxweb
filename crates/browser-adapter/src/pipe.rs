@@ -2400,6 +2400,35 @@ mod tests {
         );
         assert!(loaded, "managed Chrome did not render the fetch result");
     }
+    // Run the same ignored test directly and through an interactive-token
+    // scheduled task. An MSIX parent must not select a different saved profile.
+    #[test]
+    #[ignore = "requires exclusive access to an already signed-in cxweb profile"]
+    fn saved_session_restores_in_current_launch_context() {
+        let paths = cxweb_platform::state::StatePaths::open().unwrap();
+        let _ownership = paths.lock().unwrap();
+        let executable = cxweb_platform::state::installed_browser().unwrap();
+        let mut browser = ManagedBrowser::launch_offscreen(&executable, &paths.profile).unwrap();
+        let page = browser.open_background_session().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(45);
+        let authenticated = loop {
+            let observation = browser.login_observation(&page).unwrap();
+            let authenticated = observation.account_surface
+                && observation.composer
+                && !observation.login_action
+                && !observation.verification_required;
+            if authenticated || observation.verification_required || Instant::now() >= deadline {
+                break authenticated;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        };
+        browser.close_page(page).unwrap();
+        browser.close().unwrap();
+        assert!(
+            authenticated,
+            "saved session was not observed in this launch context"
+        );
+    }
     #[test]
     fn framing_handles_split_reads_and_multiple_messages() {
         let mut reader = BufReader::with_capacity(2, &b"{\"a\":1}\0{\"b\":2}\0"[..]);

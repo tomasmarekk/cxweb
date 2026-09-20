@@ -244,10 +244,17 @@ pub fn protected_directory(path: &Path) -> io::Result<()> {
         return Err(io::Error::from_raw_os_error(status as i32));
     }
     let actual = LocalAllocation(actual);
-    if descriptor_text(expected.0)? != descriptor_text(actual.0)? {
+    if !private_descriptor_matches(&descriptor_text(expected.0)?, &descriptor_text(actual.0)?) {
         return Err(io::Error::other("E_STATE_PERMISSIONS"));
     }
     Ok(())
+}
+
+fn private_descriptor_matches(expected: &str, actual: &str) -> bool {
+    // Windows can retain SE_DACL_AUTO_INHERITED after copying an ACL. With
+    // SE_DACL_PROTECTED still present this is bookkeeping, not an inherited
+    // permission. Owner and every explicit ACE must still match exactly.
+    expected == actual.replacen("D:PAI(", "D:P(", 1)
 }
 
 pub struct StatePaths {
@@ -309,6 +316,27 @@ impl StatePaths {
         Ok(root)
     }
     pub fn open() -> io::Result<Self> {
+        // An MSIX parent's filesystem virtualization is inherited by children.
+        // LocalAppData can therefore name different files in a packaged desktop
+        // process and an ordinary scheduled task, even when both report the same
+        // known-folder and browser profile paths. Keep all active application
+        // data alongside the context-independent installation directory.
+        let root = Self::installations()?.join("data");
+        protected_directory(&root)?;
+        let profile = root.join("browser-profile");
+        let state = root.join("state");
+        protected_directory(&profile)?;
+        protected_directory(&state)?;
+        Ok(Self {
+            root,
+            profile,
+            state,
+        })
+    }
+
+    /// Inventory only: legacy registrations stay at their original paths.
+    /// Never import a profile implicitly from an ambiguous virtualized view.
+    pub fn legacy_state() -> io::Result<PathBuf> {
         let mut location = null_mut();
         // SAFETY: fixed known-folder ID and CoTaskMem-owned output. No environment
         // variable or repository path chooses the application's data directory.
@@ -320,16 +348,7 @@ impl StatePaths {
             CoTaskMemFree(location.cast());
             path.join("cxweb")
         };
-        protected_directory(&root)?;
-        let profile = root.join("browser-profile");
-        let state = root.join("state");
-        protected_directory(&profile)?;
-        protected_directory(&state)?;
-        Ok(Self {
-            root,
-            profile,
-            state,
-        })
+        Ok(root.join("state"))
     }
     pub fn lock(&self) -> io::Result<File> {
         let path = self.state.join("instance.lock");
@@ -351,6 +370,24 @@ impl StatePaths {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn private_acl_accepts_bookkeeping_without_accepting_inherited_or_foreign_access() {
+        let expected = "O:ownerD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;owner)";
+        assert!(private_descriptor_matches(expected, expected));
+        assert!(private_descriptor_matches(
+            expected,
+            &expected.replace("D:P(", "D:PAI(")
+        ));
+        for changed in [
+            expected.replace("D:P(", "D:AI("),
+            expected.replace("O:owner", "O:other"),
+            expected.replace("FA;;;owner", "FR;;;owner"),
+            format!("{expected}(A;OICI;FR;;;WD)"),
+            expected.replace("A;OICI;FA;;;owner", "A;OICIID;FA;;;owner"),
+        ] {
+            assert!(!private_descriptor_matches(expected, &changed));
+        }
+    }
     fn path(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "cxweb-{label}-{}-{}",

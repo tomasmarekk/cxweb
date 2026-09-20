@@ -1,0 +1,43 @@
+{
+  "schema": "cxweb.shared-browser-state-evidence.v1",
+  "date": "2026-09-20",
+  "platform": "Windows",
+  "root_cause": "MSIX AppData virtualization selected different physical browser files under identical reported profile paths",
+  "diagnosis": {
+    "same_user_and_windows_logon_session": true,
+    "same_process_elevation": true,
+    "same_reported_browser_profile_path": true,
+    "browser_file_handle_paths_differed": true,
+    "synthetic_dpapi_roundtrip_in_both_contexts": "passed",
+    "credential_values_read_or_logged": false,
+    "native_package_or_manifest_modified": false
+  },
+  "correction": {
+    "active_data": "OS user profile/.cxweb-runtime/data",
+    "protected_owner_and_system_acl": true,
+    "dedicated_development_profile_preserved": true,
+    "personal_browser_profile_used": false,
+    "implicit_legacy_profile_import": false,
+    "legacy_registration_inventory_preserved": true,
+    "old_dedicated_data": "protected, unused, retained pending lifecycle cleanup"
+  },
+  "verification": {
+    "saved_session_test_direct_launch": "passed",
+    "saved_session_test_scheduled_launch": "passed; exact test name verified in executable; task result 0",
+    "installed_daemon_scheduled_recovery": "passed",
+    "browser_account_models_health": "healthy",
+    "task_principal_or_runlevel_changed": false,
+    "disposable_test_registration_removed": true,
+    "cli_0_155_1_installed_catalog_and_text": "passed",
+    "app_backend_0_155_0_alpha_9_2_installed_catalog_and_text": "passed",
+    "native_config_and_executables_unchanged_by_tests": true,
+    "actual_app_picker": "not yet verified after full process restart",
+    "workspace_tests": "261 passed, 14 ignored",
+    "desktop_tests": "58 passed",
+    "clippy": "passed",
+    "release_build": "passed"
+  },
+  "sources": [
+    "https://learn.microsoft.com/en-us/windows/msix/desktop/desktop-to-uwp-behind-the-scenes"
+  ]
+}

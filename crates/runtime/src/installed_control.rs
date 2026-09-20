@@ -79,14 +79,20 @@ fn inventory(root: &Path) -> Result<Inventory, &'static str> {
 
 pub async fn list() -> Result<Inventory, &'static str> {
     tokio::task::spawn_blocking(|| {
-        let paths = StatePaths::open().map_err(|_| "E_INSTALLED_STATE")?;
         let root = StatePaths::installations().map_err(|_| "E_INSTALLED_STATE")?;
         let mut current = inventory(&root)?;
         // Keep older installed journals discoverable; never silently migrate a
         // live listener, capability or scheduler registration.
-        let legacy = inventory(&paths.state)?;
-        current.targets.extend(legacy.targets);
-        current.diagnostics.extend(legacy.diagnostics);
+        let legacy = StatePaths::legacy_state().map_err(|_| "E_INSTALLED_STATE")?;
+        match std::fs::symlink_metadata(&legacy) {
+            Ok(_) => {
+                let legacy = inventory(&legacy)?;
+                current.targets.extend(legacy.targets);
+                current.diagnostics.extend(legacy.diagnostics);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(_) => return Err("E_INSTALLED_STATE"),
+        }
         let mut ids = BTreeSet::new();
         if current
             .targets

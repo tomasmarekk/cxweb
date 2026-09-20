@@ -30,7 +30,7 @@
     "actual_cli_picker": "owned route observed in unmodified /model picker",
     "actual_app_picker": "running instance still has old catalog; full process restart not performed while other tasks are active",
     "scheduled_executable_start": "passed",
-    "scheduled_browser_recovery": "failed with E_LOGIN_REQUIRED in least-privilege launch; same installation recovers in original elevated context",
+    "scheduled_browser_recovery": "passed after moving dedicated application state out of MSIX-virtualized AppData; original task principal unchanged",
     "task_privileges_changed": false
   },
   "sources": [
