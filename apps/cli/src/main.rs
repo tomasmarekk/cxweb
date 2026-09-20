@@ -26,6 +26,11 @@ enum Command {
         #[arg(long)]
         installation: String,
     },
+    /// Explicitly retry an eligible installed browser recovery without sending a message.
+    RuntimeRetryWeb {
+        #[arg(long)]
+        installation: String,
+    },
     /// Inventory native executable candidates without launching clients or reading credentials.
     NativeDiscover,
     /// Inspect a reviewed native backend's selected home/cwd without generating or changing configuration.
@@ -159,6 +164,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 let _ = installation;
                 return Err("runtime health requires Windows".into());
+            }
+        }
+        Command::RuntimeRetryWeb { installation } => {
+            #[cfg(windows)]
+            {
+                let current = cxweb_runtime::installed_control::check(&installation).await?;
+                let result =
+                    cxweb_runtime::installed_control::retry_web(&installation, current.instance)
+                        .await?;
+                print_json(&serde_json::to_value(result.health)?);
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = installation;
+                return Err("runtime recovery requires Windows".into());
             }
         }
         Command::NativeDiscover => {

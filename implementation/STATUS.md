@@ -17,9 +17,42 @@ instance also displays the saved owned selection in its composer. Its full picke
 native/web switching and GUI request still need verification. Both native backends
 pass web/native/web text generation in one process through the installed runtime.
 Scheduled browser recovery now passes after removing an MSIX data-path ambiguity.
-Current live state: the most recent recovery and independent visible-surface
-check report `E_LOGIN_REQUIRED`. A managed login window is open; this build has
-not completed authenticated recovery or the installed tool scenario.
+Current live state: user sign-in is confirmed, the managed login window is closed,
+and installed background recovery has verified the saved account and model in
+English. The complete installed CLI and App-backend read/patch/final scenarios
+now pass; actual GUI picker verification remains open.
+
+## Saved-session hydration and installed tool verification (2026-09-20)
+
+- After the user completed sign-in, the managed background transition retained
+  the authenticated English session. Startup still failed with the previously
+  generic `E_BROWSER_OBSERVATION`. Fixed structural diagnostics isolated
+  `E_BROWSER_BASELINE_MODEL`: the composer/account loaded before its model control.
+- Startup now waits up to 15 seconds for that same page's composer/model baseline,
+  without navigation, submission or generation retry. Cancellation and unrelated
+  errors terminate immediately. Session observation also tolerates a transient
+  document-read failure within its existing deadline. The latter alone did not
+  resolve the observed failure; waiting for the model baseline did.
+- Installed scheduled recovery passed at 10:55:33 UTC. It rechecked the saved
+  account/workspace binding, English language, route and Temporary Chat. The
+  current installation contains the new startup logic and recovery catalog fix.
+- Added `runtime-retry-web --installation <id>` as a CLI entry point to the
+  existing instance-bound recovery operation. Eligibility and admission checks
+  remain owned by the installed host; this is not a message retry or re-login.
+- Actual installed CLI 0.155.1 passed its full native read, native `apply_patch`,
+  exact output-file and final-answer checks at 10:57:23 UTC. Its existing native
+  subscription, configuration and executable were preserved. No harness code
+  executed model-generated tools. This is one scenario, not G2 certification.
+- The same scenario passed App backend 0.155.0-alpha.9.2 at 10:59:15 UTC. Both
+  clients listed native and owned models together. Sanitized, complete reports:
+  `integration-tests/compatibility/cli-0.155.1.installed-tools.json` and
+  `integration-tests/compatibility/app-backend-0.155.0-alpha.9.2.installed-tools.json`.
+- Validation: `cargo test --workspace --quiet` passed 268 tests / 15 ignored;
+  browser DOM tests passed 34; Clippy with warnings denied, formatting and diff
+  checks passed. Release CLI and daemon builds passed for the explicit Windows
+  target. Computer Use read the actual Codex task UI but mouse input failed with
+  `SendInput sent 0 of 1 events; GetLastError=87`, including one attempt after
+  refreshing the selected window and focus. No GUI picker pass is inferred.
 
 ## Recovery catalog and login readiness (2026-09-20)
 

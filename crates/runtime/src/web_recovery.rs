@@ -178,9 +178,17 @@ impl Receipt {
             {
                 return Err("E_BROWSER_LANGUAGE");
             }
-            let baseline = browser
-                .baseline(&page)
-                .map_err(|_| "E_BROWSER_OBSERVATION")?;
+            let baseline = wait_for_baseline(
+                || {
+                    if cancellation.is_cancelled() {
+                        return Err("E_CANCELLED");
+                    }
+                    browser
+                        .baseline(&page)
+                        .map_err(|error| baseline_error(&error.to_string()))
+                },
+                Duration::from_secs(15),
+            )?;
             if !baseline.composer_empty || baseline.generating {
                 return Err("E_BROWSER_BUSY");
             }
@@ -272,7 +280,20 @@ fn wait_for_login(
 ) -> Result<LoginObservation, &'static str> {
     let deadline = Instant::now() + timeout;
     loop {
-        let observation = observe()?;
+        let observation = match observe() {
+            Ok(observation) => observation,
+            // A navigation can replace the document between the frame/origin
+            // check and a DOM read. Reobserve this same owned target within the
+            // original deadline; do not navigate again or retry generation.
+            Err("E_BROWSER_OBSERVATION") if Instant::now() < deadline => {
+                std::thread::sleep(
+                    Duration::from_millis(100)
+                        .min(deadline.saturating_duration_since(Instant::now())),
+                );
+                continue;
+            }
+            Err(code) => return Err(code),
+        };
         if observation.verification_required {
             return Err("E_BROWSER_VERIFICATION_REQUIRED");
         }
@@ -479,6 +500,34 @@ impl WebProvider for PendingProvider {
     }
 }
 
+fn wait_for_baseline<T>(
+    mut observe: impl FnMut() -> Result<T, &'static str>,
+    timeout: Duration,
+) -> Result<T, &'static str> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match observe() {
+            Err("E_BROWSER_BASELINE_MODEL" | "E_BROWSER_BASELINE_COMPOSER")
+                if Instant::now() < deadline =>
+            {
+                std::thread::sleep(
+                    Duration::from_millis(100)
+                        .min(deadline.saturating_duration_since(Instant::now())),
+                );
+            }
+            result => return result,
+        }
+    }
+}
+
+pub(crate) fn baseline_error(code: &str) -> &'static str {
+    match code {
+        "E_BROWSER_BASELINE_COMPOSER" => "E_BROWSER_BASELINE_COMPOSER",
+        "E_BROWSER_BASELINE_MODEL" => "E_BROWSER_BASELINE_MODEL",
+        _ => "E_BROWSER_BASELINE",
+    }
+}
+
 fn retryable(code: &str) -> bool {
     matches!(
         code,
@@ -601,6 +650,39 @@ mod tests {
     }
 
     #[test]
+    fn baseline_hydration_is_bounded_and_cancellation_is_not_retried() {
+        let mut observations = [
+            Err("E_BROWSER_BASELINE_COMPOSER"),
+            Err("E_BROWSER_BASELINE_MODEL"),
+            Ok(7),
+        ]
+        .into_iter();
+        assert_eq!(
+            wait_for_baseline(|| observations.next().unwrap(), Duration::from_secs(1)),
+            Ok(7)
+        );
+        for code in ["E_CANCELLED", "E_BROWSER_BASELINE", "E_BROWSER_BUSY"] {
+            let mut calls = 0;
+            assert_eq!(
+                wait_for_baseline::<()>(
+                    || {
+                        calls += 1;
+                        Err(code)
+                    },
+                    Duration::from_secs(1)
+                ),
+                Err(code)
+            );
+            assert_eq!(calls, 1);
+        }
+        assert_eq!(
+            wait_for_baseline::<()>(|| Err("E_BROWSER_BASELINE_MODEL"), Duration::ZERO),
+            Err("E_BROWSER_BASELINE_MODEL")
+        );
+        assert_eq!(baseline_error("private page content"), "E_BROWSER_BASELINE");
+    }
+
+    #[test]
     fn recovery_waits_for_session_hydration_without_interacting_with_login_or_challenges() {
         let loaded = LoginObservation {
             verification_required: false,
@@ -652,6 +734,27 @@ mod tests {
             loaded
         );
         assert_eq!(calls, 2);
+        let mut reads = 0;
+        assert_eq!(
+            wait_for_login(
+                || {
+                    reads += 1;
+                    if reads == 1 {
+                        Err("E_BROWSER_OBSERVATION")
+                    } else {
+                        Ok(loaded.clone())
+                    }
+                },
+                Duration::from_secs(1)
+            )
+            .unwrap(),
+            loaded
+        );
+        assert_eq!(reads, 2);
+        assert_eq!(
+            wait_for_login(|| Err("E_BROWSER_OBSERVATION"), Duration::ZERO),
+            Err("E_BROWSER_OBSERVATION")
+        );
         assert_eq!(
             wait_for_login(|| Ok(loading.clone()), Duration::ZERO),
             Err("E_BACKGROUND_NAVIGATION")

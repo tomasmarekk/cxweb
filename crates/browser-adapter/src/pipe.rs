@@ -528,6 +528,8 @@ impl ManagedBrowser {
                 "E_MODEL_MENU",
                 "E_MODEL_SLIDER",
                 "E_MODEL_FOCUS",
+                "E_BROWSER_BASELINE_COMPOSER",
+                "E_BROWSER_BASELINE_MODEL",
             ] {
                 if first_line == Some(format!("Error: {code}").as_str()) {
                     return Err(io::Error::other(code));

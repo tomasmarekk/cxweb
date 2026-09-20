@@ -29,6 +29,17 @@ fn component(
 /// Never pass arbitrary backend text through the control protocol. Codes below
 /// are fixed local observations and carry no paths, URLs, IDs or account data.
 fn failure(code: &str) -> (Overall, State, Action, &'static str) {
+    if matches!(
+        code,
+        "E_BROWSER_BASELINE" | "E_BROWSER_BASELINE_COMPOSER" | "E_BROWSER_BASELINE_MODEL"
+    ) {
+        return (
+            Overall::Unavailable,
+            State::Unavailable,
+            Action::Details,
+            crate::web_recovery::baseline_error(code),
+        );
+    }
     let preparation = crate::managed_driver::temporary_chat_error(code);
     if preparation.starts_with("E_BROWSER_TEMPORARY_") {
         return (
@@ -316,6 +327,17 @@ mod tests {
     }
     #[test]
     fn failures_are_sanitized_and_disconnect_states_override_cached_browser_health() {
+        for code in [
+            "E_BROWSER_BASELINE",
+            "E_BROWSER_BASELINE_COMPOSER",
+            "E_BROWSER_BASELINE_MODEL",
+        ] {
+            assert_eq!(failure(code).3, code);
+        }
+        assert_eq!(
+            failure("E_BROWSER_BASELINE_PRIVATE_CONTENT").3,
+            "E_WEB_UNAVAILABLE"
+        );
         assert_eq!(
             failure("E_BROWSER_TEMPORARY_LOADING").3,
             "E_BROWSER_TEMPORARY_LOADING"
