@@ -1,0 +1,31 @@
+{
+  "evidence_level": "contract",
+  "actual_installed_runtime": true,
+  "account_generation": false,
+  "native_client_execution": false,
+  "observed_at": "2026-09-20T21:17:46.1873588+00:00",
+  "os": "10.0.26100.0",
+  "runtime_sha256": "fd9df26483ca95d0e2ff41675d9b18f293bb3af5a058644b939515390adbb281",
+  "command": "cxweb runtime-health --installation <owned-installation>",
+  "config_unchanged": true,
+  "before_config": {
+    "code": null,
+    "evidence": "none",
+    "observed_at": null,
+    "state": "unknown"
+  },
+  "after_config": {
+    "code": null,
+    "evidence": "local_probe",
+    "observed_at": "2026-09-20T21:17:46.126Z",
+    "state": "healthy"
+  },
+  "overall": "preflight",
+  "native_upstream": "unknown",
+  "result": "PASS",
+  "limits": [
+    "Only the owned configuration observation was verified live.",
+    "Conflict and concurrent-probe branches were tested with isolated fixtures.",
+    "This does not certify browser generation, native upstream features, either picker or release readiness."
+  ]
+}

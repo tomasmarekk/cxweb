@@ -9,8 +9,19 @@ use cxweb_domain::health::{
 
 #[derive(Default)]
 pub(crate) struct Tracker {
-    previous: Option<(DisconnectState, GatewayHealth, Configuration, Health)>,
-    configuration: Configuration,
+    previous: Option<(
+        DisconnectState,
+        GatewayHealth,
+        ConfigurationObservation,
+        Health,
+    )>,
+    configuration: ConfigurationObservation,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct ConfigurationObservation {
+    state: Configuration,
+    observed_at: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -168,7 +179,10 @@ fn failure(code: &str) -> (Overall, State, Action, &'static str) {
 
 impl Tracker {
     pub(crate) fn observe_configuration(&mut self, configuration: Configuration) {
-        self.configuration = configuration;
+        self.configuration = ConfigurationObservation {
+            state: configuration,
+            observed_at: cxweb_platform::clock::utc_timestamp(),
+        };
     }
 
     pub(crate) fn snapshot(&mut self, state: DisconnectState, gateway: GatewayHealth) -> Health {
@@ -272,21 +286,25 @@ impl Tracker {
             }
         }
         if state == DisconnectState::Idle {
-            let (config_state, code) = match self.configuration {
+            let (config_state, code) = match self.configuration.state {
                 Configuration::Unknown => (State::Unknown, None),
                 Configuration::Installed => (State::Healthy, None),
                 Configuration::NotInstalled => (State::NotInstalled, None),
                 Configuration::Conflict => (State::Conflict, Some("E_CONFIG_CHANGED")),
                 Configuration::Unavailable => (State::Unavailable, Some("E_CONFIG_OBSERVATION")),
             };
-            if self.configuration != Configuration::Unknown {
-                health.components.config =
-                    component(config_state, Evidence::LocalProbe, now.clone(), code);
+            if self.configuration.state != Configuration::Unknown {
+                health.components.config = component(
+                    config_state,
+                    Evidence::LocalProbe,
+                    self.configuration.observed_at.clone(),
+                    code,
+                );
             }
-            if self.configuration == Configuration::Conflict {
+            if self.configuration.state == Configuration::Conflict {
                 health.overall = Overall::ConfigConflict;
                 health.suggested_action = Action::Details;
-            } else if self.configuration == Configuration::Unavailable {
+            } else if self.configuration.state == Configuration::Unavailable {
                 health.overall = Overall::Unavailable;
                 health.suggested_action = Action::Details;
             }
@@ -338,7 +356,7 @@ impl Tracker {
                 );
             }
         }
-        self.previous = Some((state, gateway, self.configuration, health.clone()));
+        self.previous = Some((state, gateway, self.configuration.clone(), health.clone()));
         health
     }
 }
@@ -352,6 +370,7 @@ mod tests {
         let source = gateway(ProviderHealth::Verified { observed_at: None });
         let unknown = tracker.snapshot(DisconnectState::Idle, source.clone());
         tracker.observe_configuration(Configuration::Installed);
+        tracker.configuration.observed_at = Some("2026-09-20T00:00:00.000Z".into());
         let installed = tracker.snapshot(DisconnectState::Idle, source.clone());
         assert!(installed.revision > unknown.revision);
         assert_eq!(installed.components.config.state, State::Healthy);
@@ -361,6 +380,13 @@ mod tests {
         assert_eq!(
             tracker.snapshot(DisconnectState::Idle, source.clone()),
             installed
+        );
+        let mut busy_source = source.clone();
+        busy_source.active_turns = 1;
+        let busy = tracker.snapshot(DisconnectState::Idle, busy_source);
+        assert_eq!(
+            busy.components.config.observed_at,
+            installed.components.config.observed_at
         );
         tracker.observe_configuration(Configuration::Conflict);
         let conflict = tracker.snapshot(DisconnectState::Idle, source.clone());

@@ -23,6 +23,35 @@ English. The complete installed CLI and App-backend read/patch/final scenarios
 now pass. A fixed message sent from the actual GUI also passed with the owned
 model and effort corroborated by the native turn context.
 
+## Installed configuration observations (2026-09-20)
+
+- Private Health exchanges now check the selected native configuration on a
+  blocking worker after validating the request. The checked journal verifies its
+  own integrity and compares effective routing through RoutePatch::can_resume;
+  unrelated comments/model/theme edits remain valid. A changed route, provider,
+  profile or catalog is reported as a conflict. Read/integrity failures have a
+  fixed sanitized code. No config write, browser probe or generation occurs.
+- The same route predicate fixes setup-owner routing status after unrelated
+  user edits. Filesystem probes are serialized through result publication; an
+  IPC timeout cannot accumulate detached workers. Configuration has its own
+  observation timestamp, retained when only another health dimension changes.
+- Validation: 313 workspace tests passed, 21 opt-in tests ignored. All-target
+  Clippy with denied warnings, formatting and release build passed. After the
+  final timestamp correction, its focused regression and Clippy passed again.
+  Four new behavioral tests cover route edits, config health/revisions, actual
+  controller observation and validated control dispatch.
+- Deployed idle daemon fd9df26483ca95d0e2ff41675d9b18f293bb3af5a058644b939515390adbb281.
+  The actual installed private Health exchange at 21:17:46 UTC changed config
+  from unknown to healthy/local_probe without changing native config bytes.
+  Evidence: integration-tests/compatibility/installed-configuration-health.json.
+  Native upstream is still unknown and overall preflight is still intentional;
+  this config check does not certify the other missing dimensions.
+- CLI inclusive-count on the preceding daemon 0fc921ba774a4f5c53fb53f862bc04d8fa070efea3763830bd8077aee533d041
+  failed at 21:07:54 UTC with E_BROWSER_RATE_LIMITED after its actual read, before
+  tests or patch. That result remains archived. No further account generation
+  was started in this interval. Continue independent native health/lifecycle
+  work while respecting the web limit; do not retry a failed sample as a replacement.
+
 ## Actual arithmetic repair recovery (2026-09-20)
 
 - CLI 0.155.1 and App backend 0.155.0-alpha.9.2 passed the account-live sum

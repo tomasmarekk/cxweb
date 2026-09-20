@@ -118,3 +118,10 @@ unchanged. Its separate report is
 app-backend-0.155.0-alpha.9.2.arithmetic-sum-dom-text-pass.json.
 Both reports include all five qualified reasoning choices; this particular coding
 exercise used xhigh. These backend runs are not fresh GUI picker observations.
+
+The next CLI inclusive-count attempt on that same daemon/runner failed at
+21:07:54 UTC with E_BROWSER_RATE_LIMITED after its successful source/case read.
+No test or patch ran. Its actual result is retained in
+cli-0.155.1.arithmetic-inclusive-dom-text-rate-limit.json. No further account
+generation was started in this work interval; independent config-health work
+continued locally. The interrupted exercise is not credited as a success.
