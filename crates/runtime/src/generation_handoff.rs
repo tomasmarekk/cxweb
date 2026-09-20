@@ -15,6 +15,7 @@ pub struct GenerationSession {
     pub route: Route,
     pub protocol_evidence: String,
     pub(crate) browser_version: String,
+    pub(crate) verified_at: Option<String>,
     scope: ProviderScope,
     consumer: std::sync::Arc<tokio::sync::Mutex<()>>,
 }
@@ -86,6 +87,7 @@ pub(crate) struct PreparedHandoff {
     route: Route,
     evidence: String,
     browser_version: String,
+    verified_at: Option<String>,
 }
 
 fn selected_route<'a>(
@@ -190,6 +192,7 @@ impl PreparedHandoff {
             .to_owned();
         let prepared = Self {
             browser_version,
+            verified_at: cxweb_platform::clock::utc_timestamp(),
             binding: Binding {
                 installation: installation.into(),
                 account: scope.account,
@@ -239,6 +242,7 @@ impl PreparedHandoff {
             route: self.route,
             protocol_evidence: self.evidence,
             browser_version: self.browser_version,
+            verified_at: self.verified_at,
             scope,
             consumer: std::sync::Arc::default(),
         })
@@ -355,6 +359,7 @@ mod tests {
                 route,
                 evidence: "a".repeat(64),
                 browser_version: "Chrome/fixture".into(),
+                verified_at: None,
             };
             let receipt = std::sync::Arc::new(prepared.start(browser, ownership).unwrap());
             assert!(paths.lock().is_err());
@@ -446,6 +451,7 @@ mod tests {
             route,
             evidence: "a".repeat(64),
             browser_version: "Chrome/fixture".into(),
+            verified_at: None,
         }
         .start(browser, paths.lock().unwrap())
         .unwrap();

@@ -1,0 +1,38 @@
+{
+  "schema": "cxweb.runtime-health-evidence.v1",
+  "date": "2026-09-20",
+  "result": "PASS private IPC, synthetic runtime and actual cxweb CLI checks; live browser and native client qualification NOT RUN",
+  "verification": {
+    "workspace": { "passed": 234, "ignored": 11 },
+    "desktop_ui": { "passed": 40 },
+    "actual_cli_synthetic_runtime": { "passed": 1 },
+    "actual_cli_json_schema_with_format_checks": "PASS",
+    "clippy": "PASS",
+    "format": "PASS",
+    "release_builds": ["CLI", "daemon", "desktop"]
+  },
+  "checks": {
+    "private_control_health_matches_published_contract": true,
+    "unknown_health_schema_rejected": true,
+    "unchanged_snapshot_revision_and_observation_time_preserved": true,
+    "passive_browser_evidence_does_not_certify_native_clients_or_subscription": true,
+    "recovery_lease_excluded_from_active_turn_count": true,
+    "cancelled_generation_counted_until_cleanup_finishes": true,
+    "disconnect_and_cleanup_failure_override_cached_browser_health": true,
+    "observed_scope_failure_invalidates_browser_health": true,
+    "cached_replay_does_not_refresh_browser_evidence": true,
+    "request_validation_failure_does_not_erase_session_failure": true,
+    "fixed_code_projection_excludes_arbitrary_backend_details": true,
+    "cli_output_excludes_private_route_and_installation_identity": true
+  },
+  "not_run": [
+    "Authenticated browser recovery and real account/model verification",
+    "Actual Codex App picker and native subscription coexistence",
+    "Desktop installed-runtime health attachment and production activation"
+  ],
+  "limits": [
+    "This diagnostic reads cached/local observations only; it does not probe browser or upstream state.",
+    "Client, native upstream and config remain unknown without independent evidence.",
+    "Successful CLI diagnostics do not qualify a Codex model route."
+  ]
+}

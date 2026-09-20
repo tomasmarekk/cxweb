@@ -74,6 +74,7 @@ pub(crate) trait CheckpointEncoder: Send + Sync {
 pub struct Delivery {
     pub json: String,
     pub sse: String,
+    pub(crate) live_verified: bool,
 }
 impl Delivery {
     fn bytes(&self) -> usize {
@@ -165,7 +166,11 @@ impl Coordinator {
                     .map_err(|_| "E_REPLAY_STATE")?
                     .iter()
                     .find(|(key, _)| key == &replay_key)
-                    .map(|(_, delivery)| delivery.clone())
+                    .map(|(_, delivery)| {
+                        let mut replay = delivery.clone();
+                        replay.live_verified = false;
+                        replay
+                    })
                     .ok_or("E_REPLAY_UNAVAILABLE");
             }
             Admission::Existing(_) => return Err("E_REQUEST_ALREADY_ADMITTED"),
@@ -397,6 +402,7 @@ impl Coordinator {
                 return Ok(Delivery {
                     json: encoded.response.to_string(),
                     sse: encoded.sse(),
+                    live_verified: true,
                 });
             }
             tokio::select! { _ = cancel.cancelled() => (), _ = tokio::time::sleep(Duration::from_millis(200)) => () }
@@ -660,6 +666,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(first.sse, second.sse);
+        assert!(first.live_verified);
+        assert!(!second.live_verified);
         assert!(first.json.contains("verified mock answer"));
         assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
         assert_eq!(browser.releases.load(Ordering::SeqCst), 1);

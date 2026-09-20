@@ -11,12 +11,22 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, sync::Arc};
 
+/// In-process evidence only. Never serialized into HTTP headers or model data.
+#[derive(Clone, Debug)]
+pub(crate) enum BrowserEvidence {
+    Verified,
+    Failure(&'static str),
+}
+
 /// Reviewed clients recognize HTTP 400 as terminal; generic 422/409 refusals
 /// were retried. Only known pre-admission queue failures permit an automatic
 /// retry. Unknown web failures may follow submission and must fail closed.
 pub(crate) fn web_failure(code: &'static str) -> Response {
     use axum::http::StatusCode;
     let mut response = unavailable(code);
+    response
+        .extensions_mut()
+        .insert(BrowserEvidence::Failure(code));
     *response.status_mut() = match code {
         "E_QUEUE_FULL" | "E_QUEUE_TIMEOUT" => StatusCode::SERVICE_UNAVAILABLE,
         _ => StatusCode::BAD_REQUEST,
@@ -319,13 +329,18 @@ impl CoordinatorProvider {
         if hosted_search_unavailable {
             response = response.header("x-cxweb-unavailable-tools", "web_search");
         }
-        response
+        let live_verified = delivery.live_verified;
+        let mut response = response
             .body(Body::from(if stream {
                 delivery.sse
             } else {
                 delivery.json
             }))
-            .map_err(|_| "E_RESPONSE_ENCODING")
+            .map_err(|_| "E_RESPONSE_ENCODING")?;
+        if live_verified {
+            response.extensions_mut().insert(BrowserEvidence::Verified);
+        }
+        Ok(response)
     }
 }
 impl WebProvider for CoordinatorProvider {
@@ -928,6 +943,10 @@ mod tests {
             .unwrap();
         assert_eq!(first.status(), StatusCode::OK);
         assert_eq!(first.headers()["x-cxweb-delivery"], "buffered");
+        assert!(matches!(
+            first.extensions().get::<BrowserEvidence>(),
+            Some(BrowserEvidence::Verified)
+        ));
         let body = first.into_body().collect().await.unwrap().to_bytes();
         let original: Value = serde_json::from_slice(&body).unwrap();
         let (mut parts, body) = request(&base, "turn-one", "context-one", true).into_parts();
@@ -942,6 +961,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(retry.headers()["content-type"], "text/event-stream");
+        assert!(retry.extensions().get::<BrowserEvidence>().is_none());
         let sse = String::from_utf8(
             retry
                 .into_body()

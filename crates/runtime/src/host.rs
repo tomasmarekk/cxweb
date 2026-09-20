@@ -229,6 +229,77 @@ mod tests {
         }
     }
     #[tokio::test]
+    #[ignore = "requires CXWEB_HEALTH_CLI pointing to built CLI; synthetic runtime only, no browser or account"]
+    async fn actual_cli_reads_sanitized_health_without_launching_a_runtime() {
+        let executable = PathBuf::from(
+            std::env::var_os("CXWEB_HEALTH_CLI").expect("select the built cxweb CLI"),
+        );
+        assert!(executable.is_absolute() && executable.is_file());
+        let fixture = Fixture(
+            std::env::temp_dir().join(format!("cxweb-health-cli-{:032x}", rand::random::<u128>())),
+        );
+        protected_directory(&fixture.0).unwrap();
+        let config = fixture.0.join("config.toml");
+        let directory = fixture.0.join("journal");
+        let reservation = loopback::bind(0).unwrap();
+        let mut journal = ConfigJournal::prepare(
+            &directory,
+            &config,
+            reservation.local_addr().unwrap().port(),
+            &"a".repeat(43),
+        )
+        .unwrap();
+        journal.record_catalog(vec![], vec![]).unwrap();
+        journal.apply().unwrap();
+        let installation = journal.installation_id().to_owned();
+        drop(journal);
+        drop(reservation);
+        let host = Host::recover(&directory, &config).unwrap();
+        let server = tokio::spawn(host.serve());
+        let mut child = tokio::process::Command::new(executable);
+        child
+            .arg("runtime-health")
+            .arg("--installation")
+            .arg(&installation)
+            .creation_flags(0x08000000)
+            .kill_on_drop(true)
+            .stdin(std::process::Stdio::null());
+        let result = tokio::time::timeout(Duration::from_secs(15), child.output())
+            .await
+            .unwrap()
+            .unwrap();
+        server.abort();
+        let _ = server.await;
+        assert!(result.status.success());
+        let health: cxweb_domain::health::Health = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(health.overall, cxweb_domain::health::Overall::Disconnected);
+        assert_eq!(
+            health.components.runtime.state,
+            cxweb_domain::health::ComponentState::Healthy
+        );
+        assert_eq!(
+            health.components.codex_cli.state,
+            cxweb_domain::health::ComponentState::Unknown
+        );
+        let text = std::str::from_utf8(&result.stdout).unwrap();
+        for forbidden in [&installation, &"a".repeat(43), "127.0.0.1", "auth.json"] {
+            assert!(!text.contains(forbidden));
+        }
+        if let Some(output) = std::env::var_os("CXWEB_HEALTH_REPORT") {
+            use std::io::Write;
+            let output = PathBuf::from(output);
+            assert!(output.is_absolute());
+            std::fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(output)
+                .unwrap()
+                .write_all(&result.stdout)
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
     async fn installed_web_receipt_reconstitutes_pending_provider_without_opening_browser_in_bind()
     {
         let fixture = Fixture(
@@ -350,6 +421,48 @@ mod tests {
                 panic!("missing status")
             };
             assert_eq!(state, expected);
+            let health_request = Request {
+                version: 1,
+                command: Command::Health {},
+            };
+            let Reply::Health {
+                instance: health_instance,
+                health,
+                ..
+            } = exchange(&installation, &health_request).await.unwrap()
+            else {
+                panic!("missing health");
+            };
+            assert_eq!(health_instance, instance);
+            assert_eq!(
+                health.components.runtime.state,
+                cxweb_domain::health::ComponentState::Healthy
+            );
+            assert_eq!(
+                health.components.codex_app.state,
+                cxweb_domain::health::ComponentState::Unknown
+            );
+            let expected_health = match expected {
+                DisconnectState::Idle => cxweb_domain::health::Overall::Disconnected,
+                DisconnectState::PendingRestart => {
+                    cxweb_domain::health::Overall::RemovalPendingRestart
+                }
+                DisconnectState::RestoreFailed => cxweb_domain::health::Overall::ConfigConflict,
+                _ => unreachable!(),
+            };
+            assert_eq!(health.overall, expected_health);
+            let Reply::Health {
+                health: repeated, ..
+            } = exchange(&installation, &health_request).await.unwrap()
+            else {
+                panic!("missing health");
+            };
+            assert_eq!(health, repeated);
+            let serialized = serde_json::to_string(&health).unwrap();
+            assert!(!serialized.contains(&capability));
+            assert!(!serialized.contains(&installation));
+            assert!(!serialized.contains("127.0.0.1"));
+
             let response = client
                 .post(&url)
                 .body(r#"{"model":"native"}"#)

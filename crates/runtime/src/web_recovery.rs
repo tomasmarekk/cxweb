@@ -135,7 +135,7 @@ impl Receipt {
         // Browser pipe operations stay off the reactor. A busy profile is a
         // terminal recovery failure, never permission to kill its current owner.
         let browser_cancellation = cancellation.clone();
-        let driver = tokio::task::spawn_blocking(move || {
+        let (driver, verified_at) = tokio::task::spawn_blocking(move || {
             let cancellation = browser_cancellation;
             if cancellation.is_cancelled() {
                 return Err("E_CANCELLED");
@@ -226,7 +226,11 @@ impl Receipt {
             browser
                 .ensure_no_other_pages(None)
                 .map_err(|_| "E_BROWSER_OTHER_PAGES")?;
-            ManagedDriver::start(browser, self.binding, ownership)
+            let verified_at = cxweb_platform::clock::utc_timestamp();
+            Ok((
+                ManagedDriver::start(browser, self.binding, ownership)?,
+                verified_at,
+            ))
         })
         .await
         .map_err(|_| "E_WEB_RECOVERY_WORKER")??;
@@ -240,7 +244,11 @@ impl Receipt {
             let coordinator = Coordinator::new(ledger, Arc::new(driver.clone()));
             let provider =
                 CoordinatorProvider::new(coordinator, scope, routes)?.with_catalog(1, catalogs)?;
-            Ok(Arc::new(provider) as Arc<dyn WebProvider>)
+            Ok(Arc::new(ObservedProvider::new(
+                Arc::new(provider),
+                driver.clone(),
+                verified_at,
+            )) as Arc<dyn WebProvider>)
         }
         .await;
         match result {
@@ -280,6 +288,93 @@ fn wait_for_login(
         std::thread::sleep(
             Duration::from_millis(100).min(deadline.saturating_duration_since(Instant::now())),
         );
+    }
+}
+
+/// Retain the actual browser-owner channel for passive liveness observation.
+/// The timestamp records the last account/model verification, not a new probe.
+pub(crate) struct ObservedProvider {
+    provider: Arc<dyn WebProvider>,
+    driver: ManagedDriver,
+    observation: Arc<std::sync::Mutex<crate::gateway::ProviderHealth>>,
+}
+impl ObservedProvider {
+    pub(crate) fn new(
+        provider: Arc<dyn WebProvider>,
+        driver: ManagedDriver,
+        verified_at: Option<String>,
+    ) -> Self {
+        Self {
+            provider,
+            driver,
+            observation: Arc::new(std::sync::Mutex::new(
+                crate::gateway::ProviderHealth::Verified {
+                    observed_at: verified_at,
+                },
+            )),
+        }
+    }
+}
+impl WebProvider for ObservedProvider {
+    fn health(&self) -> crate::gateway::ProviderHealth {
+        if self.driver.is_closed() {
+            crate::gateway::ProviderHealth::Unavailable {
+                code: "E_BROWSER_CLOSED",
+            }
+        } else {
+            self.observation
+                .lock()
+                .expect("browser health lock poisoned")
+                .clone()
+        }
+    }
+    fn respond(&self, request: WebRequest) -> WebFuture {
+        let work = self.provider.respond(request);
+        let observation = self.observation.clone();
+        Box::pin(async move {
+            let response = work.await;
+            observe_response(&observation, &response);
+            response
+        })
+    }
+    fn validate_warmup(&self, request: &WebRequest) -> Result<(), &'static str> {
+        self.provider.validate_warmup(request)
+    }
+    fn catalog(&self, codec: CatalogCodec) -> Option<crate::catalog_proxy::OwnedCatalog> {
+        if self.driver.is_closed() {
+            None
+        } else {
+            self.provider.catalog(codec)
+        }
+    }
+}
+
+fn observe_response(
+    observation: &std::sync::Mutex<crate::gateway::ProviderHealth>,
+    response: &axum::response::Response,
+) {
+    use crate::{gateway::ProviderHealth, web_provider::BrowserEvidence};
+    let changed = match response.extensions().get::<BrowserEvidence>() {
+        Some(BrowserEvidence::Verified) => Some(ProviderHealth::Verified {
+            observed_at: cxweb_platform::clock::utc_timestamp(),
+        }),
+        Some(BrowserEvidence::Failure(code))
+            if code.starts_with("E_BROWSER_")
+                || matches!(
+                    *code,
+                    "E_SESSION_SCOPE"
+                        | "E_LOGIN_REQUIRED"
+                        | "E_MODEL_SELECTION"
+                        | "E_MODEL_FIDELITY"
+                        | "E_TEMPORARY_CHAT"
+                ) =>
+        {
+            Some(ProviderHealth::Unavailable { code })
+        }
+        _ => None,
+    };
+    if let Some(changed) = changed {
+        *observation.lock().expect("browser health lock poisoned") = changed;
     }
 }
 
@@ -335,6 +430,14 @@ impl PendingProvider {
     }
 }
 impl WebProvider for PendingProvider {
+    fn health(&self) -> crate::gateway::ProviderHealth {
+        match self.0.get() {
+            None => crate::gateway::ProviderHealth::Recovering,
+            Some(Ok(provider)) => provider.health(),
+            Some(Err(code)) => crate::gateway::ProviderHealth::Unavailable { code },
+        }
+    }
+
     fn respond(&self, request: WebRequest) -> WebFuture {
         match self.ready() {
             Ok(provider) => provider.respond(request),
@@ -484,6 +587,40 @@ mod tests {
     }
 
     struct Ready;
+    #[test]
+    fn only_fresh_browser_evidence_changes_cached_health() {
+        use crate::{gateway::ProviderHealth, web_provider::BrowserEvidence};
+        let observation = std::sync::Mutex::new(ProviderHealth::Verified {
+            observed_at: Some("2026-09-20T00:00:00.000Z".into()),
+        });
+        observe_response(&observation, &web_failure("E_SESSION_SCOPE"));
+        let failed = ProviderHealth::Unavailable {
+            code: "E_SESSION_SCOPE",
+        };
+        assert_eq!(*observation.lock().unwrap(), failed);
+        // Cached delivery and request-validation failures do not reverify the
+        // browser or erase a previously observed account-scope failure.
+        observe_response(&observation, &StatusCode::OK.into_response());
+        observe_response(&observation, &web_failure("E_REQUEST_IDENTITY"));
+        assert_eq!(*observation.lock().unwrap(), failed);
+        let mut verified = StatusCode::OK.into_response();
+        verified.extensions_mut().insert(BrowserEvidence::Verified);
+        observe_response(&observation, &verified);
+        assert!(matches!(
+            &*observation.lock().unwrap(),
+            ProviderHealth::Verified {
+                observed_at: Some(_)
+            }
+        ));
+        observe_response(&observation, &web_failure("E_BROWSER_CLOSED"));
+        assert_eq!(
+            *observation.lock().unwrap(),
+            ProviderHealth::Unavailable {
+                code: "E_BROWSER_CLOSED"
+            }
+        );
+    }
+
     impl WebProvider for Ready {
         fn respond(&self, _: WebRequest) -> WebFuture {
             Box::pin(async { "recovered web".into_response() })
@@ -543,6 +680,8 @@ mod tests {
                 }
             });
             entered.notified().await;
+            assert_eq!(gateway.health().active_turns, 0);
+            assert_eq!(pending.health(), crate::gateway::ProviderHealth::Recovering);
             assert_eq!(body(&gateway, "native").await, "native response");
             assert!(
                 body(&gateway, "webbridge/fixture")

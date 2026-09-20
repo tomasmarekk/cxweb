@@ -8,6 +8,8 @@ mod browser_window;
 #[cfg(windows)]
 pub mod child_job;
 #[cfg(windows)]
+pub mod clock;
+#[cfg(windows)]
 mod config_access;
 #[cfg(windows)]
 pub mod control_pipe;

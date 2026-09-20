@@ -10,6 +10,11 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Read installed runtime health through private IPC. Does not launch or probe anything.
+    RuntimeHealth {
+        #[arg(long)]
+        installation: String,
+    },
     /// Inventory native executable candidates without launching clients or reading credentials.
     NativeDiscover,
     /// Inspect a reviewed native backend's selected home/cwd without generating or changing configuration.
@@ -99,6 +104,29 @@ enum BrowserAction {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match Args::parse().command {
+        Command::RuntimeHealth { installation } => {
+            #[cfg(windows)]
+            {
+                use cxweb_runtime::control_protocol::{Command, Reply, Request, exchange};
+                let response = exchange(
+                    &installation,
+                    &Request {
+                        version: 1,
+                        command: Command::Health {},
+                    },
+                )
+                .await?;
+                let Reply::Health { health, .. } = response else {
+                    return Err("E_RUNTIME_HEALTH_UNAVAILABLE".into());
+                };
+                print_json(&serde_json::to_value(health)?);
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = installation;
+                return Err("runtime health requires Windows".into());
+            }
+        }
         Command::NativeDiscover => {
             #[cfg(windows)]
             print_json(&serde_json::to_value(

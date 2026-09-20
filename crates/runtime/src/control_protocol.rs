@@ -23,6 +23,9 @@ pub type Work = Pin<Box<dyn Future<Output = Result<DisconnectState, &'static str
 
 pub trait Lifecycle: Send + Sync + 'static {
     fn state(&self) -> DisconnectState;
+    fn health(&self) -> cxweb_domain::health::Health {
+        cxweb_domain::health::Health::default()
+    }
     fn disconnect(&self) -> Work;
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,6 +73,9 @@ enum OperationKind {
     NativeText(crate::setup_owner::NativeTarget),
 }
 impl Lifecycle for DisconnectController {
+    fn health(&self) -> cxweb_domain::health::Health {
+        DisconnectController::health(self)
+    }
     fn state(&self) -> DisconnectState {
         *self.subscribe().borrow()
     }
@@ -89,6 +95,7 @@ pub struct Request {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
     Status {},
+    Health {},
     BrowserStatus {},
     Browser {
         instance: String,
@@ -116,6 +123,11 @@ pub enum Command {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Reply {
+    Health {
+        version: u32,
+        instance: String,
+        health: Box<cxweb_domain::health::Health>,
+    },
     BrowserStatus {
         version: u32,
         instance: String,
@@ -275,6 +287,16 @@ impl Service {
         }
         let cancel_native = matches!(&request.command, Command::CancelNative { .. });
         let (instance, operation, start) = match request.command {
+            Command::Health {} => {
+                let Some(backend) = &self.backend else {
+                    return error(ErrorCode::Unsupported);
+                };
+                return Reply::Health {
+                    version: VERSION,
+                    instance: self.instance.clone(),
+                    health: Box::new(backend.health()),
+                };
+            }
             Command::Status {} => {
                 let Some(backend) = &self.backend else {
                     return error(ErrorCode::Unsupported);
@@ -556,6 +578,12 @@ pub async fn exchange(installation: &str, request: &Request) -> io::Result<Reply
         let matches = match (&request.command, &reply) {
             (_, Reply::Error { .. }) => true,
             (Command::Status {}, Reply::Status { version, .. }) => *version == VERSION,
+            (
+                Command::Health {},
+                Reply::Health {
+                    version, health, ..
+                },
+            ) => *version == VERSION && health.schema_version == "webbridge.health.v1",
             (Command::BrowserStatus {}, Reply::BrowserStatus { version, .. }) => {
                 *version == VERSION
             }
@@ -1066,6 +1094,31 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn client_rejects_unknown_health_schema() {
+        let installation = format!("{:032x}", rand::random::<u128>());
+        let mut listener = control_pipe::listen(&installation).unwrap();
+        let server = tokio::spawn(async move {
+            let mut pipe = listener.accept().await.unwrap();
+            control_pipe::read_frame(&mut pipe).await.unwrap();
+            let reply = Reply::Health {
+                version: VERSION,
+                instance: "a".repeat(32),
+                health: Box::new(cxweb_domain::health::Health {
+                    schema_version: "webbridge.health.unknown".into(),
+                    ..Default::default()
+                }),
+            };
+            control_pipe::write_frame(&mut pipe, &serde_json::to_vec(&reply).unwrap())
+                .await
+                .unwrap();
+            let _ = control_pipe::read_frame(&mut pipe).await;
+        });
+        let result = exchange(&installation, &request(Command::Health {})).await;
+        assert_eq!(result.unwrap_err().to_string(), "E_CONTROL_PROTOCOL");
+        server.await.unwrap();
     }
 
     #[tokio::test]

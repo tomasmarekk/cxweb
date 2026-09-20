@@ -35,7 +35,29 @@ pub enum WebTransport {
     WebSocket,
 }
 pub type WebFuture = Pin<Box<dyn Future<Output = Response> + Send>>;
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProviderHealth {
+    Unqualified,
+    Recovering,
+    Verified { observed_at: Option<String> },
+    Unavailable { code: &'static str },
+}
+
+#[cfg(windows)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct GatewayHealth {
+    pub accepting: bool,
+    pub cleanup_failed: bool,
+    pub active_turns: u64,
+    pub provider: ProviderHealth,
+}
+
 pub trait WebProvider: Send + Sync {
+    /// Cached/local observations only: never navigate, generate or probe upstream.
+    fn health(&self) -> ProviderHealth {
+        ProviderHealth::Unqualified
+    }
+
     /// Keep this future alive until generation and cancellation cleanup finish.
     /// Return buffered output; returning an independently generating stream is
     /// not supported by the current coordinator or disconnect drain contract.
@@ -78,9 +100,10 @@ struct WebAdmission {
 struct AdmissionState {
     accepting: bool,
     active: usize,
+    active_turns: u64,
     cleanup_failed: bool,
 }
-struct WebLease(Arc<WebAdmission>);
+struct WebLease(Arc<WebAdmission>, bool);
 impl Drop for WebLease {
     fn drop(&mut self) {
         if let Ok(mut state) = self.0.state.lock() {
@@ -90,6 +113,9 @@ impl Drop for WebLease {
                 self.0.cancel.cancel();
             }
             state.active -= 1;
+            if self.1 {
+                state.active_turns -= 1;
+            }
             if state.active == 0 {
                 self.0.drained.notify_waiters();
             }
@@ -97,13 +123,16 @@ impl Drop for WebLease {
     }
 }
 impl WebAdmission {
-    fn acquire(self: &Arc<Self>) -> Option<WebLease> {
+    fn acquire(self: &Arc<Self>, turn: bool) -> Option<WebLease> {
         let mut state = self.state.lock().ok()?;
         if !state.accepting {
             return None;
         }
         state.active += 1;
-        Some(WebLease(self.clone()))
+        if turn {
+            state.active_turns += 1;
+        }
+        Some(WebLease(self.clone(), turn))
     }
     async fn drain(&self) -> Result<(), &'static str> {
         loop {
@@ -125,6 +154,25 @@ impl WebAdmission {
 }
 
 impl Gateway {
+    #[cfg(windows)]
+    pub(crate) fn health(&self) -> GatewayHealth {
+        let provider = self.web.health();
+        match self.admission.state.lock() {
+            Ok(state) => GatewayHealth {
+                accepting: state.accepting,
+                cleanup_failed: state.cleanup_failed,
+                active_turns: state.active_turns,
+                provider,
+            },
+            Err(_) => GatewayHealth {
+                accepting: false,
+                cleanup_failed: true,
+                active_turns: 0,
+                provider,
+            },
+        }
+    }
+
     /// Recovery owns a drain lease just like a request. Disconnect waits for
     /// its non-generative browser checks and cleanup before restoring config.
     #[cfg(windows)]
@@ -133,7 +181,7 @@ impl Gateway {
         F: FnOnce(CancellationToken) -> Fut,
         Fut: Future<Output = Result<(), &'static str>>,
     {
-        let Some(_lease) = self.admission.acquire() else {
+        let Some(_lease) = self.admission.acquire(false) else {
             return Ok(());
         };
         let result = work(self.admission.cancel.child_token()).await;
@@ -157,7 +205,7 @@ impl Gateway {
         warmup: bool,
         transport: WebTransport,
     ) -> Response {
-        let Some(lease) = self.admission.acquire() else {
+        let Some(lease) = self.admission.acquire(!warmup) else {
             return crate::web_provider::web_failure("E_WEB_DISCONNECTED");
         };
         let cancellation = self.admission.cancel.child_token();
@@ -197,6 +245,7 @@ impl Gateway {
                 state: Mutex::new(AdmissionState {
                     accepting: true,
                     active: 0,
+                    active_turns: 0,
                     cleanup_failed: false,
                 }),
                 cancel: CancellationToken::new(),
@@ -330,7 +379,7 @@ async fn handle(
         _ => return StatusCode::NOT_FOUND.into_response(),
     };
     if matches!(route, NativeRoute::Models)
-        && let Some(_lease) = gateway.admission.acquire()
+        && let Some(_lease) = gateway.admission.acquire(false)
         && let Some(codec) = crate::catalog_proxy::select_codec(uri.query(), &headers)
         && let Some(catalog) = gateway.web.catalog(codec)
     {
@@ -1044,6 +1093,8 @@ mod tests {
             tokio::time::timeout(Duration::from_secs(1), started.notified())
                 .await
                 .unwrap();
+            #[cfg(windows)]
+            assert_eq!(gateway.health().active_turns, 1);
             if client_drop {
                 pending.abort();
                 tokio::time::timeout(Duration::from_secs(1), cancelled.notified())
@@ -1071,11 +1122,15 @@ mod tests {
                     .unwrap()
                     .contains("E_WEB_DISCONNECTED")
             );
+            #[cfg(windows)]
+            assert_eq!(gateway.health().active_turns, 1);
             cleanup.add_permits(1);
             gateway
                 .disconnect_web(Duration::from_secs(1))
                 .await
                 .unwrap();
+            #[cfg(windows)]
+            assert_eq!(gateway.health().active_turns, 0);
             if !client_drop {
                 assert_eq!(pending.await.unwrap().status(), StatusCode::BAD_GATEWAY);
             }

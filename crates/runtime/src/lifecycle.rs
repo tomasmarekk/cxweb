@@ -31,6 +31,7 @@ pub struct DisconnectController {
     state: watch::Sender<DisconnectState>,
     published: Arc<Vec<String>>,
     native: Arc<Vec<String>>,
+    health: Arc<Mutex<crate::health::Tracker>>,
 }
 
 pub(crate) enum ApplySupervision {
@@ -171,7 +172,15 @@ impl DisconnectController {
             state,
             published: Arc::new(published),
             native: Arc::new(native),
+            health: Arc::default(),
         })
+    }
+
+    pub fn health(&self) -> cxweb_domain::health::Health {
+        self.health
+            .lock()
+            .expect("health cache lock poisoned")
+            .snapshot(*self.state.borrow(), self.gateway.health())
     }
 
     pub fn subscribe(&self) -> watch::Receiver<DisconnectState> {

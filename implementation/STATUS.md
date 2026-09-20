@@ -21,6 +21,36 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Passive installed-runtime health (2026-09-20)
+
+- Added the PRD health contract to domain types and private runtime IPC. The
+  `cxweb runtime-health --installation <id>` command reads this snapshot without
+  starting a runtime, opening a browser, navigating or submitting model text.
+  Output excludes the installation/instance IDs, route capability, private URL,
+  account data and filesystem paths. Unknown backend codes are sanitized.
+- The reducer distinguishes recovery, observed browser/auth/model health,
+  unavailable sessions, active turns, cleanup failure and disconnect/config
+  restoration states. Repeated unchanged observations keep their revision and
+  timestamps. Recovery/catalog leases do not count as active model turns.
+- Initial activation and recovered providers retain their actual observation
+  time and owner-channel liveness. Fresh validated responses refresh browser
+  evidence; observed scope/auth/model failures invalidate it. Cached deliveries
+  and request-validation errors cannot erase a known session failure or claim
+  a new browser verification. Evidence travels only in process, not on the wire.
+- Browser evidence alone never marks native subscription forwarding, actual
+  App/CLI picker or configuration health as verified. No Ready state is inferred
+  from an open port. Unknown health schema versions are rejected by the client.
+- Validation: workspace 234 passed / 11 opt-in ignored; desktop UI 40 passed;
+  actual built CLI against a synthetic protected runtime 1 passed. Its output
+  also passed the published JSON Schema with date-time format checking. Clippy,
+  formatting, included-file formatting, diff checks and release builds of CLI,
+  daemon and desktop passed. Evidence:
+  integration-tests/compatibility/runtime-health-windows.json.
+- Remaining: desktop attachment to installed-runtime health and independent
+  native/config/client evidence. No authenticated browser or actual Codex App
+  picker exercise ran in this change; ChatGPT desktop was not launched or used.
+  Production activation and complete qualification remain disabled/incomplete.
+
 ## Installed web-session recovery after runtime restart (2026-09-20)
 
 - Connected the activation owner to durable web recovery metadata in the private

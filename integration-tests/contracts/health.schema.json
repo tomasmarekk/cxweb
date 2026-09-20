@@ -1,0 +1,459 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Sanitized control-plane health v1",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "webbridge.health.v1"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "overall": {
+      "enum": [
+        "disconnected",
+        "preflight",
+        "authenticating",
+        "discovering",
+        "restart_required",
+        "ready",
+        "busy",
+        "auth_required",
+        "rate_limited",
+        "offline",
+        "incompatible",
+        "config_conflict",
+        "unavailable",
+        "disconnecting",
+        "removal_pending_restart",
+        "disconnected_complete"
+      ]
+    },
+    "active_web_turns": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "components": {
+      "type": "object",
+      "properties": {
+        "runtime": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "healthy",
+                "degraded",
+                "unavailable",
+                "unknown",
+                "not_installed",
+                "restart_required",
+                "auth_required",
+                "incompatible",
+                "conflict"
+              ]
+            },
+            "observed_at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
+            "evidence": {
+              "enum": [
+                "none",
+                "local_probe",
+                "passive_browser",
+                "client_handshake",
+                "request_success",
+                "manual_live"
+              ]
+            },
+            "code": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "state",
+            "observed_at",
+            "evidence",
+            "code"
+          ],
+          "additionalProperties": false
+        },
+        "browser": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "healthy",
+                "degraded",
+                "unavailable",
+                "unknown",
+                "not_installed",
+                "restart_required",
+                "auth_required",
+                "incompatible",
+                "conflict"
+              ]
+            },
+            "observed_at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
+            "evidence": {
+              "enum": [
+                "none",
+                "local_probe",
+                "passive_browser",
+                "client_handshake",
+                "request_success",
+                "manual_live"
+              ]
+            },
+            "code": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "state",
+            "observed_at",
+            "evidence",
+            "code"
+          ],
+          "additionalProperties": false
+        },
+        "web_auth": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "healthy",
+                "degraded",
+                "unavailable",
+                "unknown",
+                "not_installed",
+                "restart_required",
+                "auth_required",
+                "incompatible",
+                "conflict"
+              ]
+            },
+            "observed_at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
+            "evidence": {
+              "enum": [
+                "none",
+                "local_probe",
+                "passive_browser",
+                "client_handshake",
+                "request_success",
+                "manual_live"
+              ]
+            },
+            "code": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "state",
+            "observed_at",
+            "evidence",
+            "code"
+          ],
+          "additionalProperties": false
+        },
+        "web_models": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "healthy",
+                "degraded",
+                "unavailable",
+                "unknown",
+                "not_installed",
+                "restart_required",
+                "auth_required",
+                "incompatible",
+                "conflict"
+              ]
+            },
+            "observed_at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
+            "evidence": {
+              "enum": [
+                "none",
+                "local_probe",
+                "passive_browser",
+                "client_handshake",
+                "request_success",
+                "manual_live"
+              ]
+            },
+            "code": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "state",
+            "observed_at",
+            "evidence",
+            "code"
+          ],
+          "additionalProperties": false
+        },
+        "native_upstream": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "healthy",
+                "degraded",
+                "unavailable",
+                "unknown",
+                "not_installed",
+                "restart_required",
+                "auth_required",
+                "incompatible",
+                "conflict"
+              ]
+            },
+            "observed_at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
+            "evidence": {
+              "enum": [
+                "none",
+                "local_probe",
+                "passive_browser",
+                "client_handshake",
+                "request_success",
+                "manual_live"
+              ]
+            },
+            "code": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "state",
+            "observed_at",
+            "evidence",
+            "code"
+          ],
+          "additionalProperties": false
+        },
+        "codex_app": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "healthy",
+                "degraded",
+                "unavailable",
+                "unknown",
+                "not_installed",
+                "restart_required",
+                "auth_required",
+                "incompatible",
+                "conflict"
+              ]
+            },
+            "observed_at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
+            "evidence": {
+              "enum": [
+                "none",
+                "local_probe",
+                "passive_browser",
+                "client_handshake",
+                "request_success",
+                "manual_live"
+              ]
+            },
+            "code": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "state",
+            "observed_at",
+            "evidence",
+            "code"
+          ],
+          "additionalProperties": false
+        },
+        "codex_cli": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "healthy",
+                "degraded",
+                "unavailable",
+                "unknown",
+                "not_installed",
+                "restart_required",
+                "auth_required",
+                "incompatible",
+                "conflict"
+              ]
+            },
+            "observed_at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
+            "evidence": {
+              "enum": [
+                "none",
+                "local_probe",
+                "passive_browser",
+                "client_handshake",
+                "request_success",
+                "manual_live"
+              ]
+            },
+            "code": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "state",
+            "observed_at",
+            "evidence",
+            "code"
+          ],
+          "additionalProperties": false
+        },
+        "config": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "healthy",
+                "degraded",
+                "unavailable",
+                "unknown",
+                "not_installed",
+                "restart_required",
+                "auth_required",
+                "incompatible",
+                "conflict"
+              ]
+            },
+            "observed_at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
+            "evidence": {
+              "enum": [
+                "none",
+                "local_probe",
+                "passive_browser",
+                "client_handshake",
+                "request_success",
+                "manual_live"
+              ]
+            },
+            "code": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "state",
+            "observed_at",
+            "evidence",
+            "code"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "runtime",
+        "browser",
+        "web_auth",
+        "web_models",
+        "native_upstream",
+        "codex_app",
+        "codex_cli",
+        "config"
+      ],
+      "additionalProperties": false
+    },
+    "suggested_action": {
+      "enum": [
+        "connect",
+        "cancel",
+        "open_login",
+        "check",
+        "disconnect",
+        "update",
+        "details",
+        "none"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "revision",
+    "overall",
+    "active_web_turns",
+    "components",
+    "suggested_action"
+  ],
+  "additionalProperties": false
+}

@@ -1,4 +1,5 @@
 //! Transport-independent identities and irreversible browser submission states.
+pub mod health;
 use serde::{Deserialize, Serialize};
 
 pub const OWNED_MODEL_PREFIX: &str = "webbridge/";

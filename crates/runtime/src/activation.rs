@@ -117,7 +117,11 @@ impl PreparedInstallation {
             return Err("E_BROWSER_CLOSED");
         }
         self.finish(
-            Arc::new(provider),
+            Arc::new(crate::web_recovery::ObservedProvider::new(
+                Arc::new(provider),
+                session.driver.clone(),
+                session.verified_at.clone(),
+            )),
             vec![session.route.id.clone()],
             native_models,
             Some(receipt),
