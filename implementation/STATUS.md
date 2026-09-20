@@ -21,6 +21,28 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Required live-gate input (2026-09-20)
+
+- Rechecked the current desktop inventory without launching or operating a
+  desktop client. The only returned OpenAI desktop window is titled ChatGPT,
+  registered to OpenAI.Codex_2p2nqsd0c76g0!App. The user explicitly rejected
+  ChatGPT desktop as the target. Package registration and a successful embedded
+  backend test do not identify a usable, independently qualified Codex task UI.
+  A question requesting the intended Codex App launcher/executable is pending.
+- Rechecked the earlier manual-login probe by live process identity and creation
+  time. It is still running. Its implementation holds the dedicated-profile lock
+  while waiting for the browser process to exit. The previous request to close
+  that managed sign-in browser remains unresolved. No competing profile owner
+  was launched and no process was forcibly terminated.
+- Context checkpoint/continuation code and the actual-backend synthetic test
+  already exist. The dependency-ready acceptance work is now the authenticated
+  browser path and actual App picker/native coexistence. Additional synthetic
+  tests cannot supply that evidence. These live gates require the correct target
+  and release of the existing profile owner before proceeding.
+- This audit changed no application code, native configuration, account state
+  or permissions. No tests or builds were rerun for this documentation update.
+  The last implementation/verification result remains commit 24678cb below.
+
 ## Native failed-test repair exercise (2026-09-20)
 
 - Added the explicit ReadTestRepair diagnostic and Test failure and repair UI
