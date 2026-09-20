@@ -88,7 +88,9 @@ pub(crate) async fn fingerprint(path: &Path) -> Result<String, &'static str> {
     Ok(format!("{:x}", hash.finalize()))
 }
 
-async fn line(reader: &mut (impl AsyncBufRead + Unpin)) -> Result<Vec<u8>, &'static str> {
+pub(crate) async fn line(
+    reader: &mut (impl AsyncBufRead + Unpin),
+) -> Result<Vec<u8>, &'static str> {
     let mut line = Vec::new();
     loop {
         let buffer = reader.fill_buf().await.map_err(|_| "E_PREFLIGHT_RPC_IO")?;

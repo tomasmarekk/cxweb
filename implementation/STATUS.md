@@ -21,6 +21,46 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Runtime-owned native text qualification (2026-09-20)
+
+- Added a Rust native client runner and an in-process qualification entry point
+  for a handed-off GenerationSession. It starts the existing-session diagnostic
+  endpoint, creates a fresh protected native home/workspace, verifies the selected
+  executable against reviewed hashes while holding its original path identity,
+  checks effective local routing and signed-out account status, then asks the
+  actual app-server to list/select the owned model and complete one exact text
+  turn. No Node runtime is required by this path.
+- The accepted operation survives a dropped UI waiter. Explicit cancellation and
+  the generation deadline stop and reap only its own child before draining the
+  diagnostic endpoint. The shared browser owner remains alive. Client RPC input
+  is bounded, duplicate JSON keys are rejected, server actions are refused, and
+  text results must match one completed message from the requested thread/turn.
+  Errors and public reports do not export prompts, headers, account IDs, native
+  error text or capability URLs.
+- Actual backend tests passed for CLI 0.155.1 and App backend 0.155.0-alpha.9.2
+  against a local synthetic server. Both list/select the owned route, return the
+  exact fixture answer, and stop during a deliberately held HTTP response.
+  Request inspection confirms no Authorization, account ID or Cookie header.
+  The test does not launch either desktop renderer or use the user's native home.
+- Observed contract detail: these app-server builds report account:null and send
+  no Authorization header when merely given OPENAI_API_KEY in their environment.
+  The new diagnostic no longer supplies a synthetic key at all. It requires a
+  fresh signed-out home and uses the private local capability endpoint. This is
+  isolated diagnostic evidence, not proof of subscription-auth coexistence.
+- Added Windows cfg guards around the generation-consumer lease in the portable
+  coordinator. No non-Windows compilation was run in this environment.
+- Verification: cargo test --workspace --quiet (205 passed, 9 ignored); the new
+  ignored actual-native-backend test was separately run successfully with each
+  reviewed executable. Workspace Clippy with warnings denied, cargo fmt check,
+  explicit native_context_probe.rs rustfmt and git diff --check passed. Release
+  builds for CLI, daemon and desktop passed.
+  Evidence: integration-tests/compatibility/native-text-runner-windows.json.
+- Remaining: connect the new entry point to the daemon/control progress and
+  selected desktop target, then run it against the authenticated generation
+  session. This turn verifies the native client component using synthetic text;
+  it does not certify live browser output, coding capability, actual App picker
+  or native subscription coexistence. Production integration remains disabled.
+
 ## Reuse the generation session for isolated qualification (2026-09-20)
 
 - The live probe now accepts a handed-off GenerationSession. Its endpoint keeps

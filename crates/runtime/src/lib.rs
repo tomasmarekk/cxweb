@@ -34,6 +34,8 @@ pub mod native;
 pub mod native_discovery;
 #[cfg(windows)]
 pub mod native_preflight;
+#[cfg(windows)]
+pub mod native_probe;
 mod native_ws;
 mod probe_ws;
 #[cfg(windows)]

@@ -87,6 +87,7 @@ pub struct Coordinator {
     scheduler: Scheduler,
     browser: Arc<dyn BrowserDriver>,
     replay: Arc<Mutex<VecDeque<(String, Delivery)>>>,
+    #[cfg(windows)]
     _consumer: Option<crate::generation_handoff::ConsumerLease>,
 }
 impl Coordinator {
@@ -96,11 +97,13 @@ impl Coordinator {
             scheduler: Scheduler::default(),
             browser,
             replay: Arc::default(),
+            #[cfg(windows)]
             _consumer: None,
         }
     }
     /// The detached coordinator retains exclusive session use through cancellation
     /// cleanup, even if its gateway or requesting UI has already disappeared.
+    #[cfg(windows)]
     pub(crate) fn with_consumer(mut self, lease: crate::generation_handoff::ConsumerLease) -> Self {
         self._consumer = Some(lease);
         self
@@ -724,6 +727,7 @@ mod tests {
         assert_eq!(response["output"][0]["name"], "read_file");
         assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
     }
+    #[cfg(windows)]
     #[tokio::test]
     async fn cancelled_request_retains_consumer_until_detached_browser_cleanup_finishes() {
         use crate::generation_handoff::ConsumerLease;

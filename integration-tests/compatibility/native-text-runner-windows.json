@@ -1,0 +1,40 @@
+{
+  "schema": "cxweb.native-text-runner.v1",
+  "date": "2026-09-20",
+  "result": "PASS",
+  "command": "cargo test -p cxweb-runtime actual_native_backend_text_round_trip_uses_isolated_home -- --ignored --nocapture",
+  "selection": "CXWEB_NATIVE_PROBE_BACKEND points to the reviewed executable",
+  "backends": [
+    {
+      "build": "0.155.1",
+      "sha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+      "result": "PASS"
+    },
+    {
+      "build": "0.155.0-alpha.9.2",
+      "sha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+      "result": "PASS"
+    }
+  ],
+  "fixture": "Fresh protected home/workspace and a synthetic local HTTP response server; no account, browser, Node, native tools or desktop renderer",
+  "checks": {
+    "original_executable_identity_held": true,
+    "reviewed_hash_before_start": true,
+    "effective_local_base_and_catalog_verified": true,
+    "account_read_reports_null": true,
+    "owned_model_listed_and_selected": true,
+    "one_exact_completed_text_message": true,
+    "no_native_tool_items": true,
+    "no_authorization_account_id_or_cookie_header": true,
+    "cancellation_after_local_request_arrives": true,
+    "owned_child_stopped_and_reaped": true,
+    "executable_unchanged": true,
+    "fixture_directory_removed_after_child_exit": true
+  },
+  "limits": [
+    "The generation-session orchestration entry point is implemented but not authenticated-live tested.",
+    "No Codex App picker or native subscription coexistence was exercised.",
+    "No coding tool qualification or production configuration activation was performed.",
+    "Desktop and daemon commands do not yet expose the new entry point."
+  ]
+}
