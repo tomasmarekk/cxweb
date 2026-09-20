@@ -52,6 +52,20 @@ fn supervision_error(error: std::io::Error) -> &'static str {
 }
 
 impl DisconnectController {
+    pub(crate) async fn routing_installed(&self) -> bool {
+        if *self.state.borrow() != DisconnectState::Idle {
+            return false;
+        }
+        let journal = self.journal.clone();
+        tokio::task::spawn_blocking(move || {
+            journal.lock().ok().is_some_and(|journal| {
+                journal.phase() == Phase::ConfigApplied
+                    && matches!(journal.recovery(), Ok(Recovery::Candidate))
+            })
+        })
+        .await
+        .unwrap_or(false)
+    }
     pub(crate) fn with_recovery(
         mut self,
         recovery: crate::web_recovery::RecoveryController,
@@ -142,8 +156,8 @@ impl DisconnectController {
         .await
         .map_err(|_| "E_ACTIVATION_WORKER")?
     }
-    /// Internal activation owner only. Native/client qualification must precede
-    /// this call; the private control protocol does not expose configuration apply.
+    /// Internal setup transaction. The public command supplies a selected target,
+    /// not arbitrary config content or an unchecked journal write.
     pub(crate) async fn apply_prepared(
         &self,
         serving: Arc<std::sync::atomic::AtomicBool>,
@@ -176,12 +190,10 @@ impl DisconnectController {
                     #[cfg(test)]
                     ApplySupervision::Fixture => journal.apply(),
                 };
-                result.map_err(|error| {
-                    if error.to_string() == "E_ACTIVATION_TARGET_PERMISSIONS" {
-                        "E_ACTIVATION_TARGET_PERMISSIONS"
-                    } else {
-                        "E_CONFIG_APPLY"
-                    }
+                result.map_err(|error| match error.to_string().as_str() {
+                    "E_ACTIVATION_TARGET_PERMISSIONS" => "E_ACTIVATION_TARGET_PERMISSIONS",
+                    "E_CATALOG_CACHE" => "E_CATALOG_CACHE",
+                    _ => "E_CONFIG_APPLY",
                 })
             })
             .await

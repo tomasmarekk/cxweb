@@ -68,8 +68,8 @@ impl PreparedInstallation {
         self.journal.installation_id()
     }
 
-    /// Supply only client/route pairs with complete coding and picker evidence.
-    /// A browser tool-protocol receipt alone cannot make that qualification decision.
+    /// Bind observed routes to reviewed client codecs. Actual client picker
+    /// verification follows activation; it cannot precede route installation.
     /// This connects the real driver and ledger but still leaves configuration untouched.
     pub async fn bind_generation(
         self,

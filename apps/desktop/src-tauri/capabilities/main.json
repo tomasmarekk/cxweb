@@ -16,6 +16,7 @@
     "allow-native-discover",
     "allow-native-preflight",
     "allow-native-text",
+    "allow-activate-codex",
     "allow-native-cancel",
     "allow-reset-test",
     "allow-installed-list",

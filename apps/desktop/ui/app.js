@@ -46,6 +46,7 @@ const nativeControls = ['native-choice', 'native-client', 'native-home', 'native
 function updateNativeButton() {
   const running = nativeWaiting || Boolean(nativeOperation);
   $('native-text').disabled = pending || running || preflightPending || discoveryPending || !nativeReady;
+  $('activate-codex').disabled = $('native-text').disabled;
   $('native-tools').disabled = $('native-text').disabled;
   $('native-repair').disabled = $('native-text').disabled;
   $('native-denial').disabled = $('native-text').disabled;
@@ -158,6 +159,28 @@ function showError(code) {
 }
 function render(status) {
   renderNative(status);
+  if (status.installation) {
+    nativeReady = false;
+    resetReady = false;
+    $('reset-test').hidden = true;
+    $('reset-test-help').hidden = true;
+    updateNativeButton();
+  }
+  const activation = $('activation-result');
+  activation.hidden = !status.routing_installed && !status.activation_error;
+  const activationErrors = {
+    E_ACTIVATION_CONFIG_CONFLICT: 'The selected Codex configuration has a conflict. Check the selected target to see its details.',
+    E_ACTIVATION_TARGET_CHANGED: 'This runtime already owns another target. Use its original Codex home and route.',
+    E_ACTIVATION_TARGET_PERMISSIONS: 'The selected target has unsupported permissions. The connection was not activated.',
+    E_PREFLIGHT_MODELS: 'The native model catalog could not be verified. The connection was not activated.',
+    E_CATALOG_CACHE: 'The old Codex model cache could not be refreshed safely. The connection was not activated.',
+    E_ACTIVATION_INSTALL: 'The background runtime could not be installed.',
+    E_ACTIVATION_SUPERVISION: 'Background startup could not be registered. Check installed connections before retrying.',
+    E_CONFIG_APPLY: 'The configuration transaction did not finish. Check installed connections for its recovery status.'
+  };
+  activation.textContent = status.activation_error
+    ? (activationErrors[status.activation_error] || `Codex connection could not be activated (${status.activation_error}).`)
+    : status.routing_installed ? 'Connection installed. Restart Codex CLI and Codex App to refresh their model lists. Select the ChatGPT Web model in each client and send a request. Client verification is still pending.' : '';
   phase = status.phase;
   signInRequired = phase === 'authenticating' && status.background_session === true && (status.observation?.login_action === true || status.observation?.verification_required === true);
   $('error').hidden = true;
@@ -242,8 +265,13 @@ function render(status) {
     $('description').textContent = 'The last operation did not return a verified status. Check status before starting another test.';
     $('chatgpt').textContent = 'Unverified'; $('connect').textContent = 'Check status';
   }
+  if (status.routing_installed) {
+    $('heading').textContent = 'Codex connection installed';
+    $('description').textContent = 'Restart Codex CLI and Codex App, then select a ChatGPT Web model. Use Installed connections to check or disconnect the background runtime.';
+    $('codex').textContent = 'Restart clients to verify';
+  }
 }
-const actionButtons = ['connect', 'test-text', 'test-tools', 'background', 'native-text', 'native-tools', 'native-repair', 'native-denial', 'reset-test'];
+const actionButtons = ['connect', 'test-text', 'test-tools', 'background', 'native-text', 'native-tools', 'native-repair', 'native-denial', 'reset-test', 'activate-codex'];
 async function runAction(command, params = {}) {
   if (pending || (nativeOperation && command !== 'status')) return;
   pending = true;
@@ -448,6 +476,16 @@ $('native-text').addEventListener('click', () => runNativeTest());
 $('native-tools').addEventListener('click', () => runNativeTest('read_patch_test'));
 $('native-repair').addEventListener('click', () => runNativeTest('read_test_repair'));
 $('native-denial').addEventListener('click', () => runNativeTest('denied_read'));
+$('activate-codex').addEventListener('click', async () => {
+  if (pending || nativeOperation || preflightPending || discoveryPending || !nativeReady) return;
+  const target = { client: $('native-client').value.trim(), home: $('native-home').value.trim(), cwd: $('native-cwd').value.trim(), route: nativeRoute };
+  if (!target.client || !target.home || !target.cwd) {
+    $('activation-result').hidden = false;
+    $('activation-result').textContent = 'Select the Codex executable, home and working directory before connecting.';
+    return;
+  }
+  await runAction('activate_codex', target);
+});
 $('native-cancel').addEventListener('click', async () => {
   if (!nativeOperation || nativeCancelling || nativeOperation.cancellation_requested) return;
   const receipt = { instance: nativeOperation.instance, operation: nativeOperation.operation };

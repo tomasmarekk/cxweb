@@ -35,6 +35,10 @@ pub struct NativeOperation {
 #[serde(deny_unknown_fields)]
 pub struct ControlStatus {
     #[serde(default)]
+    pub installation: Option<String>,
+    #[serde(default)]
+    pub activation_error: Option<String>,
+    #[serde(default)]
     pub native_operation: Option<NativeOperation>,
     #[serde(default)]
     pub background_session: bool,
@@ -75,6 +79,8 @@ pub struct QualifiedModel {
 impl Default for ControlStatus {
     fn default() -> Self {
         Self {
+            installation: None,
+            activation_error: None,
             background_session: false,
             native_operation: None,
             native_text_report: None,
@@ -120,6 +126,37 @@ fn qualification_failure_state(submission_intent: bool, error: &str) -> TurnStat
 #[cfg(test)]
 mod qualification_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn activation_refuses_an_unverified_browser_without_starting_a_client() {
+        use crate::control_protocol::LoginBackend;
+        let (commands, mut incoming) = mpsc::channel(8);
+        let owner = crate::setup_owner::SetupOwner::new(Control { commands });
+        let worker = tokio::spawn(async move {
+            for _ in 0..2 {
+                let WorkerCommand::Snapshot(reply) = incoming.recv().await.unwrap() else {
+                    panic!("activation must only read the existing browser receipt");
+                };
+                reply.send(Ok(ControlStatus::default())).unwrap();
+            }
+        });
+        let result = owner
+            .activate(crate::setup_owner::ActivationTarget {
+                client: "not-started".into(),
+                home: "not-written".into(),
+                cwd: "not-created".into(),
+                route: "webbridge/fixture".into(),
+            })
+            .await
+            .unwrap();
+        worker.await.unwrap();
+        assert_eq!(
+            result.activation_error.as_deref(),
+            Some("E_NATIVE_TEST_BACKGROUND")
+        );
+        assert!(!result.routing_installed);
+        assert!(result.installation.is_none());
+    }
 
     #[tokio::test]
     async fn native_setup_requires_background_proof_without_starting_a_client_or_changing_the_receipt()

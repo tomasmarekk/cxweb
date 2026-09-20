@@ -19,6 +19,8 @@ const MAX_LINE: usize = 8 * 1024 * 1024;
 
 #[derive(Serialize)]
 pub struct Report {
+    /// Native catalog IDs, read through the client's public model/list API.
+    pub native_models: Vec<String>,
     pub client_build: &'static str,
     pub catalog_codec: &'static str,
     pub executable_sha256: String,
@@ -239,7 +241,20 @@ pub async fn inspect(client: &Path, home: &Path, cwd: &Path) -> Result<Report, &
         }
         assessment.conflicts.sort_unstable();
         assessment.configuration_compatible = assessment.conflicts.is_empty();
-        Ok::<_, &'static str>(assessment)
+        let mut native_models = Vec::new();
+        if assessment.configuration_compatible {
+            let mut cursor = Value::Null;
+            for page in 0..16 {
+                let models = rpc(&mut input, &mut output, 5 + page, "model/list", json!({"limit":100,"cursor":cursor})).await?;
+                native_models.extend(model_ids(&models)?);
+                cursor = models.get("nextCursor").cloned().unwrap_or(Value::Null);
+                if cursor.is_null() { break; }
+                if !cursor.is_string() || page == 15 { return Err("E_PREFLIGHT_MODELS"); }
+            }
+            native_models.sort();
+            native_models.dedup();
+        }
+        Ok::<_, &'static str>((assessment, native_models))
     }).await.map_err(|_| "E_PREFLIGHT_TIMEOUT").and_then(|result| result);
     drop(input);
     drop(output);
@@ -271,13 +286,14 @@ pub async fn inspect(client: &Path, home: &Path, cwd: &Path) -> Result<Report, &
             .zip(&access)
             .all(|(guard, access)| guard.verify_access(access).is_ok())
     });
-    let mut assessment = result?;
+    let (mut assessment, native_models) = result?;
     if !selected_target_access_verified {
         assessment.configuration_compatible = false;
         assessment.conflicts.push("target_permissions");
         assessment.conflicts.sort_unstable();
     }
     Ok(Report {
+        native_models,
         client_build: build,
         catalog_codec: codec.id(),
         executable_sha256: hash,
@@ -297,9 +313,45 @@ pub async fn inspect(client: &Path, home: &Path, cwd: &Path) -> Result<Report, &
     })
 }
 
+fn model_ids(models: &Value) -> Result<Vec<String>, &'static str> {
+    let rows = models["data"]
+        .as_array()
+        .filter(|rows| rows.len() <= 100)
+        .ok_or("E_PREFLIGHT_MODELS")?;
+    rows.iter()
+        .map(|row| {
+            let id = row["id"]
+                .as_str()
+                .filter(|id| {
+                    !id.is_empty()
+                        && id.len() <= 256
+                        && id.bytes().all(|b| b.is_ascii_graphic())
+                        && !id.starts_with(cxweb_domain::OWNED_MODEL_PREFIX)
+                })
+                .ok_or("E_PREFLIGHT_MODELS")?;
+            Ok(id.to_owned())
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn catalog_ids_are_native_bounded_and_never_arbitrary_payloads() {
+        assert_eq!(
+            model_ids(&json!({"data":[{"id":"native/model"}]})).unwrap(),
+            vec!["native/model"]
+        );
+        for value in [
+            json!({"data":[{"id":"webbridge/owned"}]}),
+            json!({"data":[{"id":"bad\nvalue"}]}),
+            json!({"data":[{"model":"missing-id"}]}),
+            json!({"error":"PRIVATE"}),
+        ] {
+            assert_eq!(model_ids(&value).unwrap_err(), "E_PREFLIGHT_MODELS");
+        }
+    }
     #[test]
     fn native_inspection_futures_fit_gui_command_dispatch_stacks() {
         let path = Path::new(r"C:\fixture");

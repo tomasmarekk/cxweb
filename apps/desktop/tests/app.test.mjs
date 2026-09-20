@@ -320,7 +320,7 @@ test('all UI command names are registered and allowed only for the main local wi
   assert.equal(capability.remote, undefined);
   const rust = await readFile(new URL('../src-tauri/src/main.rs', import.meta.url), 'utf8');
   const build = await readFile(new URL('../src-tauri/build.rs', import.meta.url), 'utf8');
-  for (const command of ['connect', 'status', 'qualify', 'qualify_text', 'qualify_tools', 'background', 'native_discover', 'native_preflight', 'native_text', 'native_cancel', 'reset_test', 'installed_list', 'installed_check', 'installed_disconnect', 'installed_retry_web']) {
+  for (const command of ['activate_codex', 'connect', 'status', 'qualify', 'qualify_text', 'qualify_tools', 'background', 'native_discover', 'native_preflight', 'native_text', 'native_cancel', 'reset_test', 'installed_list', 'installed_check', 'installed_disconnect', 'installed_retry_web']) {
     assert.ok(capability.permissions.includes(`allow-${command.replaceAll('_', '-')}`));
     assert.ok(build.includes(`"${command}"`));
     assert.match(rust, new RegExp(`async fn ${command}\\(`));
@@ -425,6 +425,41 @@ test('compatible selected configuration never claims active integration or picke
   ui.nodes.get('native-home').input();
   assert.equal(results.hidden, true);
   assert.equal(results.children.length, 0);
+});
+
+test('activation installs the selected route once and leaves client verification pending', async () => {
+  let finish;
+  const initial = {phase:'generation_ready', background_session:true, tool_qualified_model:'webbridge/fixture'};
+  const ui = panel(async command => command === 'activate_codex'
+    ? new Promise(resolve => { finish = resolve; }) : initial);
+  await flush();
+  for (const [id, value] of [['native-client','C:\\codex.exe'],['native-home','C:\\home'],['native-cwd','C:\\work']]) ui.nodes.get(id).value = value;
+  const pending = ui.nodes.get('activate-codex').click();
+  await ui.nodes.get('activate-codex').click();
+  assert.deepEqual(ui.calls, ['status', 'activate_codex']);
+  assert.equal(ui.requests.at(-1).params.route, 'webbridge/fixture');
+  assert.equal(ui.nodes.get('native-tools').disabled, true);
+  finish({...initial, installation:'a'.repeat(32), routing_installed:true});
+  await pending;
+  assert.equal(ui.nodes.get('heading').textContent, 'Codex connection installed');
+  assert.match(ui.nodes.get('activation-result').textContent, /Client verification is still pending/);
+  assert.equal(ui.nodes.get('activate-codex').disabled, true);
+  assert.equal(ui.nodes.get('native-text').disabled, true);
+  assert.equal(ui.nodes.get('reset-test').hidden, true);
+});
+
+test('activation errors keep the verified browser receipt and never claim installation', async () => {
+  const initial = {phase:'generation_ready', background_session:true, tool_qualified_model:'webbridge/fixture'};
+  const ui = panel(async command => ({...initial, ...(command === 'activate_codex' ? {activation_error:'E_ACTIVATION_CONFIG_CONFLICT'} : {})}));
+  await flush();
+  await ui.nodes.get('activate-codex').click();
+  assert.deepEqual(ui.calls, ['status']);
+  for (const id of ['native-client','native-home','native-cwd']) ui.nodes.get(id).value = 'C:\\fixture';
+  await ui.nodes.get('activate-codex').click();
+  assert.deepEqual(ui.calls, ['status','activate_codex']);
+  assert.match(ui.nodes.get('activation-result').textContent, /configuration has a conflict/);
+  assert.equal(ui.nodes.get('heading').textContent, 'Background session ready');
+  assert.equal(ui.nodes.get('activate-codex').disabled, false);
 });
 
 test('unqualified target permissions are actionable without exporting account IDs or changing ACLs', async () => {

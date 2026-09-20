@@ -1,5 +1,5 @@
 //! Durable preparation and recovery evidence for a selected configuration file.
-//! Not enabled by the desktop controller: client/runtime preflight is still required.
+//! The setup owner supplies a verified target; the journal never discovers one.
 //! The private journal contains the original configuration and live route capability.
 use cxweb_codex_adapter::{config::RoutePatch, strict_json};
 use cxweb_platform::{
@@ -171,7 +171,10 @@ impl ConfigJournal {
         {
             return Err(invalid());
         }
-        if record.phase == Phase::Prepared {
+        // A started activation can retain a host or scheduler before config is
+        // committed. Keep it discoverable for recovery/disconnect; diagnostic
+        // reservations without a bound provider remain invisible.
+        if record.phase == Phase::Prepared && record.web.is_none() && record.scheduler.is_none() {
             return Ok(None);
         }
         Ok(Some((
@@ -492,6 +495,11 @@ impl ConfigJournal {
         self.journal
             .require_ancestor_access()
             .map_err(|_| io::Error::other("E_ACTIVATION_TARGET_PERMISSIONS"))?;
+        // Native clients cache catalog rows independently of the route URL.
+        // Remove only the selected home's regenerable cache, through a checked
+        // handle. Failure leaves config unapplied; no auth/history is touched.
+        invalidate_model_cache(self.record.target.parent().ok_or_else(invalid)?)
+            .map_err(|_| io::Error::other("E_CATALOG_CACHE"))?;
         self.apply()
     }
 
@@ -609,6 +617,14 @@ impl ConfigJournal {
     }
 }
 
+fn invalidate_model_cache(home: &Path) -> io::Result<()> {
+    let cache = Snapshot::capture(&home.join("models_cache.json"))?;
+    if cache.existed() {
+        cache.remove()?;
+    }
+    Ok(())
+}
+
 fn matches_result(current: &Snapshot, text: Option<&str>) -> bool {
     match text {
         Some(text) => current.existed() && current.original() == text.as_bytes(),
@@ -646,6 +662,34 @@ fn restored_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn refresh_removes_only_the_selected_homes_model_cache_and_refuses_links() {
+        let f = Fixture::new();
+        let cache = f.root.join("models_cache.json");
+        let auth = f.root.join("auth.json");
+        let history = f.root.join("history.jsonl");
+        std::fs::write(&auth, "synthetic auth fixture").unwrap();
+        std::fs::write(&history, "synthetic history fixture").unwrap();
+        invalidate_model_cache(&f.root).unwrap();
+        std::fs::write(&cache, "synthetic old catalog").unwrap();
+        invalidate_model_cache(&f.root).unwrap();
+        assert!(!cache.exists());
+        assert_eq!(
+            std::fs::read_to_string(&auth).unwrap(),
+            "synthetic auth fixture"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&history).unwrap(),
+            "synthetic history fixture"
+        );
+        std::fs::hard_link(&auth, &cache).unwrap();
+        assert!(invalidate_model_cache(&f.root).is_err());
+        assert!(cache.exists());
+        assert_eq!(
+            std::fs::read_to_string(&auth).unwrap(),
+            "synthetic auth fixture"
+        );
+    }
     const CAP: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     struct Fixture {
         root: PathBuf,
@@ -853,9 +897,14 @@ mod tests {
                 .is_err()
         );
         journal.record_catalog(vec![], vec![]).unwrap();
+        assert!(ConfigJournal::control_target(&f.state).unwrap().is_none());
         let plan = journal
             .prepare_scheduler(&std::env::current_exe().unwrap())
             .unwrap();
+        assert_eq!(
+            ConfigJournal::control_target(&f.state).unwrap().unwrap().0,
+            journal.installation_id()
+        );
         let value: serde_json::Value =
             serde_json::from_slice(&std::fs::read(f.state.join("integration.json")).unwrap())
                 .unwrap();

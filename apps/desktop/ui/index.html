@@ -68,6 +68,12 @@
       <button id="native-preflight" class="secondary" type="submit">Check selected target</button>
     </form>
     <div id="native-preflight-result" class="selectable" aria-live="polite" hidden></div>
+    <section>
+      <h2>Connect Codex</h2>
+      <p>Publish the verified ChatGPT route to Codex CLI and Codex App using the selected Codex home. This adds a local connection to config.toml and installs a background runtime. Your existing models remain available. Restart both clients after connecting.</p>
+      <button id="activate-codex" class="secondary" disabled>Connect to Codex</button>
+      <p id="activation-result" class="selectable" aria-live="polite" hidden></p>
+    </section>
     <section id="native-text-control">
       <h2>Test the selected Codex client</h2>
       <p>Complete the background tool protocol test first. This sends one text test through the selected Codex backend and ChatGPT, using your ChatGPT allowance. The test uses an isolated Codex workspace. Your Codex configuration remains unchanged.</p>

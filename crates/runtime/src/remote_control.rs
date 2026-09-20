@@ -29,6 +29,7 @@ pub async fn serve_login() -> Result<(), &'static str> {
 }
 
 enum Action {
+    Activate(crate::setup_owner::ActivationTarget),
     Browser(LoginAction),
     NativeText(crate::setup_owner::NativeTarget),
 }
@@ -39,6 +40,12 @@ pub struct RemoteControl {
     serial: Mutex<()>,
 }
 impl RemoteControl {
+    pub async fn activate(
+        &self,
+        target: crate::setup_owner::ActivationTarget,
+    ) -> Result<ControlStatus, &'static str> {
+        self.perform_action(Action::Activate(target)).await
+    }
     pub fn new() -> Result<Self, &'static str> {
         let desktop = std::env::current_exe().map_err(|_| "E_RUNTIME_PATH")?;
         let executable = desktop
@@ -174,6 +181,7 @@ impl RemoteControl {
         let (instance, _) = self.attach().await?;
         let operation = format!("{:032x}", rand::random::<u128>());
         let duration = match &action {
+            Action::Activate(_) => Duration::from_secs(120),
             Action::NativeText(_) => Duration::from_secs(900),
             Action::Browser(LoginAction::QualifyText | LoginAction::QualifyTools) => {
                 Duration::from_secs(335)
@@ -182,6 +190,11 @@ impl RemoteControl {
             _ => Duration::from_secs(35),
         };
         let command = match action {
+            Action::Activate(target) => Command::Activate {
+                instance: instance.clone(),
+                operation: operation.clone(),
+                target,
+            },
             Action::Browser(action) => Command::Browser {
                 instance: instance.clone(),
                 operation: operation.clone(),

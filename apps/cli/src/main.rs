@@ -10,6 +10,17 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Connect a verified background ChatGPT route to the selected Codex home.
+    ConnectCodex {
+        #[arg(long)]
+        client: PathBuf,
+        #[arg(long)]
+        home: PathBuf,
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(long)]
+        route: String,
+    },
     /// Read installed runtime health through private IPC. Does not launch or probe anything.
     RuntimeHealth {
         #[arg(long)]
@@ -104,6 +115,29 @@ enum BrowserAction {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match Args::parse().command {
+        Command::ConnectCodex {
+            client,
+            home,
+            cwd,
+            route,
+        } => {
+            #[cfg(windows)]
+            print_json(&serde_json::to_value(
+                cxweb_runtime::remote_control::RemoteControl::new()?
+                    .activate(cxweb_runtime::setup_owner::ActivationTarget {
+                        client,
+                        home,
+                        cwd,
+                        route,
+                    })
+                    .await?,
+            )?);
+            #[cfg(not(windows))]
+            {
+                let _ = (client, home, cwd, route);
+                return Err("Codex integration requires Windows".into());
+            }
+        }
         Command::RuntimeHealth { installation } => {
             #[cfg(windows)]
             {

@@ -45,9 +45,11 @@ impl ActivationHandle {
     pub fn is_serving(&self) -> bool {
         self.serving.load(Ordering::Acquire)
     }
-    /// Call only after selected-target preflight and complete client/browser
-    /// qualification and recorded supervisor registration. No desktop/remote
-    /// command exposes this internal operation.
+    pub async fn routing_installed(&self) -> bool {
+        self.is_serving() && self.controller.routing_installed().await
+    }
+    /// The setup owner checks the selected target and browser protocol before
+    /// this transaction. Actual client picker verification follows installation.
     pub async fn apply(&self) -> Result<(), &'static str> {
         self.controller
             .apply_prepared(

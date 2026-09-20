@@ -10,6 +10,28 @@ mod desktop {
     }
 
     #[tauri::command]
+    async fn activate_codex(
+        state: tauri::State<'_, AppState>,
+        client: std::path::PathBuf,
+        home: std::path::PathBuf,
+        cwd: std::path::PathBuf,
+        route: String,
+    ) -> Result<ControlStatus, String> {
+        state
+            .control
+            .as_ref()
+            .map_err(|e| e.to_string())?
+            .activate(cxweb_runtime::setup_owner::ActivationTarget {
+                client,
+                home,
+                cwd,
+                route,
+            })
+            .await
+            .map_err(str::to_owned)
+    }
+
+    #[tauri::command]
     async fn installed_list() -> Result<cxweb_runtime::installed_control::Inventory, String> {
         cxweb_runtime::installed_control::list()
             .await
@@ -199,6 +221,7 @@ mod desktop {
                 Ok(())
             })
             .invoke_handler(tauri::generate_handler![
+                activate_codex,
                 connect,
                 status,
                 qualify,

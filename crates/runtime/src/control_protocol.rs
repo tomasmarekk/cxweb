@@ -47,6 +47,9 @@ pub enum LoginAction {
 }
 pub type LoginWork = Pin<Box<dyn Future<Output = Result<ControlStatus, &'static str>> + Send>>;
 pub trait LoginBackend: Send + Sync + 'static {
+    fn activate(&self, _target: crate::setup_owner::ActivationTarget) -> LoginWork {
+        Box::pin(async { Err("E_ACTIVATION_UNSUPPORTED") })
+    }
     fn request(&self, action: LoginAction) -> LoginWork;
     fn native_text(
         &self,
@@ -74,6 +77,7 @@ impl LoginBackend for Control {
 }
 #[derive(Clone, PartialEq, Eq)]
 enum OperationKind {
+    Activate(crate::setup_owner::ActivationTarget),
     RetryWeb,
     Disconnect,
     DisconnectWhenIdle,
@@ -114,6 +118,11 @@ pub struct Request {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    Activate {
+        instance: String,
+        operation: String,
+        target: crate::setup_owner::ActivationTarget,
+    },
     RetryWeb {
         instance: String,
         operation: String,
@@ -384,6 +393,11 @@ impl Service {
                 operation,
                 target,
             } => (instance, operation, Some(OperationKind::NativeText(target))),
+            Command::Activate {
+                instance,
+                operation,
+                target,
+            } => (instance, operation, Some(OperationKind::Activate(target))),
             Command::Disconnect {
                 instance,
                 operation,
@@ -439,7 +453,7 @@ impl Service {
         ) && self.backend.is_none())
             || (matches!(
                 &kind,
-                OperationKind::Login(_) | OperationKind::NativeText(_)
+                OperationKind::Login(_) | OperationKind::NativeText(_) | OperationKind::Activate(_)
             ) && self.login.is_none())
         {
             return error(ErrorCode::Unsupported);
@@ -503,7 +517,9 @@ impl Service {
                             Err(_) => Outcome::Failed {},
                         }
                     }
-                    action @ (OperationKind::Login(_) | OperationKind::NativeText(_)) => {
+                    action @ (OperationKind::Login(_)
+                    | OperationKind::NativeText(_)
+                    | OperationKind::Activate(_)) => {
                         let backend = login.expect("validated login backend");
                         let reset_test =
                             matches!(&action, OperationKind::Login(LoginAction::ResetTest));
@@ -512,6 +528,7 @@ impl Service {
                             OperationKind::NativeText(target) => {
                                 backend.native_text(target, cancellation)
                             }
+                            OperationKind::Activate(target) => backend.activate(target),
                             OperationKind::Disconnect
                             | OperationKind::DisconnectWhenIdle
                             | OperationKind::RetryWeb => {
@@ -653,6 +670,7 @@ pub async fn exchange(installation: &str, request: &Request) -> io::Result<Reply
                 | Command::Operation { operation, .. }
                 | Command::Browser { operation, .. }
                 | Command::NativeText { operation, .. }
+                | Command::Activate { operation, .. }
                 | Command::CancelNative { operation, .. },
                 Reply::Operation {
                     operation: received,
@@ -673,6 +691,80 @@ pub async fn exchange(installation: &str, request: &Request) -> io::Result<Reply
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn activation_receipt_is_bound_to_target_and_survives_a_lost_waiter() {
+        struct Activator(std::sync::atomic::AtomicUsize);
+        impl LoginBackend for Activator {
+            fn request(&self, _: LoginAction) -> LoginWork {
+                panic!("no browser action expected")
+            }
+            fn activate(&self, _: crate::setup_owner::ActivationTarget) -> LoginWork {
+                self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Box::pin(async {
+                    Ok(ControlStatus {
+                        routing_installed: true,
+                        installation: Some("b".repeat(32)),
+                        ..Default::default()
+                    })
+                })
+            }
+        }
+        let backend = Arc::new(Activator(std::sync::atomic::AtomicUsize::new(0)));
+        let service = Service::login(backend.clone());
+        let target = crate::setup_owner::ActivationTarget {
+            client: "C:\\fixture\\codex.exe".into(),
+            home: "C:\\fixture\\home".into(),
+            cwd: "C:\\fixture\\work".into(),
+            route: "webbridge/fixture".into(),
+        };
+        let command = || Command::Activate {
+            instance: service.instance.clone(),
+            operation: "a".repeat(32),
+            target: target.clone(),
+        };
+        let first = dispatch(&service, command());
+        assert_eq!(dispatch(&service, command()), first);
+        let mut changed = target.clone();
+        changed.home = "C:\\other".into();
+        assert_eq!(
+            dispatch(
+                &service,
+                Command::Activate {
+                    instance: service.instance.clone(),
+                    operation: "a".repeat(32),
+                    target: changed
+                }
+            ),
+            error(ErrorCode::OperationConflict)
+        );
+        let terminal = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let reply = dispatch(&service, command());
+                if let Reply::Operation {
+                    outcome: Outcome::LoginCompleted { .. },
+                    ..
+                } = reply
+                {
+                    break reply;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(dispatch(&service, command()), terminal);
+        assert_eq!(backend.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let Reply::BrowserStatus { status, .. } = dispatch(&service, Command::BrowserStatus {})
+        else {
+            panic!("status required")
+        };
+        assert!(status.routing_installed);
+        assert_eq!(
+            status.installation.as_deref(),
+            Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        );
+    }
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::sync::Semaphore;
     struct Backend {

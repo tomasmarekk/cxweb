@@ -9,8 +9,9 @@ background text generation and native read/apply_patch cycles now pass through
 both actual native backends. The actual CLI picker passed isolated synthetic and
 authenticated browser round trips, including its structured auxiliary request.
 Actual App picker, native subscription coexistence, broader coding/model
-qualification and release gates remain incomplete. Production integration remains
-disabled.
+qualification and release gates remain incomplete. The setup activation path is
+now implemented, but this machine's native configuration permission policy still
+prevents activation. No production connection or actual App picker pass is claimed.
 
 Earlier manual check: the user reports `ChatGPT: Session detected` and
 `Codex connection: Awaiting verification` after checking the desktop status.
@@ -21,27 +22,46 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
-## Required live-gate input (2026-09-20)
+## Connect models to both native clients (2026-09-20)
 
-- Rechecked the current desktop inventory without launching or operating a
-  desktop client. The only returned OpenAI desktop window is titled ChatGPT,
-  registered to OpenAI.Codex_2p2nqsd0c76g0!App. The user explicitly rejected
-  ChatGPT desktop as the target. Package registration and a successful embedded
-  backend test do not identify a usable, independently qualified Codex task UI.
-  A question requesting the intended Codex App launcher/executable is pending.
-- Rechecked the earlier manual-login probe by live process identity and creation
-  time. It is still running. Its implementation holds the dedicated-profile lock
-  while waiting for the browser process to exit. The previous request to close
-  that managed sign-in browser remains unresolved. No competing profile owner
-  was launched and no process was forcibly terminated.
-- Context checkpoint/continuation code and the actual-backend synthetic test
-  already exist. The dependency-ready acceptance work is now the authenticated
-  browser path and actual App picker/native coexistence. Additional synthetic
-  tests cannot supply that evidence. These live gates require the correct target
-  and release of the existing profile owner before proceeding.
-- This audit changed no application code, native configuration, account state
-  or permissions. No tests or builds were rerun for this documentation update.
-  The last implementation/verification result remains commit 24678cb below.
+- The user explicitly removed the GUI-title ambiguity as a reason to stop. The
+  acceptance condition is usable cxweb models in both real clients. An App
+  launcher's filename/window title is not an installation prerequisite.
+- Reviewed the competitor's setup, integration journal, catalog handler and
+  troubleshooting locally; no implementation was copied. It starts its proxy,
+  patches the selected Codex openai_base_url, appends owned catalog entries to
+  the native catalog, invalidates the native model cache and asks clients to
+  restart. Actual picker verification necessarily follows installation.
+- Connected the existing cxweb reservation, live background session, both
+  reviewed catalog codecs, Host, scheduler and configuration transaction through
+  SetupOwner. Added Connect to Codex in the desktop and connect-codex in the CLI.
+  Private IPC deduplicates the operation with a target-bound receipt and retains
+  its worker when the requesting window closes. The native model IDs are read
+  through the reviewed client's model/list RPC, not guessed.
+- The installed daemon is an independent copy in the private installation
+  directory. Config is applied only after the host serves and the supervisor is
+  registered. Started but unapplied installations remain discoverable for
+  recovery. The setup UI separates installed routing from client verification;
+  live route status rechecks the journal and respects disconnect/user edits.
+- Activation invalidates only the selected home's regenerable models_cache.json
+  through the existing checked-handle deletion. A linked/replaced/inaccessible
+  cache fails before applying config. Native auth and history remain untouched.
+- Live preflight on the actual CLI and C:\Users\Palo\.codex returned
+  E_PREFLIGHT_CONFIG_PERMISSIONS. Read-only ACL inspection identifies the
+  CodexSandboxUsers read/execute grant on config.toml and its parent; current
+  private-file policy rejects that grant. A separate ancestor policy also
+  rejects a sandbox write grant at the volume root. No ACL was changed and no
+  real Codex configuration was written. Next work must reconcile normal native
+  configuration readability with protection of the gateway capability, rather
+  than simply permitting arbitrary readers or changing the user's permissions.
+- The old manual-login probe process is no longer running. No cxweb runtime or
+  desktop process was present in this audit; no browser or ChatGPT desktop was
+  launched. Authenticated activation and both actual picker round trips remain
+  unverified. The earlier title question and close-probe request are obsolete.
+- Validation: workspace 256 passed / 12 opt-in ignored; desktop UI 58 passed;
+  Clippy with warnings denied, Rust formatting and diff checks passed. Release
+  CLI/daemon/desktop builds passed. No actual client picker pass or
+  authenticated production activation is claimed by these tests.
 
 ## Native failed-test repair exercise (2026-09-20)
 
