@@ -52,6 +52,8 @@
       <h2>Test the selected Codex client</h2>
       <p>Complete the background tool protocol test first. This sends one text test through the selected Codex backend and ChatGPT, using your ChatGPT allowance. The test uses an isolated Codex workspace. Your Codex configuration remains unchanged.</p>
       <button id="native-text" class="secondary" disabled>Test selected client</button>
+      <button id="native-tools" class="secondary" disabled>Test read and patch</button>
+      <p>This separate tool test asks Codex to read one test file and create one file in a disposable workspace. It uses additional ChatGPT responses. Only the exact fixture operations are allowed.</p>
       <button id="native-cancel" class="secondary" hidden disabled>Cancel client test</button>
       <button id="reset-test" class="secondary" hidden disabled>Reset client test session</button>
       <p id="reset-test-help" hidden>Release the idle test session to verify another route or sign in again. Your saved sign-in remains on this device. No test message is sent.</p>

@@ -96,6 +96,8 @@ pub struct CoordinatorProvider {
     catalog: Option<Arc<crate::catalog_snapshot::CatalogSnapshot>>,
     context_budget: Option<cxweb_codex_adapter::context_budget::LocalContextBudget>,
     #[cfg(windows)]
+    native_fixture: Option<Arc<crate::native_fixture::Fixture>>,
+    #[cfg(windows)]
     checkpoints: Option<(
         Arc<crate::checkpoint::Codec>,
         cxweb_codex_adapter::catalog_codec::CatalogCodec,
@@ -135,8 +137,19 @@ impl CoordinatorProvider {
             catalog: None,
             context_budget: None,
             #[cfg(windows)]
+            native_fixture: None,
+            #[cfg(windows)]
             checkpoints: None,
         })
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn with_native_fixture(
+        mut self,
+        fixture: Arc<crate::native_fixture::Fixture>,
+    ) -> Self {
+        self.native_fixture = Some(fixture);
+        self
     }
 
     /// Enable only for an explicitly selected, reviewed v2 client codec.
@@ -288,6 +301,10 @@ impl CoordinatorProvider {
                 checkpoint,
             )
             .await?;
+        #[cfg(windows)]
+        if let Some(fixture) = &self.native_fixture {
+            fixture.check_delivery(&delivery.json)?;
+        }
         let mut response = Response::builder()
             .header(
                 "content-type",
@@ -369,6 +386,7 @@ mod tests {
         answer_bytes: AtomicUsize,
         mismatched_effort: std::sync::atomic::AtomicBool,
         uncertain_submission: std::sync::atomic::AtomicBool,
+        fixture_call: Mutex<Option<Value>>,
     }
     impl BrowserDriver for Browser {
         fn verify_completion(&self, _: String) -> BrowserFuture<()> {
@@ -430,7 +448,10 @@ mod tests {
         fn observe(&self, _: String) -> BrowserFuture<Observation> {
             self.observing.notify_one();
             let nonce = self.nonce.lock().unwrap().clone();
-            let text = if self.compact.load(Ordering::SeqCst) {
+            let text = if let Some(input) = self.fixture_call.lock().unwrap().clone() {
+                let prompt = self.prompt.lock().unwrap();
+                json!({"protocol":"webbridge.tool.v1","turn_nonce":nonce,"kind":"tool_calls","calls":[{"tool_key":prompt["tools"][0]["tool_key"],"input":input}]}).to_string()
+            } else if self.compact.load(Ordering::SeqCst) {
                 let prompt = self.prompt.lock().unwrap();
                 let summary = json!({"goal":"Preserve fixture goal","constraints":["Read only"],"changed_files":[],"decisions":[],"outstanding_work":["Await pending result"],"test_results":["Previous read denied"],"unresolved_tool_ids":prompt["unresolved_tool_ids"]});
                 json!({"protocol":"webbridge.tool.v1","turn_nonce":nonce,"kind":"checkpoint","summary":summary.to_string()}).to_string()
@@ -479,6 +500,7 @@ mod tests {
             answer_bytes: AtomicUsize::new(0),
             mismatched_effort: std::sync::atomic::AtomicBool::new(false),
             uncertain_submission: std::sync::atomic::AtomicBool::new(false),
+            fixture_call: Mutex::new(None),
         });
         let coordinator = Coordinator::new(Ledger::in_memory(), browser.clone());
         let provider = CoordinatorProvider::new(
@@ -765,6 +787,45 @@ mod tests {
             .header("x-client-request-id", "RAW_THREAD")
             .header("x-codex-turn-metadata", json!({"turn_id":turn,"context_window_id":context,"session_id":"RAW_SESSION","thread_id":"RAW_THREAD","extra":"PRIVATE_METADATA"}).to_string())
             .body(Body::from(json!({"model":"webbridge/test","input":"fixture task","stream":stream,"client_metadata":{"trace":"PRIVATE_METADATA"}}).to_string())).unwrap()
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn fixture_policy_blocks_buffered_tool_delivery_and_its_replay() {
+        let (provider, browser) = provider_fixture(false);
+        *browser.fixture_call.lock().unwrap() =
+            Some(json!({"cmd":"Get-Content private.txt","login":false}));
+        let guarded = provider.with_native_fixture(Arc::new(crate::native_fixture::Fixture::new(
+            r"C:\fixture\workspace".into(),
+            "marker".into(),
+        )));
+        let gateway = Gateway::new(
+            12345,
+            NativeTransport::new("http://127.0.0.1:1".into()).unwrap(),
+            Arc::new(guarded),
+        );
+        let base = gateway.base_url();
+        let router = gateway.router();
+        for stream in [false, true] {
+            let (parts, _) = request(&base, "fixture-turn", "context", stream).into_parts();
+            let body = json!({"model":"webbridge/test","input":"fixture task","stream":stream,
+                "tools":[{"type":"function","name":"exec_command","parameters":{"type":"object","properties":{"cmd":{"type":"string"},"login":{"type":"boolean"}},"required":["cmd","login"],"additionalProperties":false}}]});
+            let response = router
+                .clone()
+                .oneshot(Request::from_parts(parts, Body::from(body.to_string())))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            let result: Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(
+                result,
+                json!({"error":{"code":"E_NATIVE_PROBE_ACTION","message":"E_NATIVE_PROBE_ACTION"}})
+            );
+        }
+        // The complete browser response is replayed, but remains blocked before
+        // either delivery format can emit executable tool output.
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

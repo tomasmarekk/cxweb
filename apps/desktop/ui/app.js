@@ -46,6 +46,7 @@ const nativeControls = ['native-choice', 'native-client', 'native-home', 'native
 function updateNativeButton() {
   const running = nativeWaiting || Boolean(nativeOperation);
   $('native-text').disabled = pending || running || preflightPending || discoveryPending || !nativeReady;
+  $('native-tools').disabled = $('native-text').disabled;
   $('reset-test').disabled = pending || running || preflightPending || discoveryPending || !resetReady;
   $('native-cancel').hidden = !running;
   $('native-cancel').disabled = !nativeOperation || nativeCancelling || nativeOperation.cancellation_requested === true;
@@ -78,15 +79,17 @@ function renderNative(status) {
       E_NATIVE_PROBE_TIMEOUT: 'The client test did not finish in time. No automatic retry was made.',
       E_NATIVE_PROBE_TEXT: 'The client did not return the exact expected text. No automatic retry was made.',
       E_NATIVE_PROBE_CONFIG: 'The isolated client configuration or account state could not be verified.',
-      E_NATIVE_PROBE_ACTION: 'The text test requested an unexpected action. The test was stopped.',
+      E_NATIVE_PROBE_ACTION: 'The client requested an operation outside this test. The test was stopped.',
       E_BROWSER_CLOSED: 'The background browser has stopped. Check status to restore the session.',
       E_BROWSER_OTHER_PAGES: 'Other cxweb browser tabs are open. Finish or close them before transferring the session.',
       E_BROWSER_BUSY: 'The browser contains a draft or active response. Finish it before testing the client.',
       E_MODEL_SELECTION: 'The selected ChatGPT route changed. Refresh and qualify it again.'
     };
-    result.textContent = errors[status.native_text_error] || 'The native client text test could not be verified. No automatic retry was made.';
+    result.textContent = errors[status.native_text_error] || 'The native client test could not be verified. No automatic retry was made.';
   } else if (report) {
-    result.textContent = `Text transport verified through Codex ${report.client_build}. Coding support, the actual picker and production activation still need verification.`;
+    result.textContent = report.native_tools_executed === 2
+      ? `Read and patch verified through Codex ${report.client_build}. Full coding qualification, the actual picker and production activation still need verification.`
+      : `Text transport verified through Codex ${report.client_build}. Coding support, the actual picker and production activation still need verification.`;
   } else result.textContent = '';
   updateNativeButton();
   scheduleNativeStatus();
@@ -228,7 +231,7 @@ function render(status) {
     $('chatgpt').textContent = 'Unverified'; $('connect').textContent = 'Check status';
   }
 }
-const actionButtons = ['connect', 'test-text', 'test-tools', 'background', 'native-text', 'reset-test'];
+const actionButtons = ['connect', 'test-text', 'test-tools', 'background', 'native-text', 'native-tools', 'reset-test'];
 async function runAction(command, params = {}) {
   if (pending || (nativeOperation && command !== 'status')) return;
   pending = true;
@@ -289,7 +292,7 @@ $('background').addEventListener('click', async () => {
 });
 $('native-discover').addEventListener('click', async () => {
   if (pending || nativeOperation || discoveryPending || preflightPending) return;
-  discoveryPending = true; $('native-discover').disabled = true;
+  discoveryPending = true; $('native-discover').disabled = true; updateNativeButton();
   const results = $('native-targets');
   results.hidden = false; results.textContent = 'Inspecting local executable files…';
   try {
@@ -327,7 +330,7 @@ $('native-discover').addEventListener('click', async () => {
   } catch {
     results.textContent = 'Codex installations could not be inspected. Your connection has not been changed.';
   } finally {
-    discoveryPending = false; $('native-discover').disabled = false;
+    discoveryPending = false; $('native-discover').disabled = false; updateNativeButton();
   }
 });
 function targetChanged() {
@@ -353,6 +356,7 @@ $('native-preflight-form').addEventListener('submit', async event => {
   }
   const revision = targetRevision;
   preflightPending = true;
+  updateNativeButton();
   const controls = ['native-choice', 'native-client', 'native-home', 'native-cwd', 'native-preflight', 'native-discover'];
   for (const id of controls) $(id).disabled = true;
   results.textContent = 'Inspecting the selected Codex configuration…';
@@ -408,21 +412,26 @@ $('native-preflight-form').addEventListener('submit', async event => {
     results.textContent = messages[error] || 'The selected target could not be verified. No integration was installed or test retried.';
   } finally {
     preflightPending = false;
+    updateNativeButton();
     for (const id of controls) $(id).disabled = false;
   }
 });
-$('native-text').addEventListener('click', async () => {
+async function runNativeTest(tools = false) {
   if (pending || nativeOperation || preflightPending || discoveryPending || !nativeReady) return;
   const target = { client: $('native-client').value.trim(), home: $('native-home').value.trim(), cwd: $('native-cwd').value.trim(), route: nativeRoute };
+  if (tools) target.tools = true;
   if (!target.client || !target.home || !target.cwd) {
     $('native-text-result').hidden = false;
     $('native-text-result').textContent = 'Enter the executable, Codex home and working directory before testing the selected client.';
     return;
   }
-  $('native-text').textContent = 'Waiting for the Codex text test...';
+  const button = $(tools ? 'native-tools' : 'native-text');
+  button.textContent = tools ? 'Waiting for the read and patch test...' : 'Waiting for the Codex text test...';
   try { await runAction('native_text', target); }
-  finally { $('native-text').textContent = 'Test selected client'; }
-});
+  finally { button.textContent = tools ? 'Test read and patch' : 'Test selected client'; }
+}
+$('native-text').addEventListener('click', () => runNativeTest());
+$('native-tools').addEventListener('click', () => runNativeTest(true));
 $('native-cancel').addEventListener('click', async () => {
   if (!nativeOperation || nativeCancelling || nativeOperation.cancellation_requested) return;
   const receipt = { instance: nativeOperation.instance, operation: nativeOperation.operation };

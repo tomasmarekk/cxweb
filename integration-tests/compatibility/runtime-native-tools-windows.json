@@ -1,0 +1,58 @@
+{
+  "schema": "cxweb.runtime-native-tools.v1",
+  "date": "2026-09-20",
+  "result": "PASS automated UI/protocol tests and actual native backends with synthetic responses; authenticated desktop flow NOT RUN",
+  "verification": {
+    "workspace": {
+      "passed": 219,
+      "ignored": 10
+    },
+    "desktop_ui": {
+      "passed": 39
+    },
+    "clippy": "PASS",
+    "format": "PASS",
+    "release_builds": [
+      "CLI",
+      "daemon",
+      "desktop"
+    ]
+  },
+  "native_backends": [
+    {
+      "build": "0.155.1",
+      "sha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+      "text_and_cancellation": "PASS",
+      "native_read_and_patch": "PASS"
+    },
+    {
+      "build": "0.155.0-alpha.9.2",
+      "sha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+      "text_and_cancellation": "PASS",
+      "native_read_and_patch": "PASS"
+    }
+  ],
+  "checks": {
+    "selected_target_receipt_binds_tool_test_mode": true,
+    "fresh_private_native_home_and_workspace": true,
+    "native_account_signed_out": true,
+    "no_native_auth_headers_on_synthetic_endpoint": true,
+    "fixture_marker_absent_from_task_prompt": true,
+    "native_read_result_returns_marker": true,
+    "native_patch_writes_exact_marker_file": true,
+    "exact_attributed_final_answer": true,
+    "pre_delivery_policy_blocks_other_operations": true,
+    "policy_applies_to_json_sse_and_ledger_replay": true,
+    "individual_native_approvals_are_fixture_bound": true,
+    "no_tools_executed_by_bridge": true,
+    "native_descendants_terminated_and_drained": true,
+    "user_native_configuration_not_modified": true
+  },
+  "limits": [
+    "One deterministic read/patch exercise is not the required full coding corpus or route reliability sample.",
+    "Actual native tests used local synthetic responses; the new live authenticated browser integration has not run.",
+    "The old manual-login process still owns the saved browser profile.",
+    "Actual Codex App renderer/picker and native subscription coexistence remain unverified.",
+    "The diagnostic does not grant coding certification or enable production activation."
+  ]
+}

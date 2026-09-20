@@ -33,6 +33,8 @@ pub mod native;
 #[cfg(windows)]
 pub mod native_discovery;
 #[cfg(windows)]
+mod native_fixture;
+#[cfg(windows)]
 pub mod native_preflight;
 #[cfg(windows)]
 pub mod native_probe;

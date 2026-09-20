@@ -6,6 +6,8 @@ pub mod browser_process;
 #[cfg(windows)]
 mod browser_window;
 #[cfg(windows)]
+pub mod child_job;
+#[cfg(windows)]
 mod config_access;
 #[cfg(windows)]
 pub mod control_pipe;

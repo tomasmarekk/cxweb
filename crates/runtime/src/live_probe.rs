@@ -259,6 +259,7 @@ pub async fn serve(
             label,
             effort,
             consumer: None,
+            fixture: None,
         },
         websocket,
         codec,
@@ -298,11 +299,47 @@ pub async fn serve_generation(
             label: session.route.label.clone(),
             effort,
             consumer: Some(consumer),
+            fixture: None,
         },
         websocket,
         codec,
         coding,
         compaction,
+        stop,
+    )
+    .await?;
+    report["browser_closed"] = json!(false);
+    report["browser_reused"] = json!(true);
+    Ok(report)
+}
+
+/// Fixed read/patch exercise. The complete native response is checked before
+/// delivery; the policy is never used for production requests.
+pub(crate) async fn serve_generation_fixture(
+    output: &Path,
+    session: &crate::control::GenerationSession,
+    codec: cxweb_codex_adapter::catalog_codec::CatalogCodec,
+    fixture: Arc<crate::native_fixture::Fixture>,
+    stop: impl Future<Output = ()> + Send + 'static,
+) -> Result<Value, &'static str> {
+    validate_output(output)?;
+    let consumer = session.claim()?;
+    let effort = session.route.effort.clone().ok_or("E_MODEL_UNAVAILABLE")?;
+    let mut report = run_probe(
+        output,
+        ProbeSession {
+            driver: &session.driver,
+            scope: session.scope(),
+            route: session.route.id.clone(),
+            label: session.route.label.clone(),
+            effort,
+            consumer: Some(consumer),
+            fixture: Some(fixture),
+        },
+        false,
+        codec,
+        true,
+        false,
         stop,
     )
     .await?;
@@ -327,6 +364,7 @@ struct ProbeSession<'a> {
     label: String,
     effort: String,
     consumer: Option<crate::generation_handoff::ConsumerLease>,
+    fixture: Option<Arc<crate::native_fixture::Fixture>>,
 }
 
 async fn run_probe(
@@ -346,6 +384,7 @@ async fn run_probe(
         label,
         effort,
         consumer,
+        fixture,
     } = session;
     let installation = scope.installation.clone();
     let ledger = Ledger::open(&directory.join("turns.sqlite")).await?;
@@ -363,6 +402,9 @@ async fn run_probe(
         None
     };
     let mut provider = CoordinatorProvider::new(coordinator, scope, vec![route.clone()])?;
+    if let Some(fixture) = fixture {
+        provider = provider.with_native_fixture(fixture);
+    }
     let budget = cxweb_codex_adapter::context_budget::LocalContextBudget::DIAGNOSTIC;
     if let Some(key) = key {
         provider = provider

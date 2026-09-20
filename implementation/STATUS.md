@@ -21,6 +21,47 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Runtime-owned native read and patch exercise (2026-09-20)
+
+- Added Test read and patch to the desktop's selected-client diagnostics. It uses
+  the existing persistent setup owner, operation receipt, cancellation and reset
+  paths. The receipt binds the tool-test option as well as every selected path
+  and route; omitted options remain text-only. Results explicitly distinguish
+  this single exercise from the full coding corpus, actual picker and activation.
+- The native runner now seeds one random input line in a fresh private workspace,
+  asks the reviewed backend to read it once with exec_command and add one file
+  with the literal apply_patch tool, and verifies the attributed completed native
+  items, exit status, exact final answer and both file contents. The random line
+  is not supplied in the task prompt. The bridge writes only the input fixture;
+  Codex executes the read and writes the output. No runtime Node dependency.
+- The isolated test provider validates the complete buffered native response
+  before returning any JSON/SSE bytes. It permits exactly the fixed read with
+  login=false, the exact single-file patch, and the expected final answer, in
+  that order. Changed commands/paths/arguments/namespaces, extra calls, elevated
+  permissions and out-of-order output fail. Replayed ledger deliveries are
+  checked again and do not advance the exercise twice. This fixture restriction
+  is absent from production providers and ordinary text diagnostics.
+- The isolated app-server runs with explicit untrusted/read-only settings and
+  accepts only the fixture's individual native approval requests, bound to its
+  thread/turn and patch item. Native credentials remain absent. Before protocol
+  initialization, the reviewed backend is attached to a Windows kill-on-close
+  job. Completion/cancellation terminates and drains its process tree, then
+  reaps the direct child. This is attachment before tool execution, not a claim
+  that arbitrary executables are suspended before their startup code.
+- Verification: cargo test --workspace --locked --quiet passed (219 tests,
+  10 ignored); node --test apps/desktop/tests/app.test.mjs passed (39 tests).
+  Workspace Clippy with warnings denied, formatting, diff checks and release
+  CLI/daemon/desktop builds passed. Both opt-in native tests passed separately
+  on CLI 0.155.1 and App backend 0.155.0-alpha.9.2: text/cancellation and the
+  read/patch exercise, using local synthetic responses. The process-tree test
+  verified that attached descendants are terminated and drained.
+- Limits: this is one fixed exercise, not G2 certification. New authenticated
+  desktop-to-browser-to-native tool execution has not run because the manual
+  login process still owns the saved profile. No existing blocked browser
+  surface or ChatGPT desktop was accessed. Actual App picker, native coexistence,
+  full coding/model qualification and production activation remain incomplete.
+- Evidence: integration-tests/compatibility/runtime-native-tools-windows.json.
+
 ## Idle native test recovery (2026-09-20)
 
 - Added an explicit Reset client test session action through the scoped desktop

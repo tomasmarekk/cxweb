@@ -472,6 +472,7 @@ mod tests {
                     home: r"C:\fixture\home".into(),
                     cwd: r"C:\fixture\workspace".into(),
                     route: "webbridge/fixture".into(),
+                    tools: false,
                 })
                 .await
         });
@@ -554,6 +555,7 @@ mod tests {
             home: r"C:\fixture\home".into(),
             cwd: r"C:\fixture\workspace".into(),
             route: "webbridge/fixture".into(),
+            tools: false,
         };
         let waiting = tokio::spawn({
             let remote = remote.clone();

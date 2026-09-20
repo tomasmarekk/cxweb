@@ -658,6 +658,7 @@ mod tests {
             home: r"C:\fixture\home".into(),
             cwd: r"C:\fixture\workspace".into(),
             route: "webbridge/fixture".into(),
+            tools: false,
         };
         let command = |target| Command::NativeText {
             instance: service.instance.clone(),
@@ -671,13 +672,14 @@ mod tests {
                 ..
             }
         ));
-        for field in 0..4 {
+        for field in 0..5 {
             let mut changed = target.clone();
             match field {
                 0 => changed.client.push("other"),
                 1 => changed.home.push("other"),
                 2 => changed.cwd.push("other"),
-                _ => changed.route.push_str("other"),
+                3 => changed.route.push_str("other"),
+                _ => changed.tools = true,
             }
             assert_eq!(
                 dispatch(&service, command(changed)),

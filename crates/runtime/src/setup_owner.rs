@@ -17,6 +17,8 @@ pub struct NativeTarget {
     pub home: PathBuf,
     pub cwd: PathBuf,
     pub route: String,
+    #[serde(default)]
+    pub tools: bool,
 }
 
 struct PreparedTarget {
@@ -159,7 +161,11 @@ async fn qualify(
         .await?;
     // Retain the browser receipt before any model request, including failures.
     prepared.session = Some(session.clone());
-    let result = native_probe::qualify_text(&target.client, session, false, cancellation).await;
+    let result = if target.tools {
+        native_probe::qualify_tools(&target.client, session, cancellation).await
+    } else {
+        native_probe::qualify_text(&target.client, session, false, cancellation).await
+    };
     home_guard
         .verify_unchanged()
         .map_err(|_| "E_PREFLIGHT_TARGET_IDENTITY")?;

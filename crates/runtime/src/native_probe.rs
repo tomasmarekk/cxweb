@@ -1,4 +1,4 @@
-//! Isolated native text qualification. No user home, native login or tool approvals.
+//! Isolated native qualification. No user home or native login; fixture tools only.
 use crate::{control::GenerationSession, native_preflight};
 use cxweb_codex_adapter::{catalog_codec::CatalogCodec, strict_json};
 use cxweb_platform::{state::protected_directory, target_path::TargetPathGuard};
@@ -35,15 +35,33 @@ pub async fn qualify_text(
     let executable = executable.to_owned();
     // Accepted qualification owns its child and cleanup independently of a UI
     // waiter. Explicit cancellation still stops the child and drains generation.
-    tokio::spawn(async move { qualify_owned(&executable, session, websocket, cancellation).await })
-        .await
-        .map_err(|_| "E_NATIVE_PROBE_WORKER")?
+    tokio::spawn(async move {
+        qualify_owned(&executable, session, websocket, false, cancellation).await
+    })
+    .await
+    .map_err(|_| "E_NATIVE_PROBE_WORKER")?
+}
+
+/// One fixed read/patch exercise in a disposable workspace. This does not
+/// certify the complete coding corpus or publish a production coding route.
+pub async fn qualify_tools(
+    executable: &Path,
+    session: Arc<GenerationSession>,
+    cancellation: CancellationToken,
+) -> Result<Report, &'static str> {
+    let executable = executable.to_owned();
+    tokio::spawn(
+        async move { qualify_owned(&executable, session, false, true, cancellation).await },
+    )
+    .await
+    .map_err(|_| "E_NATIVE_PROBE_WORKER")?
 }
 
 async fn qualify_owned(
     executable: &Path,
     session: Arc<GenerationSession>,
     websocket: bool,
+    coding: bool,
     cancellation: CancellationToken,
 ) -> Result<Report, &'static str> {
     if cancellation.is_cancelled() {
@@ -62,15 +80,36 @@ async fn qualify_owned(
     let descriptor = directory.join("runtime/connection.json");
     let stop = CancellationToken::new();
     let _stop_on_drop = stop.clone().drop_guard();
-    let probe = crate::live_probe::serve_generation(
-        &descriptor,
-        &session,
-        websocket,
-        codec,
-        false,
-        false,
-        stop.clone().cancelled_owned(),
-    );
+    let expected = format!("cxweb native fixture {:032x}", rand::random::<u128>());
+    let fixture = coding.then(|| {
+        Arc::new(crate::native_fixture::Fixture::new(
+            directory.join("workspace"),
+            expected.clone(),
+        ))
+    });
+    let probe = async {
+        if let Some(fixture) = &fixture {
+            crate::live_probe::serve_generation_fixture(
+                &descriptor,
+                &session,
+                codec,
+                fixture.clone(),
+                stop.clone().cancelled_owned(),
+            )
+            .await
+        } else {
+            crate::live_probe::serve_generation(
+                &descriptor,
+                &session,
+                websocket,
+                codec,
+                false,
+                false,
+                stop.clone().cancelled_owned(),
+            )
+            .await
+        }
+    };
     let client = async {
         let result = async {
             let connection = tokio::select! {
@@ -86,8 +125,7 @@ async fn qualify_owned(
                 }) => result.map_err(|_| "E_NATIVE_PROBE_ENDPOINT")??,
             };
             let endpoint = Endpoint::parse(connection, &session.route.id, codec)?;
-            let expected = format!("cxweb native text {:032x}", rand::random::<u128>());
-            run_text(executable, &target, &directory, &endpoint, &expected, &cancellation).await
+            run_client(executable, &target, &directory, &endpoint, &expected, &cancellation, fixture.clone()).await
         }.await;
         stop.cancel();
         result
@@ -109,7 +147,7 @@ async fn qualify_owned(
         catalog_codec: codec.id().into(),
         executable_sha256: hash,
         exact_text_received: true,
-        native_tools_executed: 0,
+        native_tools_executed: if coding { 2 } else { 0 },
         browser_reused: true,
         routing_installed: false,
         actual_picker_verified: false,
@@ -160,6 +198,11 @@ struct Client {
     count: usize,
     bytes: usize,
     observations: Vec<Value>,
+    fixture: Option<Arc<crate::native_fixture::Fixture>>,
+    thread: Option<String>,
+    turn: Option<String>,
+    read_approved: bool,
+    patch_approved: bool,
 }
 impl Client {
     async fn send(&mut self, value: Value) -> Result<(), &'static str> {
@@ -182,9 +225,58 @@ impl Client {
         strict_json::parse(&bytes, 8 * 1024 * 1024).map_err(|_| "E_NATIVE_PROBE_RPC")
     }
     async fn observe(&mut self, message: Value) -> Result<(), &'static str> {
+        if message["method"] == "turn/started" {
+            if message["params"]["threadId"].as_str() != self.thread.as_deref() {
+                return Err("E_NATIVE_PROBE_ACTION");
+            }
+            let turn = message["params"]["turn"]["id"]
+                .as_str()
+                .ok_or("E_NATIVE_PROBE_RPC")?;
+            if self.turn.as_deref().is_some_and(|old| old != turn) {
+                return Err("E_NATIVE_PROBE_ACTION");
+            }
+            self.turn = Some(turn.into());
+        }
         if let Some(id) = message.get("id") {
-            self.send(json!({"id":id,"error":{"code":-32601,"message":"Text qualification does not authorize actions"}})).await?;
-            return Err("E_NATIVE_PROBE_ACTION");
+            let params = &message["params"];
+            let scope = self.thread.is_some()
+                && self.turn.is_some()
+                && params["threadId"].as_str() == self.thread.as_deref()
+                && params["turnId"].as_str() == self.turn.as_deref();
+            let mut accepted = false;
+            if scope && let Some(fixture) = &self.fixture {
+                match message["method"].as_str() {
+                    Some("item/commandExecution/requestApproval") if !self.read_approved => {
+                        accepted = fixture.approve_read(params);
+                        self.read_approved |= accepted;
+                    }
+                    Some("item/fileChange/requestApproval") if !self.patch_approved => {
+                        if let Some(started) = self.observations.iter().rev().find(|event| {
+                            event["method"] == "item/started"
+                                && event["params"]["item"]["id"] == params["itemId"]
+                        }) {
+                            accepted = fixture.approve_patch(params, started);
+                            self.patch_approved |= accepted;
+                        }
+                    }
+                    _ => (),
+                }
+            }
+            let approval = matches!(
+                message["method"].as_str(),
+                Some("item/commandExecution/requestApproval" | "item/fileChange/requestApproval")
+            );
+            let reply = if approval {
+                json!({"id":id,"result":{"decision":if accepted {"accept"} else {"decline"}}})
+            } else {
+                json!({"id":id,"error":{"code":-32601,"message":"Diagnostic does not authorize this action"}})
+            };
+            self.send(reply).await?;
+            return if accepted {
+                Ok(())
+            } else {
+                Err("E_NATIVE_PROBE_ACTION")
+            };
         }
         if matches!(
             message["method"].as_str(),
@@ -192,13 +284,19 @@ impl Client {
         ) && !matches!(
             message["params"]["item"]["type"].as_str(),
             Some("agentMessage" | "userMessage" | "reasoning")
-        ) {
+        ) && !(self.fixture.is_some()
+            && matches!(
+                message["params"]["item"]["type"].as_str(),
+                Some("commandExecution" | "fileChange")
+            ))
+        {
             return Err("E_NATIVE_PROBE_ACTION");
         }
         if matches!(
             message["method"].as_str(),
             Some("item/completed" | "turn/completed")
-        ) {
+        ) || (self.fixture.is_some() && message["method"] == "item/started")
+        {
             if self.observations.len() >= 128 {
                 return Err("E_NATIVE_PROBE_LIMIT");
             }
@@ -266,17 +364,32 @@ impl Client {
             .rpc(
                 4,
                 "thread/start",
-                json!({"cwd":cwd,"model":endpoint.model,"ephemeral":true}),
+                json!({"cwd":cwd,"model":endpoint.model,"ephemeral":true,"approvalPolicy":"untrusted","sandbox":"read-only"}),
             )
             .await?;
         let thread = thread["thread"]["id"]
             .as_str()
             .ok_or("E_NATIVE_PROBE_RPC")?
             .to_owned();
-        let turn = self.rpc(5, "turn/start", json!({"threadId":thread,"input":[{"type":"text","text":format!("Use no tools. Return a final answer with exactly this text: {expected}"),"text_elements":[]}]})).await?;
+        self.thread = Some(thread.clone());
+        let prompt = self
+            .fixture
+            .as_ref()
+            .map(|fixture| fixture.prompt())
+            .unwrap_or_else(|| {
+                format!("Use no tools. Return a final answer with exactly this text: {expected}")
+            });
+        let turn = self.rpc(5, "turn/start", json!({"threadId":thread,"input":[{"type":"text","text":prompt,"text_elements":[]}]})).await?;
         let turn = turn["turn"]["id"].as_str().ok_or("E_NATIVE_PROBE_RPC")?;
+        if self.turn.as_deref().is_some_and(|old| old != turn) {
+            return Err("E_NATIVE_PROBE_ACTION");
+        }
+        self.turn = Some(turn.into());
         loop {
             if text_complete(&self.observations, &thread, turn, expected)? {
+                if let Some(fixture) = &self.fixture {
+                    verify_tools(fixture, &self.observations, &thread, turn)?;
+                }
                 return Ok(());
             }
             let message = self.next().await?;
@@ -317,13 +430,14 @@ fn text_complete(
     Ok(true)
 }
 
-async fn run_text(
+async fn run_client(
     executable: &Path,
     target: &TargetPathGuard,
     directory: &Path,
     endpoint: &Endpoint,
     expected: &str,
     cancellation: &CancellationToken,
+    fixture: Option<Arc<crate::native_fixture::Fixture>>,
 ) -> Result<(), &'static str> {
     let home = directory.join("home");
     let cwd = directory.join("workspace");
@@ -332,6 +446,13 @@ async fn run_text(
     }
     protected_directory(&home).map_err(|_| "E_NATIVE_PROBE_DIRECTORY")?;
     protected_directory(&cwd).map_err(|_| "E_NATIVE_PROBE_DIRECTORY")?;
+    if let Some(fixture) = &fixture {
+        if fixture.cwd != cwd || fixture.marker != expected {
+            return Err("E_NATIVE_PROBE_DIRECTORY");
+        }
+        std::fs::write(cwd.join("probe-input.txt"), format!("{}\n", fixture.marker))
+            .map_err(|_| "E_NATIVE_PROBE_DIRECTORY")?;
+    }
     let catalog = home.join("catalog.json");
     std::fs::write(&catalog, endpoint.catalog.to_string()).map_err(|_| "E_NATIVE_PROBE_CONFIG")?;
     // JSON quoted strings are valid TOML basic strings for these generated paths.
@@ -364,6 +485,8 @@ async fn run_text(
         .verify_unchanged()
         .map_err(|_| "E_NATIVE_PROBE_TARGET_CHANGED")?;
     let mut child = command.spawn().map_err(|_| "E_NATIVE_PROBE_START")?;
+    let job =
+        cxweb_platform::child_job::ChildJob::attach(&child).map_err(|_| "E_NATIVE_PROBE_START")?;
     let input = child.stdin.take().ok_or("E_NATIVE_PROBE_START")?;
     let output = BufReader::new(child.stdout.take().ok_or("E_NATIVE_PROBE_START")?);
     let mut client = Client {
@@ -373,26 +496,99 @@ async fn run_text(
         count: 0,
         bytes: 0,
         observations: Vec::new(),
+        fixture,
+        thread: None,
+        turn: None,
+        read_approved: false,
+        patch_approved: false,
     };
     let result = tokio::select! {
         () = cancellation.cancelled() => Err("E_NATIVE_PROBE_CANCELLED"),
         result = tokio::time::timeout(Duration::from_secs(600), client.verify(&cwd, endpoint, &catalog, expected)) => result.map_err(|_| "E_NATIVE_PROBE_TIMEOUT").and_then(|result| result),
     };
-    if client
-        .child
-        .try_wait()
+    job.terminate_and_wait()
+        .await
+        .map_err(|_| "E_NATIVE_PROBE_CLEANUP")?;
+    tokio::time::timeout(Duration::from_secs(5), client.child.wait())
+        .await
         .map_err(|_| "E_NATIVE_PROBE_CLEANUP")?
-        .is_none()
-    {
-        tokio::time::timeout(Duration::from_secs(5), client.child.kill())
-            .await
-            .map_err(|_| "E_NATIVE_PROBE_CLEANUP")?
-            .map_err(|_| "E_NATIVE_PROBE_CLEANUP")?;
-    }
+        .map_err(|_| "E_NATIVE_PROBE_CLEANUP")?;
     target
         .verify_unchanged()
         .map_err(|_| "E_NATIVE_PROBE_TARGET_CHANGED")?;
     result
+}
+
+#[cfg(test)]
+async fn run_text(
+    executable: &Path,
+    target: &TargetPathGuard,
+    directory: &Path,
+    endpoint: &Endpoint,
+    expected: &str,
+    cancellation: &CancellationToken,
+) -> Result<(), &'static str> {
+    run_client(
+        executable,
+        target,
+        directory,
+        endpoint,
+        expected,
+        cancellation,
+        None,
+    )
+    .await
+}
+
+fn verify_tools(
+    fixture: &crate::native_fixture::Fixture,
+    events: &[Value],
+    thread: &str,
+    turn: &str,
+) -> Result<(), &'static str> {
+    let items: Vec<_> = events
+        .iter()
+        .filter(|event| {
+            event["method"] == "item/completed"
+                && event["params"]["threadId"] == thread
+                && event["params"]["turnId"] == turn
+        })
+        .map(|event| &event["params"]["item"])
+        .collect();
+    let commands: Vec<_> = items
+        .iter()
+        .filter(|item| item["type"] == "commandExecution")
+        .collect();
+    let patches: Vec<_> = items
+        .iter()
+        .filter(|item| item["type"] == "fileChange")
+        .collect();
+    if commands.len() != 1 || patches.len() != 1 {
+        return Err("E_NATIVE_PROBE_ACTION");
+    }
+    let command = commands[0];
+    let patch = patches[0];
+    if command["status"] != "completed"
+        || command["exitCode"] != 0
+        || !fixture.approve_read(command)
+        || !command["aggregatedOutput"]
+            .as_str()
+            .is_some_and(|s| s.contains(&fixture.marker))
+        || patch["status"] != "completed"
+        || !fixture.patch_changes(patch)
+    {
+        return Err("E_NATIVE_PROBE_ACTION");
+    }
+    for name in ["probe-input.txt", "probe-output.txt"] {
+        let path = fixture.cwd.join(name);
+        let _guard = TargetPathGuard::capture(&path, false).map_err(|_| "E_NATIVE_PROBE_ACTION")?;
+        if std::fs::read(&path).map_err(|_| "E_NATIVE_PROBE_ACTION")?
+            != format!("{}\n", fixture.marker).as_bytes()
+        {
+            return Err("E_NATIVE_PROBE_ACTION");
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -469,6 +665,104 @@ mod tests {
             text_complete(&[failed], "thread", "turn", "expected"),
             Err("E_NATIVE_PROBE_GENERATION")
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires CXWEB_NATIVE_PROBE_BACKEND; executes only the exact local read/patch fixture through a reviewed native backend"]
+    async fn actual_native_backend_executes_guarded_read_and_patch_fixture() {
+        use axum::{
+            body::{Body, to_bytes},
+            http::{Method, StatusCode},
+            response::Response,
+        };
+        use cxweb_codex_adapter::{
+            envelope::{ToolKind, ValidatedCall, ValidatedOutput},
+            wire,
+        };
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let executable = std::path::PathBuf::from(
+            std::env::var_os("CXWEB_NATIVE_PROBE_BACKEND").expect("select a reviewed backend"),
+        );
+        let target = TargetPathGuard::capture(&executable, false).unwrap();
+        let hash = native_preflight::fingerprint(&executable).await.unwrap();
+        let (_, codec) = native_preflight::reviewed(&hash).unwrap();
+        let directory = std::env::temp_dir().join(format!(
+            "cxweb-native-tools-{:032x}",
+            rand::random::<u128>()
+        ));
+        protected_directory(&directory).unwrap();
+        let fixture = Arc::new(crate::native_fixture::Fixture::new(
+            directory.join("workspace"),
+            format!("cxweb fixture {:032x}", rand::random::<u128>()),
+        ));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let state = crate::ProbeState::new(listener.local_addr().unwrap().port());
+        let endpoint = Endpoint::parse(json!({"base_url":state.base_url(),"model":"webbridge/diagnostic","catalog_codec":codec.id(),"catalog":{"models":[codec.encode(&CatalogRoute {id:"webbridge/diagnostic".into(),observed_label:"Synthetic read and patch".into(),effort:"medium".into(),coding:true}).unwrap()]}}), "webbridge/diagnostic", codec).unwrap();
+        let count = Arc::new(AtomicUsize::new(0));
+        let route = state.base_url().split("/wb/").nth(1).unwrap().to_owned();
+        let router = crate::diagnostic_router(state).layer(axum::middleware::from_fn({
+            let fixture = fixture.clone();
+            let count = count.clone();
+            move |request: axum::extract::Request, next: axum::middleware::Next| {
+                let fixture = fixture.clone();
+                let count = count.clone();
+                let route = route.clone();
+                async move {
+                    if request.method() != Method::POST { return next.run(request).await; }
+                    assert_eq!(request.uri().path(), format!("/wb/{route}/responses"));
+                    for header in ["authorization", "chatgpt-account-id", "cookie"] { assert!(!request.headers().contains_key(header)); }
+                    let body = to_bytes(request.into_body(), 8 * 1024 * 1024).await.unwrap();
+                    let payload = strict_json::parse(&body, 8 * 1024 * 1024).unwrap();
+                    let index = count.fetch_add(1, Ordering::SeqCst);
+                    let name = if index == 0 { "exec_command" } else { "apply_patch" };
+                    let namespace = payload["tools"].as_array().unwrap().iter().find_map(|tool| {
+                        (tool["type"] == "namespace" && tool["tools"].as_array().is_some_and(|children|
+                            children.iter().any(|child| child["name"] == name)))
+                            .then(|| tool["name"].as_str().unwrap().to_owned())
+                    });
+                    let output = match index {
+                        0 => ValidatedOutput::Calls(vec![ValidatedCall {
+                            native_name: name.into(), namespace, kind: ToolKind::Function,
+                            input: json!({"cmd":crate::native_fixture::READ,"login":false,"max_output_tokens":1024}),
+                        }]),
+                        1 => {
+                            assert!(payload["input"].as_array().unwrap().iter().any(|item|
+                                item["type"] == "function_call_output" && item["output"].to_string().contains(&fixture.marker)));
+                            ValidatedOutput::Calls(vec![ValidatedCall {native_name:name.into(), namespace,
+                                kind:ToolKind::Custom, input:json!(fixture.patch())}])
+                        }
+                        2 => {
+                            assert!(payload["input"].as_array().unwrap().iter().any(|item| item["type"] == "custom_tool_call_output"));
+                            ValidatedOutput::Final(fixture.marker.clone())
+                        }
+                        _ => return Response::builder().status(StatusCode::BAD_REQUEST).body(Body::empty()).unwrap(),
+                    };
+                    let encoded = wire::encode(&output, "webbridge/diagnostic", &format!("response_fixture_{index}"), 1).unwrap();
+                    fixture.check_delivery(&encoded.response.to_string()).unwrap();
+                    Response::builder().header("content-type", "text/event-stream").body(Body::from(encoded.sse())).unwrap()
+                }
+            }
+        }));
+        let server = tokio::spawn(axum::serve(listener, router).into_future());
+        let result = run_client(
+            &executable,
+            &target,
+            &directory,
+            &endpoint,
+            &fixture.marker,
+            &CancellationToken::new(),
+            Some(fixture.clone()),
+        )
+        .await;
+        server.abort();
+        let _ = server.await;
+        assert_eq!(result, Ok(()));
+        assert_eq!(count.load(Ordering::SeqCst), 3);
+        assert_eq!(
+            native_preflight::fingerprint(&executable).await.unwrap(),
+            hash
+        );
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[tokio::test]
