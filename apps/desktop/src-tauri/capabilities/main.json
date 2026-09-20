@@ -20,6 +20,7 @@
     "allow-reset-test",
     "allow-installed-list",
     "allow-installed-check",
-    "allow-installed-disconnect"
+    "allow-installed-disconnect",
+    "allow-installed-retry-web"
   ]
 }

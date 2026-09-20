@@ -21,6 +21,37 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Explicit background startup verification retry (2026-09-20)
+
+- An installed host can explicitly repeat a completed transient browser startup
+  failure using its original saved account/workspace, route, profile and browser
+  binding. The desktop offers Retry background verification for the fixed
+  transient error set. Passive health checks never trigger recovery, sign-in or
+  generation. Successful verification does not certify either Codex client.
+- The private control operation is bound to the observed runtime instance and
+  a deduplicated operation receipt. Losing an acknowledgement polls that receipt;
+  it does not resubmit or target a replacement runtime. The worker survives the
+  requesting window closing. Recovery still owns a cancellable gateway lease;
+  disconnect drains cleanup before releasing ownership. A disconnect that wins
+  admission leaves a terminal unavailable state without starting a browser.
+- Only failed startup verification can be retried. In-flight/ready providers,
+  authentication challenges, changed scope/build/language/model, cleanup failure
+  and cancelled recovery remain ineligible. This is not a prompt retry or a
+  reauthentication implementation. Hosts without a saved recovery controller
+  refuse the operation; the UI then clears stale state and asks for a status check.
+- Validation: cargo test --workspace --locked --quiet: 250 passed, 12 opt-in
+  ignored; node --test apps/desktop/tests/*.test.mjs: 54 passed. Clippy with
+  warnings denied, Rust formatting, diff checks and release CLI/daemon/desktop
+  builds passed. Regression coverage includes retry eligibility, duplicate
+  requests, instance changes, recovery cancellation/drain and admission races.
+- Computer-use inspection used the actual local desktop HTML/CSS/scripts with
+  synthetic IPC at 440 x 540. The retry transition hid its button, retained
+  Unverified for both Codex clients, had no horizontal overflow and no browser
+  console warnings/errors. The isolated preview tab/server were closed afterward.
+- NOT RUN: authenticated installed-host retry or actual Codex App picker. The
+  earlier manual-login probe still owns the saved profile. No competing browser,
+  forced process termination or ChatGPT desktop launch was used for this work.
+
 ## Activation-time configuration access requirements (2026-09-20)
 
 - The production ActivationHandle path now calls a qualified journal transaction.

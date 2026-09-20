@@ -84,6 +84,24 @@ fn failure(code: &str) -> (Overall, State, Action, &'static str) {
             Action::Check,
             "E_BACKGROUND_NAVIGATION",
         ),
+        "E_BROWSER_START" => (
+            Overall::Unavailable,
+            State::Unavailable,
+            Action::Check,
+            "E_BROWSER_START",
+        ),
+        "E_BROWSER_RUNTIME_MISSING" => (
+            Overall::Unavailable,
+            State::Unavailable,
+            Action::Check,
+            "E_BROWSER_RUNTIME_MISSING",
+        ),
+        "E_BROWSER_OBSERVATION" => (
+            Overall::Unavailable,
+            State::Unavailable,
+            Action::Check,
+            "E_BROWSER_OBSERVATION",
+        ),
         "E_BROWSER_BUSY" | "E_BROWSER_OTHER_PAGES" => (
             Overall::Unavailable,
             State::Conflict,

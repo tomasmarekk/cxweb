@@ -22,6 +22,9 @@ const EXCHANGE: Duration = Duration::from_secs(2);
 pub type Work = Pin<Box<dyn Future<Output = Result<DisconnectState, &'static str>> + Send>>;
 
 pub trait Lifecycle: Send + Sync + 'static {
+    fn retry_web(&self) -> Work {
+        Box::pin(async { Err("E_WEB_RECOVERY_NOT_RETRYABLE") })
+    }
     fn state(&self) -> DisconnectState;
     fn health(&self) -> cxweb_domain::health::Health {
         cxweb_domain::health::Health::default()
@@ -71,12 +74,17 @@ impl LoginBackend for Control {
 }
 #[derive(Clone, PartialEq, Eq)]
 enum OperationKind {
+    RetryWeb,
     Disconnect,
     DisconnectWhenIdle,
     Login(LoginAction),
     NativeText(crate::setup_owner::NativeTarget),
 }
 impl Lifecycle for DisconnectController {
+    fn retry_web(&self) -> Work {
+        let controller = self.clone();
+        Box::pin(async move { controller.retry_web().await })
+    }
     fn disconnect_when_idle(&self) -> Work {
         let controller = self.clone();
         Box::pin(async move {
@@ -106,6 +114,10 @@ pub struct Request {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    RetryWeb {
+        instance: String,
+        operation: String,
+    },
     Status {},
     Health {},
     BrowserStatus {},
@@ -304,6 +316,10 @@ impl Service {
         }
         let cancel_native = matches!(&request.command, Command::CancelNative { .. });
         let (instance, operation, start) = match request.command {
+            Command::RetryWeb {
+                instance,
+                operation,
+            } => (instance, operation, Some(OperationKind::RetryWeb)),
             Command::Health {} => {
                 let Some(backend) = &self.backend else {
                     return error(ErrorCode::Unsupported);
@@ -419,7 +435,7 @@ impl Service {
         };
         if (matches!(
             kind,
-            OperationKind::Disconnect | OperationKind::DisconnectWhenIdle
+            OperationKind::Disconnect | OperationKind::DisconnectWhenIdle | OperationKind::RetryWeb
         ) && self.backend.is_none())
             || (matches!(
                 &kind,
@@ -464,6 +480,16 @@ impl Service {
             let work_kind = kind.clone();
             let worker = tokio::spawn(async move {
                 match work_kind {
+                    OperationKind::RetryWeb => {
+                        match backend
+                            .expect("validated lifecycle backend")
+                            .retry_web()
+                            .await
+                        {
+                            Ok(result) => Outcome::Completed { result },
+                            Err(_) => Outcome::Failed {},
+                        }
+                    }
                     action @ (OperationKind::Disconnect | OperationKind::DisconnectWhenIdle) => {
                         let backend = backend.expect("validated disconnect backend");
                         let work = if action == OperationKind::DisconnectWhenIdle {
@@ -486,7 +512,9 @@ impl Service {
                             OperationKind::NativeText(target) => {
                                 backend.native_text(target, cancellation)
                             }
-                            OperationKind::Disconnect | OperationKind::DisconnectWhenIdle => {
+                            OperationKind::Disconnect
+                            | OperationKind::DisconnectWhenIdle
+                            | OperationKind::RetryWeb => {
                                 unreachable!()
                             }
                         }
@@ -621,6 +649,7 @@ pub async fn exchange(installation: &str, request: &Request) -> io::Result<Reply
             (
                 Command::Disconnect { operation, .. }
                 | Command::DisconnectWhenIdle { operation, .. }
+                | Command::RetryWeb { operation, .. }
                 | Command::Operation { operation, .. }
                 | Command::Browser { operation, .. }
                 | Command::NativeText { operation, .. }
@@ -651,6 +680,14 @@ mod tests {
         release: Arc<Semaphore>,
     }
     impl Lifecycle for Backend {
+        fn retry_web(&self) -> Work {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let release = self.release.clone();
+            Box::pin(async move {
+                release.acquire().await.unwrap().forget();
+                Ok(DisconnectState::Idle)
+            })
+        }
         fn state(&self) -> DisconnectState {
             DisconnectState::Idle
         }
@@ -679,6 +716,79 @@ mod tests {
     fn dispatch(service: &Service, command: Command) -> Reply {
         service.handle(&serde_json::to_vec(&request(command)).unwrap())
     }
+    #[tokio::test]
+    async fn retry_receipts_are_instance_bound_deduplicated_and_distinct_from_removal() {
+        let (service, backend) = fixture();
+        let operation = "e".repeat(32);
+        let command = || Command::RetryWeb {
+            instance: service.instance.clone(),
+            operation: operation.clone(),
+        };
+        assert_eq!(
+            dispatch(
+                &service,
+                Command::RetryWeb {
+                    instance: "other".into(),
+                    operation: operation.clone()
+                }
+            ),
+            error(ErrorCode::Instance)
+        );
+        assert!(matches!(
+            dispatch(&service, command()),
+            Reply::Operation {
+                outcome: Outcome::Running {},
+                ..
+            }
+        ));
+        assert!(matches!(
+            dispatch(&service, command()),
+            Reply::Operation {
+                outcome: Outcome::Running {},
+                ..
+            }
+        ));
+        assert_eq!(
+            dispatch(
+                &service,
+                Command::Disconnect {
+                    instance: service.instance.clone(),
+                    operation: operation.clone()
+                }
+            ),
+            error(ErrorCode::OperationConflict)
+        );
+        backend.release.add_permits(1);
+        let terminal = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let reply = dispatch(&service, command());
+                if !matches!(
+                    reply,
+                    Reply::Operation {
+                        outcome: Outcome::Running {},
+                        ..
+                    }
+                ) {
+                    break reply;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(matches!(
+            terminal,
+            Reply::Operation {
+                outcome: Outcome::Completed {
+                    result: DisconnectState::Idle
+                },
+                ..
+            }
+        ));
+        assert_eq!(dispatch(&service, command()), terminal);
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+    }
+
     #[tokio::test]
     async fn idle_removal_receipt_cannot_be_upgraded_to_force() {
         struct Active;

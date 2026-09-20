@@ -29,14 +29,19 @@ window.cxwebInstalled = (() => {
     node('installed-refresh').disabled = pending || Boolean(confirmation);
     node('installed-choice').disabled = pending || Boolean(confirmation);
     node('installed-remove').disabled = pending || Boolean(confirmation) || !snapshot || ['disconnecting', 'removal_pending_restart', 'disconnected_complete'].includes(snapshot.health.overall);
+    const retryable = snapshot?.health.overall === 'unavailable' && snapshot.health.active_web_turns === 0 && snapshot.health.components.runtime?.state === 'healthy' &&
+      ['E_ALREADY_RUNNING', 'E_BROWSER_RUNTIME_MISSING', 'E_BROWSER_START', 'E_BACKGROUND_NAVIGATION', 'E_BROWSER_OBSERVATION'].includes(snapshot.health.components.browser?.code);
+    node('installed-retry').hidden = !retryable;
+    node('installed-retry').disabled = !retryable || pending || Boolean(confirmation);
   }
   function error(code) {
     const messages = {
-      E_INSTALLED_CHANGED: 'The runtime restarted. Check its current status before removing the connection.',
+      E_INSTALLED_CHANGED: 'The runtime restarted. Check its current status before taking further action.',
+      E_INSTALLED_RECOVERY: 'Background verification could not be restarted. Check status for the current sign-in or compatibility requirement.',
       E_INSTALLED_UNAVAILABLE: 'The installed runtime is not responding. No replacement process was started.',
       E_INSTALLED_REMOVE: 'Removal could not be completed. Check status for the configuration or cleanup error.',
-      E_INSTALLED_TIMEOUT: 'Removal is still unconfirmed. Check status; it was not submitted again.',
-      E_INSTALLED_UNCONFIRMED: 'The runtime did not confirm the removal request. Check status before trying again.',
+      E_INSTALLED_TIMEOUT: 'The operation is still unconfirmed. Check status; it was not submitted again.',
+      E_INSTALLED_UNCONFIRMED: 'The runtime did not confirm the request. Check status before trying again.',
       E_CONTROL_BUSY: 'Another operation is running. Check status before trying again.'
     };
     node('installed-error').textContent = messages[code] || 'The installed connection could not be verified. No browser or replacement runtime was started.';
@@ -144,6 +149,15 @@ window.cxwebInstalled = (() => {
     if (selected) await refresh();
   });
   node('installed-refresh').addEventListener('click', refresh);
+  node('installed-retry').addEventListener('click', async () => {
+    if (pending || confirmation || !snapshot || node('installed-retry').disabled) return;
+    const receipt = { installation: selected, instance: snapshot.instance };
+    pending = true; clearTimer(); ++epoch; controls(); node('installed-error').hidden = true;
+    node('installed-description').textContent = 'Verifying the saved session in the background. No message is sent and no sign-in window is opened.';
+    try { render(await invoke('installed_retry_web', receipt)); }
+    catch (code) { unavailable(); error(code); }
+    finally { pending = false; controls(); schedule(); }
+  });
   node('installed-remove').addEventListener('click', async () => {
     if (pending || confirmation || !snapshot) return;
     const receipt = { installation: selected, instance: snapshot.instance };

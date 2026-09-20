@@ -32,6 +32,7 @@ pub struct DisconnectController {
     published: Arc<Vec<String>>,
     native: Arc<Vec<String>>,
     health: Arc<Mutex<crate::health::Tracker>>,
+    recovery: Option<crate::web_recovery::RecoveryController>,
 }
 
 pub(crate) enum ApplySupervision {
@@ -51,6 +52,40 @@ fn supervision_error(error: std::io::Error) -> &'static str {
 }
 
 impl DisconnectController {
+    pub(crate) fn with_recovery(
+        mut self,
+        recovery: crate::web_recovery::RecoveryController,
+    ) -> Self {
+        self.recovery = Some(recovery);
+        self
+    }
+
+    pub(crate) async fn retry_web(&self) -> Result<DisconnectState, &'static str> {
+        let controller = self.clone();
+        // Keep the worker owned after its requesting window closes. Disconnect
+        // may cancel/drain the recovery lease instead of waiting on serial.
+        tokio::spawn(async move {
+            {
+                let _operation = controller.serial.lock().await;
+                let health = controller.gateway.health();
+                if *controller.state.borrow() != DisconnectState::Idle
+                    || !health.accepting
+                    || health.cleanup_failed
+                    || health.active_turns != 0
+                {
+                    return Err("E_WEB_RECOVERY_STATE");
+                }
+            }
+            let recovery = controller
+                .recovery
+                .as_ref()
+                .ok_or("E_WEB_RECOVERY_NOT_RETRYABLE")?;
+            recovery.retry(&controller.gateway).await?;
+            Ok(*controller.state.borrow())
+        })
+        .await
+        .map_err(|_| "E_WEB_RECOVERY_WORKER")?
+    }
     pub(crate) async fn register_supervisor(
         &self,
         serving: Arc<std::sync::atomic::AtomicBool>,
@@ -184,6 +219,7 @@ impl DisconnectController {
             published: Arc::new(published),
             native: Arc::new(native),
             health: Arc::default(),
+            recovery: None,
         })
     }
 

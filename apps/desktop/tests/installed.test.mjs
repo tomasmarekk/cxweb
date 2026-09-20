@@ -41,6 +41,60 @@ function panel(respond) {
 }
 const list = (targets = [target], diagnostics = []) => ({ targets, diagnostics });
 
+function transient(code = 'E_ALREADY_RUNNING') {
+  const value = health('unavailable');
+  value.health.components.browser = { state: 'unavailable', code };
+  return value;
+}
+
+test('background retry is explicit, instance-bound and single while status checks stay passive', async () => {
+  let finish;
+  const ui = panel(async command => command === 'installed_list' ? list() : command === 'installed_retry_web'
+    ? new Promise(resolve => { finish = resolve; }) : transient());
+  await flush();
+  const button = ui.nodes.get('installed-retry');
+  assert.equal(button.hidden, false); assert.equal(button.disabled, false);
+  assert.deepEqual(ui.calls.map(c => c.command), ['installed_list', 'installed_check']);
+  const pending = button.click(); await button.click();
+  assert.equal(ui.calls.filter(c => c.command === 'installed_retry_web').length, 1);
+  assert.equal(ui.calls.at(-1).params.instance, 'b'.repeat(32));
+  assert.equal(ui.calls.at(-1).params.installation, target.installation);
+  assert.match(ui.nodes.get('installed-description').textContent, /No message is sent/);
+  assert.equal(ui.nodes.get('installed-remove').disabled, true);
+  finish(health()); await pending;
+  assert.equal(button.hidden, true);
+  assert.equal(ui.nodes.get('installed-app').textContent, 'Unverified');
+});
+
+test('login, compatibility, cleanup and active work do not offer background retry', async () => {
+  for (const code of ['E_LOGIN_REQUIRED', 'E_SESSION_SCOPE', 'E_BROWSER_VERSION_CHANGED', 'E_BROWSER_LANGUAGE', 'E_WEB_RECOVERY_CLEANUP']) {
+    const ui = panel(async command => command === 'installed_list' ? list() : transient(code));
+    await flush(); await ui.nodes.get('installed-retry').click();
+    assert.equal(ui.nodes.get('installed-retry').hidden, true);
+    assert.ok(ui.calls.every(c => c.command !== 'installed_retry_web'));
+  }
+  for (const active of [false, true]) {
+    const value = transient();
+    if (active) value.health.active_web_turns = 1;
+    else value.health.components.runtime.state = 'degraded';
+    const ui = panel(async command => command === 'installed_list' ? list() : value);
+    await flush(); assert.equal(ui.nodes.get('installed-retry').hidden, true);
+  }
+});
+
+test('failed retry clears stale status and never targets a restarted runtime automatically', async () => {
+  const ui = panel(async command => {
+    if (command === 'installed_list') return list();
+    if (command === 'installed_retry_web') throw 'E_INSTALLED_CHANGED';
+    return transient();
+  });
+  await flush(); await ui.nodes.get('installed-retry').click();
+  assert.match(ui.nodes.get('installed-error').textContent, /runtime restarted/);
+  assert.equal(ui.nodes.get('installed-retry').hidden, true);
+  assert.equal(ui.nodes.get('installed-chatgpt').textContent, 'Unverified');
+  assert.deepEqual(ui.calls.map(c => c.command), ['installed_list', 'installed_check', 'installed_retry_web']);
+});
+
 test('startup attaches an installed host without starting login or generation', async () => {
   const ui = panel(async command => command === 'installed_list' ? list() : health());
   await flush();

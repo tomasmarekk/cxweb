@@ -118,9 +118,16 @@ impl Host {
         } else {
             (Gateway::recover_native(port, capability, native), None)
         };
-        let controller =
+        let mut controller =
             DisconnectController::new(gateway.clone(), journal, published, native_models)
                 .map_err(io::Error::other)?;
+        if let Some((pending, receipt, directory)) = &recovery {
+            controller = controller.with_recovery(crate::web_recovery::RecoveryController::new(
+                pending.clone(),
+                receipt.clone(),
+                directory.clone(),
+            ));
+        }
         let control_listener = control_pipe::listen(&installation)?;
         let control = Service::new(Arc::new(controller));
         Ok(Self {

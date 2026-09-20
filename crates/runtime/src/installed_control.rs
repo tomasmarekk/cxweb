@@ -130,26 +130,46 @@ pub async fn disconnect(
     allow_active: bool,
 ) -> Result<Snapshot, &'static str> {
     selected(installation).await?;
-    remove(installation, instance, allow_active).await?;
+    mutate(installation, instance, Action::Remove(allow_active)).await?;
     read(installation).await
 }
 
+pub async fn retry_web(installation: &str, instance: String) -> Result<Snapshot, &'static str> {
+    selected(installation).await?;
+    mutate(installation, instance, Action::RetryWeb).await?;
+    read(installation).await
+}
+
+#[derive(Clone, Copy)]
+enum Action {
+    Remove(bool),
+    RetryWeb,
+}
+
+#[cfg(test)]
 async fn remove(
     installation: &str,
     instance: String,
     allow_active: bool,
 ) -> Result<(), &'static str> {
+    mutate(installation, instance, Action::Remove(allow_active)).await
+}
+
+async fn mutate(installation: &str, instance: String, action: Action) -> Result<(), &'static str> {
     let operation = format!("{:032x}", rand::random::<u128>());
-    let command = if allow_active {
-        Command::Disconnect {
+    let command = match action {
+        Action::RetryWeb => Command::RetryWeb {
             instance: instance.clone(),
             operation: operation.clone(),
-        }
-    } else {
-        Command::DisconnectWhenIdle {
+        },
+        Action::Remove(true) => Command::Disconnect {
             instance: instance.clone(),
             operation: operation.clone(),
-        }
+        },
+        Action::Remove(false) => Command::DisconnectWhenIdle {
+            instance: instance.clone(),
+            operation: operation.clone(),
+        },
     };
     let mut reply = control_protocol::exchange(
         installation,
@@ -159,7 +179,12 @@ async fn remove(
         },
     )
     .await;
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(45);
+    let deadline = tokio::time::Instant::now()
+        + Duration::from_secs(if matches!(action, Action::RetryWeb) {
+            90
+        } else {
+            45
+        });
     loop {
         match reply {
             Ok(Reply::Operation {
@@ -173,7 +198,13 @@ async fn remove(
             Ok(Reply::Operation {
                 outcome: Outcome::Failed {},
                 ..
-            }) => return Err("E_INSTALLED_REMOVE"),
+            }) => {
+                return Err(if matches!(action, Action::RetryWeb) {
+                    "E_INSTALLED_RECOVERY"
+                } else {
+                    "E_INSTALLED_REMOVE"
+                });
+            }
             Ok(Reply::Operation {
                 outcome: Outcome::Running {},
                 ..
@@ -195,7 +226,7 @@ async fn remove(
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
         // After an ambiguous acknowledgement, only inspect this receipt. Never
-        // submit another removal or attach to a replacement runtime instance.
+        // submit another mutation or attach to a replacement runtime instance.
         reply = control_protocol::exchange(
             installation,
             &Request {
@@ -249,6 +280,11 @@ mod tests {
         let host = crate::host::Host::recover(&directory, &config).unwrap();
         let server = tokio::spawn(host.serve());
         let initial = read(&id).await.unwrap();
+        assert_eq!(
+            mutate(&id, initial.instance.clone(), Action::RetryWeb).await,
+            Err("E_INSTALLED_RECOVERY")
+        );
+        assert_eq!(read(&id).await.unwrap().instance, initial.instance);
         assert_eq!(
             remove(&id, "f".repeat(32), false).await,
             Err("E_INSTALLED_CHANGED")

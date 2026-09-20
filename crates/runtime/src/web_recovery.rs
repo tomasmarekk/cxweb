@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
     path::PathBuf,
-    sync::{Arc, OnceLock},
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
@@ -385,10 +385,19 @@ struct Restored {
 
 type RecoveryResult = Result<Arc<dyn WebProvider>, &'static str>;
 /// Native forwarding starts immediately. Web work and publication remain
-/// unavailable until the one non-generative recovery attempt finishes.
+/// unavailable until a non-generative recovery attempt finishes. Only explicit
+/// retries of a completed transient startup failure may replace that result.
 #[derive(Clone, Default)]
-pub(crate) struct PendingProvider(Arc<OnceLock<RecoveryResult>>);
+pub(crate) struct PendingProvider(Arc<Mutex<Option<RecoveryResult>>>);
 impl PendingProvider {
+    fn begin_retry(&self) -> Result<(), &'static str> {
+        let mut state = self.0.lock().map_err(|_| "E_WEB_RECOVERY_STATE")?;
+        if !matches!(state.as_ref(), Some(Err(code)) if retryable(code)) {
+            return Err("E_WEB_RECOVERY_NOT_RETRYABLE");
+        }
+        *state = None;
+        Ok(())
+    }
     pub(crate) async fn restore(
         &self,
         receipt: Receipt,
@@ -423,15 +432,29 @@ impl PendingProvider {
             result
         };
         let ready = result.is_ok();
-        self.0.set(result).is_ok() && ready
+        let mut state = self.0.lock().expect("recovery state lock poisoned");
+        if state.is_some() {
+            return false;
+        }
+        *state = Some(result);
+        ready
     }
     fn ready(&self) -> RecoveryResult {
-        self.0.get().cloned().unwrap_or(Err("E_WEB_RECOVERING"))
+        self.0
+            .lock()
+            .expect("recovery state lock poisoned")
+            .clone()
+            .unwrap_or(Err("E_WEB_RECOVERING"))
     }
 }
 impl WebProvider for PendingProvider {
     fn health(&self) -> crate::gateway::ProviderHealth {
-        match self.0.get() {
+        match self
+            .0
+            .lock()
+            .expect("recovery state lock poisoned")
+            .as_ref()
+        {
             None => crate::gateway::ProviderHealth::Recovering,
             Some(Ok(provider)) => provider.health(),
             Some(Err(code)) => crate::gateway::ProviderHealth::Unavailable { code },
@@ -449,6 +472,55 @@ impl WebProvider for PendingProvider {
     }
     fn catalog(&self, codec: CatalogCodec) -> Option<crate::catalog_proxy::OwnedCatalog> {
         self.ready().ok()?.catalog(codec)
+    }
+}
+
+fn retryable(code: &str) -> bool {
+    matches!(
+        code,
+        "E_ALREADY_RUNNING"
+            | "E_BROWSER_RUNTIME_MISSING"
+            | "E_BROWSER_START"
+            | "E_BACKGROUND_NAVIGATION"
+            | "E_BROWSER_OBSERVATION"
+    )
+}
+
+/// The installed host owns the original binding and retry policy. A desktop
+/// request cannot supply a replacement account, route, profile or browser path.
+#[derive(Clone)]
+pub(crate) struct RecoveryController {
+    pending: PendingProvider,
+    receipt: Receipt,
+    directory: PathBuf,
+}
+impl RecoveryController {
+    pub(crate) fn new(pending: PendingProvider, receipt: Receipt, directory: PathBuf) -> Self {
+        Self {
+            pending,
+            receipt,
+            directory,
+        }
+    }
+    pub(crate) async fn retry(
+        &self,
+        gateway: &crate::gateway::Gateway,
+    ) -> Result<(), &'static str> {
+        self.pending.begin_retry()?;
+        let mut admitted = false;
+        let result = gateway
+            .recover_web(|cancel| {
+                admitted = true;
+                self.pending
+                    .restore(self.receipt.clone(), self.directory.clone(), cancel)
+            })
+            .await;
+        if !admitted {
+            self.pending
+                .finish(Err("E_WEB_DISCONNECTED"), &CancellationToken::new());
+            return Err("E_WEB_DISCONNECTED");
+        }
+        result
     }
 }
 
@@ -653,8 +725,12 @@ mod tests {
             )
             .into_future(),
         );
-        for cancelled in [false, true] {
+        for (cancelled, retried) in [(false, false), (true, false), (false, true), (true, true)] {
             let pending = PendingProvider::default();
+            if retried {
+                pending.finish(Err("E_ALREADY_RUNNING"), &CancellationToken::new());
+                pending.begin_retry().unwrap();
+            }
             let gateway = Gateway::prepared(
                 43127,
                 &"a".repeat(43),
@@ -743,6 +819,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn disconnect_winning_retry_admission_never_starts_a_browser() {
+        let pending = PendingProvider::default();
+        pending.finish(Err("E_ALREADY_RUNNING"), &CancellationToken::new());
+        let gateway = Gateway::prepared(
+            43127,
+            &"a".repeat(43),
+            NativeTransport::new("http://127.0.0.1:1".into()).unwrap(),
+            Arc::new(pending.clone()),
+        );
+        gateway
+            .disconnect_web(Duration::from_secs(1))
+            .await
+            .unwrap();
+        let recovery = RecoveryController::new(
+            pending.clone(),
+            Receipt::fixture("installation"),
+            PathBuf::new(),
+        );
+        assert_eq!(recovery.retry(&gateway).await, Err("E_WEB_DISCONNECTED"));
+        assert!(matches!(pending.ready(), Err("E_WEB_DISCONNECTED")));
+        assert!(!gateway.health().cleanup_failed);
+    }
+
+    #[tokio::test]
     async fn cancelled_recovery_does_not_open_a_browser_or_profile() {
         let cancel = CancellationToken::new();
         cancel.cancel();
@@ -752,5 +852,45 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(pending.ready(), Err("E_CANCELLED")));
+    }
+    #[test]
+    fn only_completed_transient_failures_can_be_explicitly_retried() {
+        for code in [
+            "E_ALREADY_RUNNING",
+            "E_BROWSER_START",
+            "E_BROWSER_RUNTIME_MISSING",
+            "E_BACKGROUND_NAVIGATION",
+            "E_BROWSER_OBSERVATION",
+        ] {
+            let pending = PendingProvider::default();
+            let cancel = CancellationToken::new();
+            assert!(pending.begin_retry().is_err());
+            assert!(!pending.finish(Err(code), &cancel));
+            pending.begin_retry().unwrap();
+            assert!(pending.begin_retry().is_err());
+            assert!(matches!(
+                pending.health(),
+                crate::gateway::ProviderHealth::Recovering
+            ));
+            assert!(pending.finish(Ok(Arc::new(Ready)), &cancel));
+            assert!(pending.begin_retry().is_err());
+            assert!(!pending.finish(Err("E_BROWSER_START"), &cancel));
+            assert!(pending.ready().is_ok());
+        }
+        for code in [
+            "E_LOGIN_REQUIRED",
+            "E_BROWSER_VERIFICATION_REQUIRED",
+            "E_SESSION_SCOPE",
+            "E_BROWSER_VERSION_CHANGED",
+            "E_MODEL_SELECTION",
+            "E_BROWSER_LANGUAGE",
+            "E_WEB_RECOVERY_CLEANUP",
+            "E_CANCELLED",
+        ] {
+            let pending = PendingProvider::default();
+            pending.finish(Err(code), &CancellationToken::new());
+            assert!(pending.begin_retry().is_err(), "{code}");
+            assert!(matches!(pending.ready(), Err(actual) if actual == code));
+        }
     }
 }

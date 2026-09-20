@@ -15,6 +15,7 @@ fn main() {
             "installed_list",
             "installed_check",
             "installed_disconnect",
+            "installed_retry_web",
         ]),
     ))
     .expect("Tauri build configuration");

@@ -24,6 +24,16 @@ mod desktop {
             .map_err(str::to_owned)
     }
     #[tauri::command]
+    async fn installed_retry_web(
+        installation: String,
+        instance: String,
+    ) -> Result<cxweb_runtime::installed_control::Snapshot, String> {
+        cxweb_runtime::installed_control::retry_web(&installation, instance)
+            .await
+            .map_err(str::to_owned)
+    }
+
+    #[tauri::command]
     async fn installed_disconnect(
         installation: String,
         instance: String,
@@ -202,7 +212,8 @@ mod desktop {
                 reset_test,
                 installed_list,
                 installed_check,
-                installed_disconnect
+                installed_disconnect,
+                installed_retry_web
             ])
             .run(tauri::generate_context!())
             .expect("cxweb desktop runtime");

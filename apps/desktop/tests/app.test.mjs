@@ -320,7 +320,7 @@ test('all UI command names are registered and allowed only for the main local wi
   assert.equal(capability.remote, undefined);
   const rust = await readFile(new URL('../src-tauri/src/main.rs', import.meta.url), 'utf8');
   const build = await readFile(new URL('../src-tauri/build.rs', import.meta.url), 'utf8');
-  for (const command of ['connect', 'status', 'qualify', 'qualify_text', 'qualify_tools', 'background', 'native_discover', 'native_preflight', 'native_text', 'native_cancel', 'reset_test', 'installed_list', 'installed_check', 'installed_disconnect']) {
+  for (const command of ['connect', 'status', 'qualify', 'qualify_text', 'qualify_tools', 'background', 'native_discover', 'native_preflight', 'native_text', 'native_cancel', 'reset_test', 'installed_list', 'installed_check', 'installed_disconnect', 'installed_retry_web']) {
     assert.ok(capability.permissions.includes(`allow-${command.replaceAll('_', '-')}`));
     assert.ok(build.includes(`"${command}"`));
     assert.match(rust, new RegExp(`async fn ${command}\\(`));
