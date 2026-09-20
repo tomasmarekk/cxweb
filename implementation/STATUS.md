@@ -23,6 +23,34 @@ English. The complete installed CLI and App-backend read/patch/final scenarios
 now pass. A fixed message sent from the actual GUI also passed with the owned
 model and effort corroborated by the native turn context.
 
+## Installed approval-denial exercise (2026-09-20)
+
+- The installed-client probe now has a `--denial` exercise. It starts an
+  ephemeral read-only, untrusted-approval thread in a disposable workspace and
+  declines exactly one attributed request for the fixture read. No approval
+  policy is changed on disk and the bridge does not execute tools. A different
+  command, patch, repeat request or other action fails the exercise.
+- Success requires one native `declined` command item, no process/exit/output
+  result, no unread random marker in any client event, unchanged fixture bytes,
+  no added files and the exact final acknowledgement after the declined item.
+  Unknown, duplicate, foreign-turn and execution-shaped records fail local tests.
+- The first CLI and App runs completed their native turns but failed the harness
+  because it incorrectly required a string output for the declined item. The App
+  diagnostic showed `declined`, null exit status and no output. The reviewed
+  [native completion implementation](https://github.com/openai/codex/blob/3d2ee51ca2d5db578f328aa75e20aa22c0197c9a/codex-rs/app-server/src/bespoke_event_handling.rs#L1495)
+  explicitly emits null output/exit status for this path. The harness now checks
+  that contract; original failures remain in `*.denial-harness-incomplete.json`.
+- A fresh CLI run passed the complete exercise at 15:19:38 UTC with unchanged
+  native configuration/executable hashes. Its report is
+  `cli-0.155.1.installed-denial.json`. The App backend passed the same complete
+  exercise at 15:20:48 UTC, also preserving both hashes; see
+  `app-backend-0.155.0-alpha.9.2.installed-denial.json`. Final runtime health is
+  idle with verified browser scope and successful request evidence for both
+  builds. This is one actual coding-denial scenario, not the complete G2 corpus.
+- `node --check scripts/probe-installed-client.mjs` passed and all five
+  `scripts/probe-client-approval.test.mjs` tests passed, including rejection of
+  successful execution, missing fields and process IDs in denial evidence.
+
 ## Installed client request evidence (2026-09-20)
 
 - Completed web requests now update the App and CLI health dimensions separately
