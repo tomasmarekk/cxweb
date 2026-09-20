@@ -23,6 +23,39 @@ English. The complete installed CLI and App-backend read/patch/final scenarios
 now pass. A fixed message sent from the actual GUI also passed with the owned
 model and effort corroborated by the native turn context.
 
+## Automatic checkpoint fixture and progress diagnostics (2026-09-20)
+
+- The post-keepalive repetitive-padding run stayed on one WebSocket request for
+  more than fifteen minutes without finishing its first model answer. The isolated
+  native diagnostic child was deliberately stopped; this attempt is incomplete,
+  not a successful checkpoint run or a diagnosed browser failure. Browser stop
+  acknowledgement was unconfirmed, but final idle cleanup was confirmed. Retained
+  report: `cli-0.155.1.automatic-checkpoint-repetitive-fixture-incomplete.json`.
+- The transport asks the model to encode each literal asterisk as six characters
+  (`\u002a`) to preserve it through Markdown. The old fixture therefore requested
+  at least 24,576 repetitive wire characters before counting the envelope. This
+  explains its unusual workload, but does not establish the cause of its runtime.
+- Replaced the repeated-asterisk fixture with frozen `technical-prose.v1`: a fresh
+  model-generated marker followed by about 1,000 words of technical explanation.
+  Admission requires 4–16 KiB of actual returned history, at least 1,024 alphabetic
+  bytes, and no unexpected control characters. It still requires the same real
+  local refusal, attributed native automatic compaction, exact marker recall,
+  absence of plaintext checkpoint history and confirmed cleanup. No failure is
+  removed from the record and no production capability is enabled.
+- The isolated live gateway writes an optional count-only progress snapshot every
+  15 seconds. It reports observed answer length, generation state and renderer
+  counts, with no answer text, prompt, identity or account fields. Unknown fields
+  and nonnumeric values are excluded by a regression test. The monitor uses the
+  driver's cached diagnostics, does not drive the page and never extends model
+  deadlines. Reporting errors do not cancel work; cancellation drops the monitor.
+- Windows Computer Use inventory worked, but the offscreen managed Chrome window
+  was not targetable. No additional browser instance or login was started.
+- Validation: 292 Rust tests passed (18 opt-in tests ignored), both updated
+  automatic-checkpoint unit tests passed, all 38 browser adapter JavaScript tests
+  passed, and Clippy, formatting and the release build passed. The diagnostic
+  build installed for the prose attempt has SHA-256
+  `988d760fe66d5e2d4b5fdd6c96be9203f0d9d95282045cd47a58fa94bc5c47be`.
+
 ## Buffered WebSocket idle recovery (2026-09-20)
 
 - A live automatic-checkpoint attempt was cancelled before its first long response

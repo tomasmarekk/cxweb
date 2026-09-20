@@ -1709,6 +1709,7 @@ impl ManagedBrowser {
                 "intermediate_blocks",
                 "answer_fenced",
                 "answer_generating",
+                "answer_length",
             ] {
                 if let Some(value) = diagnostic[key].as_u64() {
                     self.attribution_diagnostic.insert(key.into(), value);

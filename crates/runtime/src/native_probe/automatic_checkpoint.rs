@@ -1,12 +1,14 @@
 //! Live native context-boundary diagnostic. Never supplies fake usage or history.
 use super::*;
 
-const GROW_PROMPT: &str = "Use no tools. This is a context-retention test. Invent a fresh random value of exactly 32 lowercase hexadecimal characters. Return a final answer with exactly two lines: first CXWEB_NATIVE_CHECKPOINT_ followed by that value; second between 4096 and 8192 literal asterisk characters. Do not abbreviate, add fences, headings, or commentary. Remember only the first line as the latest value for later recall and preserve it verbatim in task checkpoints; it replaces any previous value. The asterisk line is disposable test padding, not task state.";
-const RECALL_PROMPT: &str = "Return exactly the latest complete CXWEB_NATIVE_CHECKPOINT_ line remembered from your most recent successful answer. Recover it from the task checkpoint. Use no tools, omit the disposable padding and add no other text.";
+const GROW_PROMPT: &str = "Use no tools. This is a context-retention test. Invent a fresh random value of exactly 32 lowercase hexadecimal characters. Start your final answer with one line containing CXWEB_NATIVE_CHECKPOINT_ followed by that value. Then write a detailed English technical explanation of pure functions, immutable data, error handling and deterministic testing, with several short JavaScript examples. Aim for about 1000 words of normal useful prose; do not count characters or use repeated padding. Do not wrap the entire answer in a code fence. Remember only the first line as the latest value for later recall and preserve it verbatim in task checkpoints; it replaces any previous value. The technical explanation is disposable test history, not task state.";
+const RECALL_PROMPT: &str = "Return exactly the latest complete CXWEB_NATIVE_CHECKPOINT_ line remembered from your most recent successful answer. Recover it from the task checkpoint. Use no tools, omit the disposable technical explanation and add no other text.";
 
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Report {
+    #[serde(default)]
+    history_fixture: String,
     completed: bool,
     completed_history_turns: usize,
     actual_answer_bytes: usize,
@@ -65,7 +67,7 @@ fn context_refusal(events: &[Value], thread: &str, turn: &str) -> bool {
     })
 }
 fn seed(text: &str) -> Result<&str, &'static str> {
-    let (marker, padding) = text
+    let (marker, history) = text
         .split_once('\n')
         .ok_or("E_NATIVE_PROBE_AUTOMATIC_SEED")?;
     if !marker
@@ -76,8 +78,11 @@ fn seed(text: &str) -> Result<&str, &'static str> {
                     .bytes()
                     .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         })
-        || !(4096..=8192).contains(&padding.len())
-        || !padding.bytes().all(|b| b == b'*')
+        || !(4096..=16384).contains(&history.len())
+        || history.bytes().filter(u8::is_ascii_alphabetic).count() < 1024
+        || history
+            .chars()
+            .any(|c| c.is_control() && c != '\n' && c != '\t')
     {
         return Err("E_NATIVE_PROBE_AUTOMATIC_SEED");
     }
@@ -133,7 +138,10 @@ impl Client {
         cwd: &Path,
         thread: &str,
     ) -> Result<(), &'static str> {
-        let mut report = Report::default();
+        let mut report = Report {
+            history_fixture: "technical-prose.v1".into(),
+            ..Report::default()
+        };
         report.save(cwd)?;
         let mut latest = None;
         let mut seen = std::collections::BTreeSet::new();
@@ -205,23 +213,24 @@ impl Client {
 mod tests {
     use super::*;
     #[test]
-    fn padding_is_real_bounded_model_content_and_never_abbreviated() {
+    fn history_is_real_bounded_text_and_never_abbreviated() {
         let marker = format!("CXWEB_NATIVE_CHECKPOINT_{}", "a".repeat(32));
-        for count in [4096, 8192] {
+        for count in [4096, 16384] {
             assert_eq!(
-                seed(&format!("{marker}\n{}", "*".repeat(count))),
+                seed(&format!("{marker}\n{}", "a".repeat(count))),
                 Ok(marker.as_str())
             );
         }
-        for padding in [
-            "*".repeat(4095),
-            "*".repeat(8193),
-            "*".repeat(4096) + "\n",
-            "[asterisks omitted]".into(),
+        for history in [
+            "a".repeat(4095),
+            "a".repeat(16385),
+            "*".repeat(4096),
+            "a".repeat(4096) + "\0",
+            "[explanation omitted]".into(),
         ] {
-            assert!(seed(&format!("{marker}\n{padding}")).is_err());
+            assert!(seed(&format!("{marker}\n{history}")).is_err());
         }
-        assert!(seed(&format!("{}\n{}", marker.to_uppercase(), "*".repeat(4096))).is_err());
+        assert!(seed(&format!("{}\n{}", marker.to_uppercase(), "a".repeat(4096))).is_err());
     }
     #[test]
     fn refusal_and_automatic_compaction_require_attributed_native_events() {

@@ -573,13 +573,33 @@ async fn run_probe(
         .with_graceful_shutdown(server_stop.clone().cancelled_owned())
         .into_future();
     tokio::pin!(server);
+    tokio::pin!(stop);
+    let started = tokio::time::Instant::now();
+    // Count-only observation; it neither drives the browser nor alters deadlines.
+    let monitor = async {
+        let mut interval = tokio::time::interval(Duration::from_secs(15));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            interval.tick().await;
+            if let Ok(Ok(diagnostic)) =
+                tokio::time::timeout(Duration::from_secs(2), driver.diagnostic()).await
+            {
+                let progress = progress_snapshot(&diagnostic, started.elapsed().as_secs());
+                // Optional progress reporting must not cancel admitted work.
+                let _ =
+                    tokio::fs::write(directory.join("progress.json"), progress.to_string()).await;
+            }
+        }
+    };
+    tokio::pin!(monitor);
     tokio::select! {
         result = &mut server => { result.map_err(|_| "E_PROBE_SERVER")?; }
-        () = stop => {
+        () = &mut stop => {
             gateway.disconnect_web(Duration::from_secs(60)).await?;
             server_stop.cancel();
             server.await.map_err(|_| "E_PROBE_SERVER")?;
         }
+        () = &mut monitor => unreachable!("progress monitor runs until dropped"),
     }
     let diagnostic = driver.diagnostic().await?;
     Ok(
@@ -587,9 +607,39 @@ async fn run_probe(
     )
 }
 
+fn progress_snapshot(diagnostic: &Value, elapsed_seconds: u64) -> Value {
+    let mut observed = serde_json::Map::new();
+    for key in [
+        "answer_candidates",
+        "intermediate_blocks",
+        "answer_generating",
+        "answer_fenced",
+        "answer_length",
+    ] {
+        if let Some(value) = diagnostic["attribution"][key].as_u64() {
+            observed.insert(key.into(), json!(value));
+        }
+    }
+    json!({"schema":"cxweb.live-progress.v1","elapsed_seconds":elapsed_seconds,"last_observation":observed})
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn progress_retains_only_allowlisted_counts() {
+        let value = progress_snapshot(
+            &json!({"attribution":{"answer_length":42,"answer_generating":1,"answer_candidates":"PRIVATE","PRIVATE":9},"scope":"PRIVATE","text":"PRIVATE"}),
+            15,
+        );
+        assert_eq!(
+            value["last_observation"],
+            json!({"answer_length":42,"answer_generating":1})
+        );
+        assert_eq!(value["elapsed_seconds"], 15);
+        assert!(!value.to_string().contains("PRIVATE"));
+    }
 
     #[test]
     fn format_diagnostics_never_export_arbitrary_schema_content() {

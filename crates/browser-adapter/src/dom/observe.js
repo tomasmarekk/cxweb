@@ -67,7 +67,8 @@ function (baselineIds, expectedPrompt) {
       break_count: messageCopy?.querySelectorAll('br').length ?? 0,
       block_count: messageCopy?.querySelectorAll('div, p, pre, li').length ?? 0,
       answer_candidates: answer.candidates, intermediate_blocks: answer.intermediate,
-      answer_fenced: Number(!!content?.querySelector('pre')), answer_generating: Number(generating)
+      answer_fenced: Number(!!content?.querySelector('pre')), answer_generating: Number(generating),
+      answer_length: text.length
     },
     user_id: user?.getAttribute('data-turn-id-container') ?? null,
     user_matches: userMatches,
