@@ -692,7 +692,7 @@ test('a hidden control window suspends status polling and resumes without browse
 });
 
 
-test('native read and patch test is explicit, serialized and never claims full qualification', async () => {
+test('native read, patch and test exercise is explicit and never claims full qualification', async () => {
   let finish;
   const initial = {...runningNative, native_operation:null};
   const ui = panel(async command => command === 'native_text'
@@ -703,14 +703,15 @@ test('native read and patch test is explicit, serialized and never claims full q
   await ui.nodes.get('native-tools').click();
   await ui.nodes.get('native-text').click();
   assert.deepEqual(ui.calls, ['status','native_text']);
-  assert.equal(ui.requests.at(-1).params.exercise, 'read_patch');
+  assert.equal(ui.requests.at(-1).params.exercise, 'read_patch_test');
   assert.equal(ui.nodes.get('native-tools').disabled, true);
   assert.equal(ui.nodes.get('native-text').disabled, true);
-  finish({...initial,native_text_report:{client_build:'fixture',native_tools_executed:2,exact_text_received:true}});
+  finish({...initial,native_text_report:{exercise:'read_patch_test',client_build:'fixture',native_tools_executed:3,exact_text_received:true}});
   await action;
-  assert.match(ui.nodes.get('native-text-result').textContent, /Read and patch verified through Codex fixture/);
+  assert.match(ui.nodes.get('native-text-result').textContent, /Read, patch and test verified through Codex fixture/);
+  assert.match(ui.nodes.get('native-text-result').textContent, /exit code 0/);
   assert.match(ui.nodes.get('native-text-result').textContent, /Full coding qualification.*still need verification/);
-  assert.equal(ui.nodes.get('native-tools').textContent, 'Test read and patch');
+  assert.equal(ui.nodes.get('native-tools').textContent, 'Test coding tools');
   assert.equal(ui.nodes.get('native-tools').disabled, false);
   assert.equal(ui.nodes.get('codex').textContent, 'Awaiting integration');
 });

@@ -788,7 +788,7 @@ mod tests {
                 ..
             }
         ));
-        for field in 0..6 {
+        for field in 0..7 {
             let mut changed = target.clone();
             match field {
                 0 => changed.client.push("other"),
@@ -796,7 +796,8 @@ mod tests {
                 2 => changed.cwd.push("other"),
                 3 => changed.route.push_str("other"),
                 4 => changed.exercise = crate::native_probe::Exercise::ReadPatch,
-                _ => changed.exercise = crate::native_probe::Exercise::DeniedRead,
+                5 => changed.exercise = crate::native_probe::Exercise::DeniedRead,
+                _ => changed.exercise = crate::native_probe::Exercise::ReadPatchTest,
             }
             assert_eq!(
                 dispatch(&service, command(changed)),

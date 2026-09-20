@@ -21,6 +21,36 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Native patch-and-test feedback exercise (2026-09-20)
+
+- Extended the selected-client tool exercise with an actual test command after
+  the read and custom patch. The command compares the two disposable fixture
+  files and returns a real success/failure exit code. The existing desktop
+  button is now Test coding tools; its result identifies all three operations.
+  The earlier read/patch and denial modes remain independently covered.
+- Pre-delivery validation permits only read, exact patch, exact test and final
+  result, in that order, retaining response replay identity. The test command
+  cannot request a different directory, network approval or altered script.
+  Native approvals remain individually attributed to the current thread/turn;
+  test approval requires the observed completed patch. The bridge executes no
+  tools. Final success requires native completion, exit code 0, exact test
+  output and unchanged input/correct output files.
+- Both reviewed native backends passed isolated read/patch, denial, successful
+  patch/test and injected failing-test scenarios. The fault case corrupts only
+  its disposable output file before the native test. Real failure feedback
+  reaches the subsequent synthetic model request, and a fabricated successful
+  final response is rejected as E_NATIVE_PROBE_TEST. No account is used.
+- Validation: workspace 238 passed / 11 opt-in ignored; desktop UI 50 passed;
+  the actual-native fixture suite passed separately on CLI 0.155.1 and cached
+  App backend 0.155.0-alpha.9.2. Clippy, formatting, included-file formatting,
+  diff checks and release CLI/daemon/desktop builds passed. Evidence:
+  integration-tests/compatibility/runtime-native-test-feedback-windows.json.
+- NOT RUN: this new exercise through the authenticated web model or actual App
+  renderer/picker. The manual-login process was revalidated live and still owns
+  the saved browser profile. No competing browser was started. This fixture is
+  one additional coding scenario, not the full G2 corpus or route reliability
+  sample, and it does not enable production activation.
+
 ## Desktop attachment and guarded removal (2026-09-20)
 
 - Desktop startup now inventories owned applied/restoring/restored integration

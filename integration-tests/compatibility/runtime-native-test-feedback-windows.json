@@ -1,0 +1,61 @@
+{
+  "schema": "cxweb.runtime-native-test-feedback.v1",
+  "observed_at": "2026-09-20T03:27:59Z",
+  "evidence_level": "mock_integration",
+  "result": "PASS actual native execution with synthetic model responses, including rejection of a false success claim after a genuine test failure",
+  "environment": {
+    "runtime_version": "0.1.0",
+    "os_version": "10.0.26100",
+    "architecture": "x64",
+    "browser": null,
+    "account_plan": "not_applicable_signed_out_fixture"
+  },
+  "verification": {
+    "workspace": { "passed": 238, "ignored": 11 },
+    "desktop_ui": { "passed": 50 },
+    "clippy": "PASS",
+    "format": "PASS",
+    "release_builds": ["CLI", "daemon", "desktop"],
+    "native_command": "Set CXWEB_NATIVE_PROBE_BACKEND to the independently selected reviewed binary; cargo test -p cxweb-runtime actual_native_backend_executes_guarded_tools_and_denial_fixtures -- --ignored --nocapture"
+  },
+  "native_backends": [
+    {
+      "build": "0.155.1",
+      "sha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+      "read_patch": "PASS",
+      "read_denial": "PASS",
+      "read_patch_test": "PASS",
+      "actual_failed_test_rejects_fabricated_success": "PASS"
+    },
+    {
+      "build": "0.155.0-alpha.9.2",
+      "sha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+      "read_patch": "PASS",
+      "read_denial": "PASS",
+      "read_patch_test": "PASS",
+      "actual_failed_test_rejects_fabricated_success": "PASS"
+    }
+  ],
+  "checks": {
+    "exact_ordered_tools_only_before_delivery": true,
+    "duplicate_delivery_does_not_advance_fixture": true,
+    "native_test_command_runs_after_observed_completed_patch": true,
+    "native_test_output_returns_in_following_model_request": true,
+    "success_requires_attributed_zero_exit_code_and_exact_output": true,
+    "native_completion_order_must_be_read_patch_then_test": true,
+    "success_requires_real_correct_fixture_files": true,
+    "missing_duplicate_wrong_scope_or_altered_command_evidence_rejected": true,
+    "nonzero_exit_code_rejects_final_success_claim": true,
+    "fault_injection_changes_only_disposable_fixture_output": true,
+    "private_native_home_and_workspace": true,
+    "no_user_account_or_configuration_changes": true,
+    "no_tools_executed_by_bridge": true
+  },
+  "not_run": [
+    "New exercise through an authenticated ChatGPT web model",
+    "Actual Codex App renderer and picker",
+    "Full 20-exercise coding corpus per primary pair",
+    "200-response reliability experiment per exported route",
+    "Production activation and native subscription coexistence"
+  ]
+}

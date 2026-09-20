@@ -1,4 +1,4 @@
-//! Exact operations for the isolated native read/patch diagnostic only.
+//! Exact operations for isolated native read/patch/test and denial diagnostics.
 //! This policy never executes tools and is never installed on production routes.
 use cxweb_codex_adapter::strict_json;
 use serde_json::Value;
@@ -11,10 +11,13 @@ use std::{
 
 pub(crate) const READ: &str = "Get-Content -LiteralPath './probe-input.txt'";
 pub(crate) const DENIED: &str = "cxweb native read was denied";
+pub(crate) const TEST_PASSED: &str = "cxweb fixture tests passed";
+pub(crate) const TEST: &str = "if ((Get-Content -LiteralPath './probe-output.txt' -Raw -ErrorAction Stop) -ceq (Get-Content -LiteralPath './probe-input.txt' -Raw -ErrorAction Stop)) { Write-Output 'cxweb fixture tests passed'; exit 0 } else { Write-Output 'cxweb fixture tests failed'; exit 1 }";
 const ERROR: &str = "E_NATIVE_PROBE_ACTION";
 
 pub(crate) struct Fixture {
     pub denial: bool,
+    pub test: bool,
     pub cwd: PathBuf,
     pub marker: String,
     shells: Vec<PathBuf>,
@@ -43,6 +46,7 @@ impl Fixture {
         }
         Self {
             denial: false,
+            test: false,
             cwd,
             marker,
             shells,
@@ -50,12 +54,23 @@ impl Fixture {
         }
     }
     pub fn expected(&self) -> &str {
-        if self.denial { DENIED } else { &self.marker }
+        if self.denial {
+            DENIED
+        } else if self.test {
+            TEST_PASSED
+        } else {
+            &self.marker
+        }
     }
     pub fn prompt(&self) -> String {
         if self.denial {
             return format!(
                 "Use exec_command exactly once with cmd exactly {READ:?}, login=false and the current working directory. The user will deny this test command. Wait for the actual tool result. If the command is denied, return exactly: {DENIED}. Do not retry, run a different command, modify files, request elevated permissions or claim you read the file."
+            );
+        }
+        if self.test {
+            return format!(
+                "Use exec_command with cmd exactly {READ:?}, login=false and the current working directory. Then use the apply_patch custom tool exactly once to add probe-output.txt containing the exact line read followed by a newline. After the patch succeeds, use exec_command with cmd exactly {TEST:?}, login=false and the current working directory. Wait for each actual tool result. Return exactly {TEST_PASSED:?} only if the test command exits with code 0 and prints that text. Do not claim the test passed before observing its result. Do not run other commands, change other files, request elevated permissions or access the network."
             );
         }
         format!(
@@ -97,7 +112,7 @@ impl Fixture {
                     && namespace(item)
                     && item["arguments"]
                         .as_str()
-                        .is_some_and(|a| self.read_arguments(a))
+                        .is_some_and(|a| self.command_arguments(a, READ))
             }
             1 if !self.denial => {
                 item["type"] == "custom_tool_call"
@@ -107,7 +122,23 @@ impl Fixture {
                         .as_str()
                         .is_some_and(|s| s == self.patch() || s == self.patch() + "\n")
             }
-            step if step == if self.denial { 1 } else { 2 } => {
+            2 if self.test && !self.denial => {
+                item["type"] == "function_call"
+                    && item["name"] == "exec_command"
+                    && namespace(item)
+                    && item["arguments"]
+                        .as_str()
+                        .is_some_and(|a| self.command_arguments(a, TEST))
+            }
+            step if step
+                == if self.denial {
+                    1
+                } else if self.test {
+                    3
+                } else {
+                    2
+                } =>
+            {
                 item["type"] == "message"
                     && item["role"] == "assistant"
                     && item["content"].as_array().is_some_and(|content| {
@@ -124,7 +155,7 @@ impl Fixture {
         delivered.insert(id.into(), hash);
         Ok(())
     }
-    fn read_arguments(&self, text: &str) -> bool {
+    fn command_arguments(&self, text: &str, command: &str) -> bool {
         let Ok(value) = strict_json::parse(text.as_bytes(), 16 * 1024) else {
             return false;
         };
@@ -136,7 +167,7 @@ impl Fixture {
                 k.as_str(),
                 "cmd" | "login" | "workdir" | "max_output_tokens" | "yield_time_ms"
             )
-        }) && args.get("cmd").is_some_and(|v| v == READ)
+        }) && args.get("cmd").is_some_and(|v| v == command)
             && args.get("login").is_some_and(|v| v == false)
             && args
                 .get("workdir")
@@ -149,6 +180,12 @@ impl Fixture {
                 .is_none_or(|v| v.as_u64().is_some_and(|n| (1000..=10000).contains(&n)))
     }
     pub fn approve_read(&self, params: &Value) -> bool {
+        self.approve_command(params, READ)
+    }
+    pub fn approve_test(&self, params: &Value) -> bool {
+        self.test && !self.denial && self.approve_command(params, TEST)
+    }
+    fn approve_command(&self, params: &Value, expected: &str) -> bool {
         if !params["cwd"]
             .as_str()
             .is_some_and(|p| same_path(p, &self.cwd))
@@ -164,14 +201,14 @@ impl Fixture {
         let Some(command) = params["command"].as_str() else {
             return false;
         };
-        if command == READ {
+        if command == expected {
             return true;
         }
         let Some(argv) = words(command) else {
             return false;
         };
         if argv.len() < 3
-            || argv.last().map(String::as_str) != Some(READ)
+            || argv.last().map(String::as_str) != Some(expected)
             || argv[argv.len() - 2] != "-Command"
             || !self.shells.iter().any(|p| same_path(&argv[0], p))
         {
@@ -314,6 +351,47 @@ mod tests {
         );
         assert_eq!(fixture.check_delivery(&first), Ok(()));
     }
+    #[test]
+    fn test_requires_read_then_patch_then_the_exact_command_before_a_final_claim() {
+        let mut fixture = fixture();
+        fixture.test = true;
+        let first = response("read", read(json!({"cmd":READ,"login":false})));
+        let patch = response(
+            "patch",
+            json!({"type":"custom_tool_call","name":"apply_patch","input":fixture.patch()}),
+        );
+        let test = response("test", read(json!({"cmd":TEST,"login":false})));
+        let final_text = response(
+            "final",
+            json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":TEST_PASSED}]}),
+        );
+        assert!(fixture.check_delivery(&test).is_err());
+        fixture.check_delivery(&first).unwrap();
+        fixture.check_delivery(&patch).unwrap();
+        assert!(fixture.check_delivery(&final_text).is_err());
+        for cmd in [
+            READ.to_owned(),
+            format!("{TEST}; Get-ChildItem"),
+            TEST.replace("exit 1", "exit 0"),
+        ] {
+            assert!(
+                fixture
+                    .check_delivery(&response("test", read(json!({"cmd":cmd,"login":false}))))
+                    .is_err()
+            );
+        }
+        fixture.check_delivery(&test).unwrap();
+        fixture.check_delivery(&test).unwrap();
+        fixture.check_delivery(&final_text).unwrap();
+        assert!(fixture.approve_test(&json!({"cwd":fixture.cwd,"command":TEST})));
+        assert!(!fixture.approve_test(&json!({"cwd":r"C:\other","command":TEST})));
+        assert!(
+            !fixture.approve_test(
+                &json!({"cwd":fixture.cwd,"command":TEST,"networkApprovalContext":{}})
+            )
+        );
+    }
+
     #[test]
     fn denial_allows_only_one_read_then_exact_acknowledgement() {
         let mut fixture = fixture();

@@ -17,6 +17,7 @@ pub enum Exercise {
     #[default]
     Text,
     ReadPatch,
+    ReadPatchTest,
     DeniedRead,
 }
 
@@ -60,7 +61,7 @@ pub async fn qualify_text(
     .map_err(|_| "E_NATIVE_PROBE_WORKER")?
 }
 
-/// One fixed read/patch or command-denial exercise in a disposable workspace. This does not
+/// One fixed read/patch/test or command-denial exercise in a disposable workspace. This does not
 /// certify the complete coding corpus or publish a production coding route.
 pub async fn qualify_tools(
     executable: &Path,
@@ -104,6 +105,7 @@ async fn qualify_owned(
         let mut fixture =
             crate::native_fixture::Fixture::new(directory.join("workspace"), marker.clone());
         fixture.denial = exercise == Exercise::DeniedRead;
+        fixture.test = exercise == Exercise::ReadPatchTest;
         Arc::new(fixture)
     });
     let expected = fixture
@@ -171,7 +173,9 @@ async fn qualify_owned(
         catalog_codec: codec.id().into(),
         executable_sha256: hash,
         exact_text_received: true,
-        native_tools_executed: if exercise == Exercise::ReadPatch {
+        native_tools_executed: if exercise == Exercise::ReadPatchTest {
+            3
+        } else if exercise == Exercise::ReadPatch {
             2
         } else {
             0
@@ -232,6 +236,7 @@ struct Client {
     read_approved: bool,
     read_denied: bool,
     patch_approved: bool,
+    test_approved: bool,
 }
 impl Client {
     async fn send(&mut self, value: Value) -> Result<(), &'static str> {
@@ -276,14 +281,27 @@ impl Client {
             let mut intentional_denial = false;
             if scope && let Some(fixture) = &self.fixture {
                 match message["method"].as_str() {
-                    Some("item/commandExecution/requestApproval")
-                        if !self.read_approved && !self.read_denied =>
-                    {
-                        let valid = fixture.approve_read(params);
-                        intentional_denial = valid && fixture.denial;
-                        accepted = valid && !fixture.denial;
-                        self.read_approved |= accepted;
-                        self.read_denied |= intentional_denial;
+                    Some("item/commandExecution/requestApproval") => {
+                        if !self.read_approved && !self.read_denied && fixture.approve_read(params)
+                        {
+                            intentional_denial = fixture.denial;
+                            accepted = !fixture.denial;
+                            self.read_approved |= accepted;
+                            self.read_denied |= intentional_denial;
+                        } else if !self.test_approved
+                            && fixture.approve_test(params)
+                            && self.observations.iter().any(|event| {
+                                event["method"] == "item/completed"
+                                    && event["params"]["threadId"] == params["threadId"]
+                                    && event["params"]["turnId"] == params["turnId"]
+                                    && event["params"]["item"]["type"] == "fileChange"
+                                    && event["params"]["item"]["status"] == "completed"
+                                    && fixture.patch_changes(&event["params"]["item"])
+                            })
+                        {
+                            accepted = true;
+                            self.test_approved = true;
+                        }
                     }
                     Some("item/fileChange/requestApproval")
                         if !self.patch_approved && !fixture.denial =>
@@ -546,6 +564,7 @@ async fn run_client(
         read_approved: false,
         read_denied: false,
         patch_approved: false,
+        test_approved: false,
     };
     let result = tokio::select! {
         () = cancellation.cancelled() => Err("E_NATIVE_PROBE_CANCELLED"),
@@ -650,11 +669,39 @@ fn verify_tools(
         .iter()
         .filter(|item| item["type"] == "fileChange")
         .collect();
-    if commands.len() != 1 || patches.len() != 1 {
+    if commands.len() != if fixture.test { 2 } else { 1 } || patches.len() != 1 {
+        return Err("E_NATIVE_PROBE_ACTION");
+    }
+    let tool_order: Vec<_> = items
+        .iter()
+        .filter_map(|item| {
+            item["type"]
+                .as_str()
+                .filter(|kind| matches!(*kind, "commandExecution" | "fileChange"))
+        })
+        .collect();
+    let expected_order: &[&str] = if fixture.test {
+        &["commandExecution", "fileChange", "commandExecution"]
+    } else {
+        &["commandExecution", "fileChange"]
+    };
+    if tool_order != expected_order {
         return Err("E_NATIVE_PROBE_ACTION");
     }
     let command = commands[0];
     let patch = patches[0];
+    if fixture.test {
+        let test = commands[1];
+        if test["status"] != "completed"
+            || test["exitCode"] != 0
+            || !fixture.approve_test(test)
+            || test["aggregatedOutput"]
+                .as_str()
+                .is_none_or(|s| s.trim() != crate::native_fixture::TEST_PASSED)
+        {
+            return Err("E_NATIVE_PROBE_TEST");
+        }
+    }
     if command["status"] != "completed"
         || command["exitCode"] != 0
         || !fixture.approve_read(command)
@@ -801,8 +848,92 @@ mod tests {
         std::fs::remove_dir_all(directory).unwrap();
     }
 
+    #[test]
+    fn test_success_requires_attributed_exit_code_output_command_and_real_files() {
+        let directory = std::env::temp_dir().join(format!(
+            "cxweb-test-evidence-{:032x}",
+            rand::random::<u128>()
+        ));
+        protected_directory(&directory).unwrap();
+        let mut fixture =
+            crate::native_fixture::Fixture::new(directory.clone(), "private-marker".into());
+        fixture.test = true;
+        for name in ["probe-input.txt", "probe-output.txt"] {
+            std::fs::write(directory.join(name), "private-marker\n").unwrap();
+        }
+        let event = |item| json!({"method":"item/completed","params":{"threadId":"thread","turnId":"turn","item":item}});
+        let read = event(
+            json!({"type":"commandExecution","status":"completed","exitCode":0,"command":crate::native_fixture::READ,"cwd":directory,"aggregatedOutput":"private-marker\n"}),
+        );
+        let patch = event(
+            json!({"type":"fileChange","status":"completed","changes":[{"kind":{"type":"add"},"path":"probe-output.txt","diff":"private-marker\n"}]}),
+        );
+        let test = event(
+            json!({"type":"commandExecution","status":"completed","exitCode":0,"command":crate::native_fixture::TEST,"cwd":directory,"aggregatedOutput":crate::native_fixture::TEST_PASSED}),
+        );
+        assert_eq!(
+            verify_tools(
+                &fixture,
+                &[read.clone(), patch.clone(), test.clone()],
+                "thread",
+                "turn"
+            ),
+            Ok(())
+        );
+        for (pointer, value) in [
+            ("/params/threadId", json!("other")),
+            ("/params/turnId", json!("other")),
+            ("/params/item/exitCode", json!(1)),
+            ("/params/item/exitCode", Value::Null),
+            ("/params/item/status", json!("inProgress")),
+            (
+                "/params/item/command",
+                json!("Write-Output 'cxweb fixture tests passed'"),
+            ),
+            ("/params/item/cwd", json!(r"C:\other")),
+            (
+                "/params/item/aggregatedOutput",
+                json!("cxweb fixture tests failed"),
+            ),
+        ] {
+            let mut changed = test.clone();
+            *changed.pointer_mut(pointer).unwrap() = value;
+            assert!(
+                verify_tools(
+                    &fixture,
+                    &[read.clone(), patch.clone(), changed],
+                    "thread",
+                    "turn"
+                )
+                .is_err()
+            );
+        }
+        assert!(verify_tools(&fixture, &[read.clone(), patch.clone()], "thread", "turn").is_err());
+        assert!(
+            verify_tools(
+                &fixture,
+                &[read.clone(), test.clone(), patch.clone()],
+                "thread",
+                "turn"
+            )
+            .is_err()
+        );
+        assert!(
+            verify_tools(
+                &fixture,
+                &[read.clone(), patch.clone(), test.clone(), test.clone()],
+                "thread",
+                "turn"
+            )
+            .is_err()
+        );
+        std::fs::write(directory.join("probe-output.txt"), "wrong output\n").unwrap();
+        assert!(verify_tools(&fixture, &[read, patch, test], "thread", "turn").is_err());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
     #[tokio::test]
-    #[ignore = "requires CXWEB_NATIVE_PROBE_BACKEND; executes only the exact local read/patch fixture through a reviewed native backend"]
+    #[ignore = "requires CXWEB_NATIVE_PROBE_BACKEND; executes exact local read/patch/test and denial fixtures through a reviewed native backend"]
     async fn actual_native_backend_executes_guarded_tools_and_denial_fixtures() {
         use axum::{
             body::{Body, to_bytes},
@@ -820,7 +951,12 @@ mod tests {
         let target = TargetPathGuard::capture(&executable, false).unwrap();
         let hash = native_preflight::fingerprint(&executable).await.unwrap();
         let (_, codec) = native_preflight::reviewed(&hash).unwrap();
-        for denial in [false, true] {
+        for (denial, test, corrupt_output) in [
+            (false, false, false),
+            (true, false, false),
+            (false, true, false),
+            (false, true, true),
+        ] {
             let directory = std::env::temp_dir().join(format!(
                 "cxweb-native-tools-{:032x}",
                 rand::random::<u128>()
@@ -831,6 +967,7 @@ mod tests {
                 format!("cxweb fixture {:032x}", rand::random::<u128>()),
             );
             fixture.denial = denial;
+            fixture.test = test;
             let fixture = Arc::new(fixture);
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let state = crate::ProbeState::new(listener.local_addr().unwrap().port());
@@ -851,7 +988,7 @@ mod tests {
                     let body = to_bytes(request.into_body(), 8 * 1024 * 1024).await.unwrap();
                     let payload = strict_json::parse(&body, 8 * 1024 * 1024).unwrap();
                     let index = count.fetch_add(1, Ordering::SeqCst);
-                    let name = if index == 0 { "exec_command" } else { "apply_patch" };
+                    let name = if index == 0 || (index == 2 && fixture.test) { "exec_command" } else { "apply_patch" };
                     let namespace = payload["tools"].as_array().unwrap().iter().find_map(|tool| {
                         (tool["type"] == "namespace" && tool["tools"].as_array().is_some_and(|children|
                             children.iter().any(|child| child["name"] == name)))
@@ -877,9 +1014,25 @@ mod tests {
                             ValidatedOutput::Calls(vec![ValidatedCall {native_name:name.into(), namespace,
                                 kind:ToolKind::Custom, input:json!(fixture.patch())}])
                         }
+                        2 if fixture.test => {
+                            assert!(payload["input"].as_array().unwrap().iter().any(|item| item["type"] == "custom_tool_call_output"));
+                            if corrupt_output {
+                                // Fault injection stays inside this disposable workspace.
+                                // The genuine test must now fail; a fabricated successful
+                                // final answer below must not pass client verification.
+                                std::fs::write(fixture.cwd.join("probe-output.txt"), "incorrect fixture output\n").unwrap();
+                            }
+                            ValidatedOutput::Calls(vec![ValidatedCall {native_name:name.into(), namespace,
+                                kind:ToolKind::Function, input:json!({"cmd":crate::native_fixture::TEST,"login":false,"max_output_tokens":1024})}])
+                        }
                         2 => {
                             assert!(payload["input"].as_array().unwrap().iter().any(|item| item["type"] == "custom_tool_call_output"));
                             ValidatedOutput::Final(fixture.marker.clone())
+                        }
+                        3 if fixture.test => {
+                            let expected_output = if corrupt_output { "cxweb fixture tests failed" } else { crate::native_fixture::TEST_PASSED };
+                            assert!(payload["input"].as_array().unwrap().iter().any(|item| item["type"] == "function_call_output" && item["output"].to_string().contains(expected_output)));
+                            ValidatedOutput::Final(fixture.expected().into())
                         }
                         _ => return Response::builder().status(StatusCode::BAD_REQUEST).body(Body::empty()).unwrap(),
                     };
@@ -902,8 +1055,25 @@ mod tests {
             .await;
             server.abort();
             let _ = server.await;
-            assert_eq!(result, Ok(()), "denial={denial}");
-            assert_eq!(count.load(Ordering::SeqCst), if denial { 2 } else { 3 });
+            let expected = if corrupt_output {
+                Err("E_NATIVE_PROBE_TEST")
+            } else {
+                Ok(())
+            };
+            assert_eq!(
+                result, expected,
+                "denial={denial}, test={test}, corrupt_output={corrupt_output}"
+            );
+            assert_eq!(
+                count.load(Ordering::SeqCst),
+                if denial {
+                    2
+                } else if test {
+                    4
+                } else {
+                    3
+                }
+            );
             assert_eq!(
                 native_preflight::fingerprint(&executable).await.unwrap(),
                 hash
