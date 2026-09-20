@@ -10,6 +10,146 @@
       },
       "started_at": 1789934300,
       "submitted_at": 1789934306
+    },
+    "case-002": {
+      "finished_at": 1789934393,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": false
+      },
+      "started_at": 1789934376,
+      "submitted_at": 1789934381
+    },
+    "case-003": {
+      "finished_at": 1789934469,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789934453,
+      "submitted_at": 1789934459
+    },
+    "case-004": {
+      "finished_at": 1789934549,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789934530,
+      "submitted_at": 1789934535
+    },
+    "case-005": {
+      "finished_at": 1789934624,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789934609,
+      "submitted_at": 1789934615
+    },
+    "case-006": {
+      "finished_at": 1789934703,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": false
+      },
+      "started_at": 1789934684,
+      "submitted_at": 1789934689
+    },
+    "case-007": {
+      "finished_at": 1789934779,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789934763,
+      "submitted_at": 1789934768
+    },
+    "case-008": {
+      "finished_at": 1789934855,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789934839,
+      "submitted_at": 1789934845
+    },
+    "case-009": {
+      "finished_at": 1789934930,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789934915,
+      "submitted_at": 1789934920
+    },
+    "case-010": {
+      "finished_at": 1789935006,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789934990,
+      "submitted_at": 1789934995
+    },
+    "case-011": {
+      "finished_at": 1789935082,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789935066,
+      "submitted_at": 1789935072
+    },
+    "case-012": {
+      "finished_at": 1789935156,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789935142,
+      "submitted_at": 1789935147
+    },
+    "case-013": {
+      "finished_at": 1789935234,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789935216,
+      "submitted_at": 1789935221
+    },
+    "case-014": {
+      "finished_at": 1789935311,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789935294,
+      "submitted_at": 1789935299
+    },
+    "case-015": {
+      "failure_code": "E_BROWSER_UTF16",
+      "finished_at": 1789935383,
+      "result": {
+        "kind": "failure",
+        "reason": "transport"
+      },
+      "started_at": 1789935371,
+      "submitted_at": 1789935376
     }
   },
   "identity": {
@@ -26,33 +166,33 @@
       "anchor_count": 0,
       "answer_candidates": 1,
       "answer_fenced": 0,
-      "answer_generating": 0,
-      "answer_length": 151,
+      "answer_generating": 1,
+      "answer_length": 126,
       "answer_utf16_pending": 0,
       "block_count": 7,
       "break_count": 0,
       "code_count": 0,
-      "common_prefix_length": 1884,
+      "common_prefix_length": 1869,
       "control_count": 1,
       "expected_character_kind": 0,
-      "expected_length": 1884,
+      "expected_length": 1869,
       "intermediate_blocks": 0,
-      "plain_length": 1884,
-      "rendered_length": 1894,
+      "plain_length": 1869,
+      "rendered_length": 1879,
       "span_count": 0,
       "text_content_matches": 1
     },
     "qualification": {
       "assistant_present": true,
       "expected_model_label": "Extra High",
-      "generating": false,
+      "generating": true,
       "observed_model_label": "Extra High",
       "user_matches": true,
       "user_present": true
     }
   },
   "native_client_exercised": false,
-  "not_before": 1789934376,
+  "not_before": 1789935443,
   "summary": {
     "adversarial_attempted": 0,
     "categories": {
@@ -75,10 +215,10 @@
         "task_passed": 0
       },
       "final_text": {
-        "attempted": 1,
-        "completed": 1,
-        "protocol_valid": 1,
-        "task_passed": 1
+        "attempted": 15,
+        "completed": 15,
+        "protocol_valid": 14,
+        "task_passed": 12
       },
       "function": {
         "attempted": 0,
@@ -119,18 +259,20 @@
     },
     "complete": false,
     "counts": {
-      "attempted": 1,
-      "completed": 1,
-      "protocol_valid": 1,
-      "task_passed": 1
+      "attempted": 15,
+      "completed": 15,
+      "protocol_valid": 14,
+      "task_passed": 12
     },
     "custom_or_namespaced_attempted": 0,
-    "failures": {},
+    "failures": {
+      "transport": 1
+    },
     "meets_envelope_threshold": false,
     "planned": 200,
     "protocol_wilson_95": [
-      0.20654931437723745,
-      1.0
+      0.7018347012621998,
+      0.9881331045067315
     ],
     "release_qualified": false
   },

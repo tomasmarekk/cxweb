@@ -23,6 +23,33 @@ English. The complete installed CLI and App-backend read/patch/final scenarios
 now pass. A fixed message sent from the actual GUI also passed with the owned
 model and effort corroborated by the native turn context.
 
+## Interior Unicode rendering and arithmetic fixtures (2026-09-20)
+
+- The protocol-unicode-xhigh-sep20 cohort stopped at case-015 at 20:16:23 UTC:
+  14/15 protocol-valid, 12/15 task-correct and one E_BROWSER_UTF16 failure.
+  Cleanup completed without destroying browser transport. All first attempts,
+  including the two valid-but-wrong responses, are archived in the report.
+- An extended real-Chrome regression failed before the change when an incomplete
+  surrogate appeared before an already-rendered suffix. While generating, the
+  observer now publishes only the prefix before the first unpaired code point
+  and waits for a complete snapshot. Final malformed strings still fail; no
+  characters are replaced and no second generation is requested. The regression
+  covers high/low interior units, a valid non-BMP prefix, exact recovered suffix,
+  completed invalid text, continued transport and cleanup. The live failed raw
+  snapshot was not captured, so its precise rendering shape remains unproven.
+- Validation: 309 workspace tests passed, 20 opt-in tests ignored; the expanded
+  real-Chrome fixture explicitly passed; all 56 DOM/fixture/approval Node tests
+  passed. Clippy with denied warnings, formatting and release build passed.
+- Updated the idle installed daemon to
+  0724e0be9e3c53ecbf316be74b8840ca5718e6a74260a3cb7bd6bb5c8c5889ee.
+  Previous cohorts remain separate from qualification on this changed adapter.
+- Added four deterministic arithmetic repair fixtures with actual offline Node
+  tests and an installed-client --coding=<id> path. A native run must read the
+  files, observe test failure, apply one bounded source patch, rerun passing
+  tests and answer afterward. Reference solutions are not sent to the model.
+  These are four small coding exercises, not the full required G2 suite.
+  Local fixture/policy checks passed; account-live execution is still pending.
+
 ## Native fixture approval scope (2026-09-20)
 
 - Generated experimental app-server schemas directly from the reviewed CLI

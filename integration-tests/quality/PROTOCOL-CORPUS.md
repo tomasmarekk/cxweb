@@ -142,6 +142,16 @@ while its serial batch is running. Actual App/CLI Unicode text checks also
 passed on this build, and remain separate native-client evidence rather than
 additional corpus samples.
 
+This cohort stopped at case-015 at 20:16:23 UTC: 14/15 protocol-valid and 12/15
+task-correct. Case-015 failed with E_BROWSER_UTF16; cases 002 and 006 were valid
+but task-incorrect. Cleanup completed and browser transport remained usable.
+The archived report includes every attempted case. A subsequent controlled
+Chrome regression reproduced rejection of an incomplete interior UTF-16 unit
+while generation was still active. The adapter now defers the remaining suffix
+until a well-formed snapshot, without replacing characters or accepting invalid
+final text. Its changed executable requires a separate live cohort; this failed
+observation is not repaired or removed.
+
 The actual installed App backend 0.155.0-alpha.9.2 and CLI 0.155.1 both returned
 the owned family with Instant, Medium, High, Extra High and Pro after this update.
 Those read-only checks preserved both configurations and executables. They did

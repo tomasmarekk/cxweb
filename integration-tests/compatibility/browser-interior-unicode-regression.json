@@ -1,0 +1,25 @@
+{
+  "evidence_level": "mock_integration",
+  "date_utc": "2026-09-20",
+  "actual_browser": true,
+  "browser": "Chrome/153.0.8010.48",
+  "platform": "Windows x64 10.0.26100.0",
+  "fixture": "Synthetic markup in a fresh offscreen profile",
+  "account_generation": false,
+  "release_qualified": false,
+  "installed_runtime_sha256": "0724e0be9e3c53ecbf316be74b8840ca5718e6a74260a3cb7bd6bb5c8c5889ee",
+  "command": "cargo test --locked -p cxweb-browser-adapter incomplete_utf16_dom_text_does_not_destroy_browser_transport -- --ignored --nocapture",
+  "before_fix": "FAIL: E_BROWSER_UTF16 for an incomplete interior code point while generating",
+  "after_fix": "PASS",
+  "verified": [
+    "High and low unpaired interior units defer the suffix while generating",
+    "The valid prefix, including an existing non-BMP character, remains exact",
+    "The final completed character and deferred suffix are recovered unchanged",
+    "Malformed final text is rejected without character replacement",
+    "Browser.getVersion and owned target cleanup remain available"
+  ],
+  "limits": [
+    "The failed account-live DOM snapshot was not captured; its exact malformed rendering shape remains unproven.",
+    "This synthetic result is not an account-live protocol or coding observation."
+  ]
+}

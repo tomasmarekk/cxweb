@@ -2499,13 +2499,43 @@ mod tests {
             Progress::Generating
         ));
         tracker.commit_prefix("prefix ").unwrap();
-        browser.dom(&page, "function () { document.querySelector('#answer').textContent='prefix '+String.fromCharCode(0xd83e,0xdd80); document.querySelector('[data-testid=stop-button]').remove(); return true; }", vec![]).unwrap();
+        // The renderer can append JSON punctuation after an incomplete code
+        // point. Preserve only the valid prefix until a later complete snapshot.
+        for code in [0xd83e, 0xdd80] {
+            browser.dom(&page, "function (code) { document.querySelector('#answer').textContent='prefix '+String.fromCharCode(code)+' suffix'; return true; }", vec![json!(code)]).unwrap();
+            let partial = browser.observe(&page, &baseline, "Exact fixture").unwrap();
+            assert_eq!(partial.text, "prefix ");
+            assert_eq!(browser.attribution_diagnostic()["answer_utf16_pending"], 1);
+            assert!(matches!(
+                tracker.observe(partial).unwrap(),
+                Progress::Generating
+            ));
+            assert!(browser.version().is_ok());
+        }
+        browser.dom(&page, "function () { document.querySelector('#answer').textContent='prefix '+String.fromCharCode(0xd83e,0xdd80)+' '+String.fromCharCode(0xd83e)+' suffix'; return true; }", vec![]).unwrap();
+        let partial = browser.observe(&page, &baseline, "Exact fixture").unwrap();
+        assert_eq!(partial.text, "prefix 🦀 ");
+        assert!(matches!(
+            tracker.observe(partial).unwrap(),
+            Progress::Generating
+        ));
+        browser.dom(&page, "function () { document.querySelector('#answer').textContent='prefix '+String.fromCharCode(0xd83e,0xdd80)+' suffix'; document.querySelector('[data-testid=stop-button]').remove(); return true; }", vec![]).unwrap();
         let complete = browser.observe(&page, &baseline, "Exact fixture").unwrap();
         assert_eq!(browser.attribution_diagnostic()["answer_utf16_pending"], 0);
         assert!(
-            matches!(tracker.observe(complete).unwrap(), Progress::Completed(text) if text == "prefix 🦀")
+            matches!(tracker.observe(complete).unwrap(), Progress::Completed(text) if text == "prefix 🦀 suffix")
         );
         browser.dom(&page, "function () { document.querySelector('#answer').textContent='prefix '+String.fromCharCode(0xd83e); return true; }", vec![]).unwrap();
+        assert_eq!(
+            browser
+                .observe(&page, &baseline, "Exact fixture")
+                .err()
+                .unwrap()
+                .to_string(),
+            "E_BROWSER_UTF16"
+        );
+        assert!(browser.version().is_ok());
+        browser.dom(&page, "function () { document.querySelector('#answer').textContent='prefix '+String.fromCharCode(0xdd80)+' suffix'; return true; }", vec![]).unwrap();
         assert_eq!(
             browser
                 .observe(&page, &baseline, "Exact fixture")
