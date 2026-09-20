@@ -3,12 +3,16 @@ use super::*;
 
 const GROW_PROMPT: &str = "Use no tools. This is a context-retention test. Invent a fresh random value of exactly 32 lowercase hexadecimal characters. Start your final answer with one line containing CXWEB_NATIVE_CHECKPOINT_ followed by that value. Then write a detailed English technical explanation of pure functions, immutable data, error handling and deterministic testing, with several short JavaScript examples. Aim for about 1000 words of normal useful prose; do not count characters or use repeated padding. Do not wrap the entire answer in a code fence. Remember only the first line as the latest value for later recall and preserve it verbatim in task checkpoints; it replaces any previous value. The technical explanation is disposable test history, not task state.";
 const RECALL_PROMPT: &str = "Return exactly the latest complete CXWEB_NATIVE_CHECKPOINT_ line remembered from your most recent successful answer. Recover it from the task checkpoint. Use no tools, omit the disposable technical explanation and add no other text.";
+// Even minimum-size accepted answers must be able to reach the 96 KiB budget.
+const MAX_HISTORY_TURNS: u64 = 32;
 
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Report {
     #[serde(default)]
     history_fixture: String,
+    #[serde(default)]
+    max_history_turns: u64,
     completed: bool,
     completed_history_turns: usize,
     actual_answer_bytes: usize,
@@ -140,12 +144,13 @@ impl Client {
     ) -> Result<(), &'static str> {
         let mut report = Report {
             history_fixture: "technical-prose.v1".into(),
+            max_history_turns: MAX_HISTORY_TURNS,
             ..Report::default()
         };
         report.save(cwd)?;
         let mut latest = None;
         let mut seen = std::collections::BTreeSet::new();
-        for index in 0..8 {
+        for index in 0..MAX_HISTORY_TURNS {
             let turn = self
                 .checkpoint_turn(thread, 20 + index, GROW_PROMPT)
                 .await?;
@@ -189,7 +194,7 @@ impl Client {
         // This is a new, explicit diagnostic user turn after a positively
         // observed pre-submission refusal, not a resend or compact/start RPC.
         self.compacting = true;
-        let turn = self.checkpoint_turn(thread, 40, RECALL_PROMPT).await?;
+        let turn = self.checkpoint_turn(thread, 100, RECALL_PROMPT).await?;
         self.compacting = false;
         report.last_native_error = native_error(&self.observations, thread, &turn);
         report.save(cwd)?;

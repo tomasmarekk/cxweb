@@ -23,6 +23,21 @@ English. The complete installed CLI and App-backend read/patch/final scenarios
 now pass. A fixed message sent from the actual GUI also passed with the owned
 model and effort corroborated by the native turn context.
 
+## Automatic checkpoint history bound (2026-09-20)
+
+- The first prose run completed all eight history turns with 70,866 actual answer
+  bytes, eight WebSocket requests, no runtime/native error and confirmed cleanup.
+  It correctly failed `E_NATIVE_PROBE_AUTOMATIC_BOUNDARY`: the history still fit
+  the 96 KiB diagnostic guard, so it exercised no compaction. The full incomplete
+  report is retained as
+  `cli-0.155.1.automatic-checkpoint-eight-turn-boundary-incomplete.json`.
+- Raised the diagnostic maximum to 32 history turns. At the accepted 4 KiB minimum
+  this is sufficient to reach the unchanged 96 KiB guard. The normal/summary
+  budgets, actual native refusal, automatic compaction, exact recall and cleanup
+  requirements are unchanged. The report includes the maximum; the fixed recall
+  RPC uses a separate ID range. The original eight-turn attempt remains a failure
+  for compaction qualification.
+
 ## Automatic checkpoint fixture and progress diagnostics (2026-09-20)
 
 - The post-keepalive repetitive-padding run stayed on one WebSocket request for
