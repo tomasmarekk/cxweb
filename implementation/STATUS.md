@@ -23,6 +23,45 @@ English. The complete installed CLI and App-backend read/patch/final scenarios
 now pass. A fixed message sent from the actual GUI also passed with the owned
 model and effort corroborated by the native turn context.
 
+## Live native automatic checkpoint result (2026-09-20)
+
+- CLI 0.155.1 passed at 18:04:46 UTC using the installed authenticated background
+  browser. Eight actual history turns produced 71,354 answer bytes. The next
+  request hit the unchanged local byte guard before browser submission and
+  produced an attributed native `contextWindowExceeded` failure.
+- On the next explicit user turn, Codex automatically compacted once and returned
+  the exact last model-generated marker. The marker appeared in no user message;
+  the test called no manual compaction RPC. Runtime counters independently showed
+  eleven WebSocket requests (eight history, one refusal, one compaction and one
+  continuation), no runtime failure, no native-upstream model frame and no original
+  assistant/tool plaintext in the checkpoint continuation. Cleanup was confirmed.
+- Report: `cli-0.155.1.installed-automatic-checkpoint-websocket.json`. Installed
+  diagnostic daemon SHA-256:
+  `4a14a6506b1ed8e7d3cddb63af1144c3cfc29ac3d07f71ad1b28058c47c4686f`.
+  This is Extra High text-only next-turn recovery in an isolated native home,
+  borrowing the installed browser. It does not qualify in-place retry, outstanding
+  tool state or every reasoning level, and it does not publish production
+  checkpoint capabilities.
+- App backend 0.155.0-alpha.9.2 passed at 18:11:42 UTC: seven real history turns
+  and 61,472 answer bytes, one local refusal, one native automatic compaction and
+  exact recall. Ten WebSocket requests completed the scenario with no runtime
+  failure, no native-upstream model frames, no original assistant/tool plaintext
+  in continuation and confirmed cleanup. See
+  `app-0.155.0-alpha.9.2.installed-automatic-checkpoint-websocket.json`.
+- The installed diagnostic build passed both updated checkpoint unit tests,
+  Clippy with warnings denied, formatting and the release CLI/daemon build.
+  The full workspace run for the preceding progress change passed 292 tests
+  (18 opt-in tests ignored); all 38 browser JavaScript regressions also passed.
+- Ordinary requests through the real installed Codex home then passed for App
+  at 18:12:31 UTC and CLI at 18:13:17 UTC. Both retained all five reasoning choices
+  and native/owned catalog entries, and verified unchanged configuration and
+  executable hashes. Reports are `*.post-automatic-checkpoint-verification.json`.
+  Runtime is idle; browser/auth/models and both client request components are
+  healthy. Overall health remains preflight because configuration/native-upstream
+  health evidence is unknown in this restarted runtime; it is not a full release
+  qualification. Pending tool state and other reasoning modes still need separate
+  checkpoint qualification before production enablement.
+
 ## Automatic checkpoint history bound (2026-09-20)
 
 - The first prose run completed all eight history turns with 70,866 actual answer

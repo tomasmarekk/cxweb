@@ -1,0 +1,124 @@
+{
+  "automatic_checkpoint": {
+    "actual_answer_bytes": 61472,
+    "automatic_compactions": 1,
+    "completed": true,
+    "completed_history_turns": 7,
+    "context_refusals": 1,
+    "exact_recall": true,
+    "history_fixture": "technical-prose.v1",
+    "last_native_error": null,
+    "manual_compaction_requests": 0,
+    "max_history_turns": 32
+  },
+  "automatic_requested": true,
+  "browser_scope": {
+    "account_candidates": 0,
+    "account_switcher_matches_settings": true,
+    "default_context_verified": true,
+    "dismissal": null,
+    "failure": null,
+    "has_account_id": false,
+    "has_workspace_id": false,
+    "menu_controls": [
+      "menuitem:other:submenu",
+      "menuitem:Personalization:action",
+      "menuitem:other:action",
+      "menuitem:Settings:action",
+      "menuitem:Help:submenu",
+      "menuitem:Log out:action"
+    ],
+    "menu_items": 6,
+    "menu_present": true,
+    "profile_control_tags": [],
+    "selected_items": 0,
+    "selected_workspace_candidates": 0,
+    "settings_account_candidates": 1,
+    "settings_account_selected": true,
+    "settings_available": true,
+    "settings_controls": [
+      "General",
+      "Notifications",
+      "Personalization",
+      "Data controls",
+      "Parental controls",
+      "Account"
+    ],
+    "settings_fields": [
+      "Email",
+      "Name"
+    ],
+    "settings_loading": false,
+    "settings_opened": true,
+    "settings_panel_present": true,
+    "switcher": {
+      "account_candidates": 1,
+      "account_source": "account_heading",
+      "available": true,
+      "controls": [
+        "menuitem:other:unselected",
+        "menuitemradio:other:selected",
+        "menuitem:Add account:unselected"
+      ],
+      "email_controls": [
+        "menuitem:unselected"
+      ],
+      "expanded": true,
+      "public_labels": [
+        "Add account"
+      ],
+      "selected_account_candidates": 0,
+      "selected_email_sources": [
+        0,
+        0,
+        0
+      ],
+      "selected_items": 1,
+      "submenu_present": true,
+      "workspace_candidates": 0
+    },
+    "workspace_candidates": 0,
+    "workspace_markers": [
+      "Pro"
+    ]
+  },
+  "catalog_codec": "codex-model-info-0.155.0-alpha.9.2",
+  "cleanup_confirmed": true,
+  "client_build": "0.155.0-alpha.9.2",
+  "completed": true,
+  "diagnostic_budget": {
+    "normal_encoded_bytes": 98304,
+    "production_capacity_qualified": false,
+    "summary_encoded_bytes": 262144
+  },
+  "executable_sha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+  "failure": null,
+  "isolated_native_home": true,
+  "native_tools_executed": 0,
+  "observed_at": "2026-09-20T18:11:42.919Z",
+  "production_capability_published": false,
+  "saved_browser_reused": true,
+  "schema": "cxweb.native-checkpoint.v1",
+  "stage": "completed",
+  "transport": {
+    "checkpoint_continuations": 1,
+    "checkpoint_continuations_with_plaintext_assistant_or_tools": 0,
+    "compaction_requests": 1,
+    "context_refusals": 1,
+    "failures": [],
+    "native_websocket_frames": 0,
+    "websocket_requests": 10
+  },
+  "websocket": true,
+  "daemon_sha256": "4a14a6506b1ed8e7d3cddb63af1144c3cfc29ac3d07f71ad1b28058c47c4686f",
+  "evidence_level": "account_live",
+  "browser_version": "Chrome/153.0.8010.48",
+  "os_version": "Microsoft Windows NT 10.0.26100.0",
+  "selected_reasoning_effort": "xhigh",
+  "command": "cxweb runtime-verify-compaction --installation <installed-id> --client <reviewed-app-backend> --websocket --automatic",
+  "limitations": [
+    "The reviewed native executable uses an isolated signed-out home and local gateway, borrowing the installed authenticated browser.",
+    "This verifies native next-turn automatic text compaction and exact recall, not in-place retry or outstanding tool results.",
+    "Only Extra High reasoning is exercised. Production checkpoint support remains unpublished."
+  ]
+}
