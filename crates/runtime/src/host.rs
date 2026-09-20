@@ -8,7 +8,15 @@ use cxweb_platform::{
     control_pipe::{self, ControlListener},
     loopback,
 };
-use std::{io, path::Path, sync::Arc, time::Duration};
+use std::{
+    io,
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
@@ -18,6 +26,32 @@ pub struct Host {
     control_listener: ControlListener,
     control: Service,
     installation: String,
+    serving: Arc<AtomicBool>,
+}
+
+/// In-process activation receipt. The daemon retains Host independently of this
+/// handle; dropping a UI waiter does not stop native forwarding or undo a write.
+pub struct ActivationHandle {
+    controller: DisconnectController,
+    serving: Arc<AtomicBool>,
+}
+impl ActivationHandle {
+    /// Whether the reserved host's serve future is running, not upstream health.
+    pub fn is_serving(&self) -> bool {
+        self.serving.load(Ordering::Acquire)
+    }
+    /// Call only after selected-target preflight and complete client/browser
+    /// qualification. No desktop/remote command exposes this internal operation.
+    pub async fn apply(&self) -> Result<(), &'static str> {
+        self.controller.apply_prepared(self.serving.clone()).await
+    }
+}
+
+struct Serving(Arc<AtomicBool>);
+impl Drop for Serving {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 impl Host {
     /// The selected configuration must be independently selected by the owner.
@@ -51,7 +85,43 @@ impl Host {
             control_listener,
             control,
             installation,
+            serving: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    pub(crate) fn prepared(
+        listener: TcpListener,
+        journal: ConfigJournal,
+        gateway: Gateway,
+    ) -> io::Result<(Self, ActivationHandle)> {
+        if journal.phase() != crate::config_journal::Phase::Prepared
+            || listener.local_addr()?.port() != journal.runtime_route().0
+            || listener.local_addr()?.ip() != std::net::Ipv4Addr::LOCALHOST
+            || !journal.routes_to(&gateway.base_url())
+        {
+            return Err(io::Error::other("E_INTEGRATION_ROUTE_MISMATCH"));
+        }
+        let installation = journal.installation_id().to_owned();
+        let (published, native) = journal.catalog_receipt()?;
+        let control_listener = control_pipe::listen(&installation)?;
+        let controller = DisconnectController::new(gateway.clone(), journal, published, native)
+            .map_err(io::Error::other)?;
+        let serving = Arc::new(AtomicBool::new(false));
+        let handle = ActivationHandle {
+            controller: controller.clone(),
+            serving: serving.clone(),
+        };
+        Ok((
+            Self {
+                listener,
+                gateway,
+                control_listener,
+                control: Service::new(Arc::new(controller)),
+                installation,
+                serving,
+            },
+            handle,
+        ))
     }
 
     /// Process owner, not a window, owns this future. There is deliberately no
@@ -64,7 +134,10 @@ impl Host {
             control_listener,
             control,
             installation,
+            serving,
         } = self;
+        let _serving = Serving(serving.clone());
+        serving.store(true, Ordering::Release);
         let control_loop = async {
             let mut pending = Some(control_listener);
             loop {

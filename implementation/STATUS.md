@@ -21,6 +21,40 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Reserved installation and running activation host (2026-09-20)
+
+- Added a new-installation runtime path alongside native-only recovery. It binds
+  an exclusive loopback port and persists the reversible configuration plan before
+  exposing a persistent installation ID to the browser handoff owner. Reserving or
+  dropping a reservation never changes the selected Codex configuration.
+- The prepared installation binds GenerationSession to its durable coordinator,
+  ledger and catalog. Installation identity, selected route ID, observed label and
+  effort must agree. Only explicitly supplied coding-qualified client catalog rows
+  are accepted; protocol evidence is not automatically promoted to coding evidence.
+- Host construction checks the exact IPv4 loopback endpoint, journal capability
+  and catalog receipt, then exposes the existing private disconnect service. A
+  separate activation handle applies the captured configuration only while the
+  serve future is running. Apply and disconnect share serialization; an accepted
+  write outlives its caller. A write refusal preserves the running native listener.
+- Tests use disposable configuration files and local synthetic native/web peers.
+  They prove both routes answer before apply, stopped/unstarted hosts cannot apply,
+  edits after preparation are preserved, repeated apply is refused, and dropping
+  an accepted waiter does not interrupt the write or its later reversible restore.
+  An additional real-Chrome test binds a synthetic session to this installation,
+  starts Host, applies only its disposable config, and verifies profile ownership
+  until driver shutdown. It submits no account messages or native requests.
+- Verification: 202 workspace tests passed (7 opt-in tests excluded by the default
+  run); the new browser/installation test passed separately. Clippy with warnings
+  denied, formatting and diff checks passed. Release CLI, daemon and desktop builds
+  succeeded. Portable evidence is recorded in
+  `integration-tests/compatibility/activation-host-windows.json`.
+- This is the in-process activation layer, not a new desktop/private-IPC command.
+  The daemon entry point and desktop still need an activation owner that completes
+  selected-target preflight, actual coding/picker/native-coexistence qualification
+  and supervised restart registration before calling apply. The new path does not
+  yet configure checkpoint recovery. These prerequisites and authenticated full-
+  flow verification remain release blockers; production activation stays disabled.
+
 ## Internal login-to-generation ownership handoff (2026-09-20)
 
 - Added an in-process Control operation that transfers the existing managed browser

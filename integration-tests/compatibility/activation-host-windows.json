@@ -1,0 +1,32 @@
+{
+  "schema": "cxweb.activation-host.v1",
+  "date": "2026-09-20",
+  "result": "PASS",
+  "commands": [
+    "cargo test -p cxweb-runtime activation -- --nocapture",
+    "cargo test -p cxweb-runtime generation_session_binds_to_reserved_installation_without_another_browser -- --ignored --nocapture"
+  ],
+  "fixtures": [
+    "Disposable protected configuration, synthetic web provider and local native upstream",
+    "Fresh headless Chrome profile, synthetic binding and catalog qualification inputs; no account access"
+  ],
+  "checks": {
+    "exclusive_listener_reserved_before_config_apply": true,
+    "reservation_drop_preserves_original_config": true,
+    "unstarted_and_stopped_hosts_refuse_apply": true,
+    "native_and_web_paths_answer_before_apply": true,
+    "intervening_user_edit_preserved": true,
+    "failed_apply_keeps_native_forwarding": true,
+    "repeated_apply_refused": true,
+    "accepted_apply_survives_waiter_drop": true,
+    "accepted_apply_can_be_reversibly_disconnected": true,
+    "real_browser_driver_bound_to_reserved_installation": true,
+    "browser_profile_remains_owned_until_shutdown": true
+  },
+  "limits": [
+    "Hosts ran inside the test process, not through a newly installed scheduled daemon.",
+    "No native subscription, real coding/picker qualification or authenticated browser generation was tested.",
+    "The desktop and daemon entry point do not yet expose production activation.",
+    "Full qualification, restart supervision and checkpoint configuration remain prerequisites for release."
+  ]
+}

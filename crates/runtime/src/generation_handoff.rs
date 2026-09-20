@@ -334,4 +334,87 @@ mod tests {
         assert!(driver.is_closed());
         drop(paths.lock().unwrap());
     }
+
+    #[tokio::test]
+    #[ignore = "requires installed Chrome; binds a synthetic generation session to a disposable installation"]
+    async fn generation_session_binds_to_reserved_installation_without_another_browser() {
+        use crate::activation::PreparedInstallation;
+        use cxweb_codex_adapter::catalog_codec::{CatalogCodec, CatalogRoute};
+        use cxweb_platform::state::{StatePaths, installed_browser, protected_directory};
+        let root = std::env::temp_dir().join(format!(
+            "cxweb-activation-browser-{:032x}",
+            rand::random::<u128>()
+        ));
+        protected_directory(&root).unwrap();
+        let paths = StatePaths {
+            root: root.clone(),
+            profile: root.join("profile"),
+            state: root.join("browser-state"),
+        };
+        protected_directory(&paths.profile).unwrap();
+        protected_directory(&paths.state).unwrap();
+        let config = root.join("config.toml");
+        let reserved = PreparedInstallation::reserve(&root.join("installation"), &config).unwrap();
+        let installation = reserved.installation_id().to_owned();
+        let route = Route {
+            id: "webbridge/fixture".into(),
+            identity: "fixture".into(),
+            label: "Fixture · High".into(),
+            effort: Some("high".into()),
+        };
+        let browser =
+            ManagedBrowser::launch(&installed_browser().unwrap(), &paths.profile, false).unwrap();
+        let session = PreparedHandoff {
+            binding: Binding {
+                installation,
+                account: "fixture-account".into(),
+                workspace: "fixture-workspace".into(),
+                epoch: 0,
+                routes: vec![route.clone()],
+            },
+            route,
+            evidence: "a".repeat(64),
+        }
+        .start(browser, paths.lock().unwrap())
+        .unwrap();
+        let (host, activation) = reserved
+            .bind_generation(
+                &session,
+                vec![(
+                    CatalogCodec::Cli01551,
+                    vec![CatalogRoute {
+                        id: session.route.id.clone(),
+                        observed_label: session.route.label.clone(),
+                        effort: "high".into(),
+                        coding: true,
+                    }],
+                )],
+                vec!["native-fixture".into()],
+            )
+            .await
+            .unwrap();
+        assert!(!config.exists());
+        assert!(paths.lock().is_err());
+        assert_eq!(activation.apply().await, Err("E_RUNTIME_NOT_READY"));
+        let serving = tokio::spawn(host.serve());
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while !activation.is_serving() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        activation.apply().await.unwrap();
+        assert!(
+            std::fs::read_to_string(&config)
+                .unwrap()
+                .contains("openai_base_url")
+        );
+        assert!(session.driver.diagnostic().await.is_ok());
+        assert!(paths.lock().is_err());
+        serving.abort();
+        let _ = serving.await;
+        session.driver.shutdown().await.unwrap();
+        drop(paths.lock().unwrap());
+    }
 }

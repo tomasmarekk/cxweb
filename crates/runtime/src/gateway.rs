@@ -202,6 +202,18 @@ impl Gateway {
         gateway.admission.cancel.cancel();
         gateway
     }
+    /// The reservation owner supplies the capability from its private journal.
+    #[cfg(windows)]
+    pub(crate) fn prepared(
+        port: u16,
+        capability: &str,
+        native: NativeTransport,
+        web: Arc<dyn WebProvider>,
+    ) -> Self {
+        let mut gateway = Self::new(port, native, web);
+        gateway.capability = capability.to_owned();
+        gateway
+    }
     /// Irreversibly reject new web work on this listener, request cancellation,
     /// and wait for admitted providers to finish cleanup. Timeout is not a drain
     /// success: keep the listener and do not remove configuration on that result.

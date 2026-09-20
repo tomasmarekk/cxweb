@@ -34,6 +34,39 @@ pub struct DisconnectController {
 }
 
 impl DisconnectController {
+    /// Internal activation owner only. Native/client qualification must precede
+    /// this call; the private control protocol does not expose configuration apply.
+    pub(crate) async fn apply_prepared(
+        &self,
+        serving: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<(), &'static str> {
+        let controller = self.clone();
+        // Once accepted, UI cancellation must not interrupt a configuration write.
+        tokio::spawn(async move {
+            let _operation = controller.serial.lock().await;
+            if *controller.state.borrow() != DisconnectState::Idle {
+                return Err("E_ACTIVATION_STATE");
+            }
+            let journal = controller.journal.clone();
+            tokio::task::spawn_blocking(move || {
+                let mut journal = journal.lock().map_err(|_| "E_INTEGRATION_STATE")?;
+                if !serving.load(std::sync::atomic::Ordering::Acquire) {
+                    return Err("E_RUNTIME_NOT_READY");
+                }
+                if journal.phase() != Phase::Prepared {
+                    return Err("E_ACTIVATION_STATE");
+                }
+                journal
+                    .catalog_receipt()
+                    .map_err(|_| "E_CATALOG_RECEIPT_MISSING")?;
+                journal.apply().map_err(|_| "E_CONFIG_APPLY")
+            })
+            .await
+            .map_err(|_| "E_ACTIVATION_WORKER")?
+        })
+        .await
+        .map_err(|_| "E_ACTIVATION_WORKER")?
+    }
     /// Catalog receipts are the exact IDs published by this installation and
     /// native IDs verified for the selected clients, never guessed prefixes.
     pub fn new(
@@ -192,6 +225,69 @@ mod tests {
     }
     fn gateway(provider: Arc<dyn WebProvider>) -> Gateway {
         Gateway::new(12345, NativeTransport::subscription().unwrap(), provider)
+    }
+    #[tokio::test]
+    async fn dropped_activation_waiter_does_not_cancel_an_accepted_write() {
+        let fixture = Fixture::new();
+        let gateway = gateway(Arc::new(UnqualifiedProvider));
+        let base = gateway.base_url();
+        let capability = base
+            .split("/wb/")
+            .nth(1)
+            .unwrap()
+            .strip_suffix("/backend-api/codex")
+            .unwrap();
+        let mut journal = ConfigJournal::prepare(
+            &fixture.0.join("state"),
+            &fixture.config(),
+            12345,
+            capability,
+        )
+        .unwrap();
+        journal
+            .record_catalog(vec!["webbridge/test".into()], vec!["native-fixture".into()])
+            .unwrap();
+        let controller = DisconnectController::new(
+            gateway,
+            journal,
+            vec!["webbridge/test".into()],
+            vec!["native-fixture".into()],
+        )
+        .unwrap();
+        let serial = controller.serial.lock().await;
+        let (started, accepted) = tokio::sync::oneshot::channel();
+        let pending = controller.clone();
+        let waiter = tokio::spawn(async move {
+            started.send(()).unwrap();
+            pending
+                .apply_prepared(Arc::new(std::sync::atomic::AtomicBool::new(true)))
+                .await
+        });
+        accepted.await.unwrap();
+        assert!(!fixture.config().exists());
+        waiter.abort();
+        assert!(waiter.await.unwrap_err().is_cancelled());
+        drop(serial);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if controller.journal.lock().unwrap().phase() == Phase::ConfigApplied {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            std::fs::read_to_string(fixture.config())
+                .unwrap()
+                .contains("openai_base_url")
+        );
+        assert_eq!(
+            controller.disconnect(Duration::from_secs(1)).await.unwrap(),
+            DisconnectState::PendingRestart
+        );
+        assert!(!fixture.config().exists());
     }
     fn start_request(gateway: &Gateway) -> tokio::task::JoinHandle<()> {
         let request = Request::builder()
