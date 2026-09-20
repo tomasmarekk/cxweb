@@ -28,6 +28,10 @@ fn replacement_error(error: &std::io::Error) -> &'static str {
 pub struct ControlStatus {
     #[serde(default)]
     pub background_session: bool,
+    #[serde(default)]
+    pub native_text_report: Option<crate::native_probe::Report>,
+    #[serde(default)]
+    pub native_text_error: Option<String>,
     pub phase: String,
     pub browser_version: Option<String>,
     pub observation: Option<LoginObservation>,
@@ -62,6 +66,8 @@ impl Default for ControlStatus {
     fn default() -> Self {
         Self {
             background_session: false,
+            native_text_report: None,
+            native_text_error: None,
             phase: "disconnected".into(),
             browser_version: None,
             observation: None,
@@ -103,6 +109,46 @@ fn qualification_failure_state(submission_intent: bool, error: &str) -> TurnStat
 #[cfg(test)]
 mod qualification_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn native_setup_requires_background_proof_without_starting_a_client_or_changing_the_receipt()
+     {
+        use crate::control_protocol::LoginBackend;
+        let (commands, mut incoming) = mpsc::channel(8);
+        let control = Control { commands };
+        let owner = crate::setup_owner::SetupOwner::new(control);
+        let status = ControlStatus {
+            phase: "tool_protocol_qualified".into(),
+            tool_qualified_model: Some("webbridge/fixture".into()),
+            ..Default::default()
+        };
+        let expected = status.clone();
+        let worker = tokio::spawn(async move {
+            for _ in 0..2 {
+                let WorkerCommand::Snapshot(reply) = incoming.recv().await.unwrap() else {
+                    panic!("only last-receipt reads are allowed");
+                };
+                reply.send(Ok(status.clone())).unwrap();
+            }
+        });
+        let result = owner
+            .native_text(crate::setup_owner::NativeTarget {
+                client: "nonexistent".into(),
+                home: "nonexistent".into(),
+                cwd: "nonexistent".into(),
+                route: "webbridge/fixture".into(),
+            })
+            .await
+            .unwrap();
+        worker.await.unwrap();
+        assert_eq!(result.phase, expected.phase);
+        assert_eq!(result.tool_qualified_model, expected.tool_qualified_model);
+        assert_eq!(
+            result.native_text_error.as_deref(),
+            Some("E_NATIVE_TEST_BACKGROUND")
+        );
+        assert!(result.native_text_report.is_none());
+    }
 
     #[tokio::test(start_paused = true)]
     async fn generation_handoff_waits_for_the_owner_and_preserves_requested_identity() {
@@ -255,6 +301,7 @@ mod qualification_tests {
     }
 }
 enum WorkerCommand {
+    Snapshot(Reply),
     TakeGeneration {
         installation: String,
         route: String,
@@ -294,6 +341,10 @@ impl Control {
                 let mut observed_scope: Option<BrowserScope> = None;
                 while let Some(command) = incoming.blocking_recv() {
                     let command = match command {
+                        WorkerCommand::Snapshot(reply) => {
+                            let _ = reply.send(Ok(status.clone()));
+                            continue;
+                        }
                         WorkerCommand::TakeGeneration {
                             installation,
                             route,
@@ -360,7 +411,9 @@ impl Control {
                         command => command,
                     };
                     let (connect, background, qualify, qualification_kind, reply) = match command {
-                        WorkerCommand::TakeGeneration { .. } => unreachable!("handled above"),
+                        WorkerCommand::Snapshot(_) | WorkerCommand::TakeGeneration { .. } => {
+                            unreachable!("handled above")
+                        }
                         WorkerCommand::Connect(reply) => (true, false, false, None, reply),
                         WorkerCommand::Background(reply) => (false, true, false, None, reply),
                         WorkerCommand::Status(reply) => (false, false, false, None, reply),
@@ -1012,6 +1065,14 @@ impl Control {
             })
             .map_err(|_| "E_BROWSER_WORKER")?;
         Ok(Self { commands })
+    }
+    /// Last worker receipt, without re-observing or clearing qualification.
+    pub(crate) async fn snapshot(&self) -> Result<ControlStatus, &'static str> {
+        let (reply, receive) = oneshot::channel();
+        self.commands
+            .try_send(WorkerCommand::Snapshot(reply))
+            .map_err(|_| "E_CONTROL_BUSY")?;
+        receive.await.map_err(|_| "E_CONTROL_CLOSED")?
     }
     pub async fn connect(&self) -> Result<ControlStatus, &'static str> {
         self.request(true).await

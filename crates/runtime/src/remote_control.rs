@@ -22,10 +22,15 @@ pub fn login_channel() -> String {
 pub async fn serve_login() -> Result<(), &'static str> {
     let control = Control::start()?;
     let listener = control_pipe::listen(&login_channel()).map_err(|_| "E_CONTROL_LISTENER")?;
-    Service::login(Arc::new(control))
+    Service::login(Arc::new(crate::setup_owner::SetupOwner::new(control)))
         .serve(listener, CancellationToken::new())
         .await
         .map_err(|_| "E_CONTROL_LISTENER")
+}
+
+enum Action {
+    Browser(LoginAction),
+    NativeText(crate::setup_owner::NativeTarget),
 }
 
 pub struct RemoteControl {
@@ -127,27 +132,45 @@ impl RemoteControl {
         let _request = self.serial.lock().await;
         Ok(self.attach().await?.1)
     }
+    pub async fn native_text(
+        &self,
+        target: crate::setup_owner::NativeTarget,
+    ) -> Result<ControlStatus, &'static str> {
+        self.perform_action(Action::NativeText(target)).await
+    }
     async fn perform(&self, action: LoginAction) -> Result<ControlStatus, &'static str> {
+        self.perform_action(Action::Browser(action)).await
+    }
+    async fn perform_action(&self, action: Action) -> Result<ControlStatus, &'static str> {
         let _request = self.serial.lock().await;
         let (instance, _) = self.attach().await?;
         let operation = format!("{:032x}", rand::random::<u128>());
-        let request = Request {
-            version: 1,
-            command: Command::Browser {
+        let duration = match &action {
+            Action::NativeText(_) => Duration::from_secs(900),
+            Action::Browser(LoginAction::QualifyText | LoginAction::QualifyTools) => {
+                Duration::from_secs(335)
+            }
+            Action::Browser(LoginAction::Qualify) => Duration::from_secs(125),
+            _ => Duration::from_secs(35),
+        };
+        let command = match action {
+            Action::Browser(action) => Command::Browser {
                 instance: instance.clone(),
                 operation: operation.clone(),
                 action,
             },
+            Action::NativeText(target) => Command::NativeText {
+                instance: instance.clone(),
+                operation: operation.clone(),
+                target,
+            },
+        };
+        let request = Request {
+            version: 1,
+            command,
         };
         let mut response = control_protocol::exchange(&self.channel, &request).await;
-        let deadline = tokio::time::Instant::now()
-            + if matches!(action, LoginAction::QualifyText | LoginAction::QualifyTools) {
-                Duration::from_secs(335)
-            } else if action == LoginAction::Qualify {
-                Duration::from_secs(125)
-            } else {
-                Duration::from_secs(35)
-            };
+        let deadline = tokio::time::Instant::now() + duration;
         loop {
             match response {
                 Ok(Reply::Operation {
@@ -341,6 +364,91 @@ mod tests {
         stop.cancel();
         task.await.unwrap().unwrap();
     }
+    #[tokio::test]
+    async fn native_test_over_private_pipe_finishes_after_its_desktop_waiter_closes() {
+        struct Native {
+            started: Notify,
+            finish: Arc<Semaphore>,
+            calls: AtomicUsize,
+        }
+        impl LoginBackend for Native {
+            fn request(&self, _: LoginAction) -> LoginWork {
+                panic!("no browser observation requested");
+            }
+            fn native_text(&self, target: crate::setup_owner::NativeTarget) -> LoginWork {
+                assert_eq!(target.route, "webbridge/fixture");
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                self.started.notify_one();
+                let finish = self.finish.clone();
+                Box::pin(async move {
+                    finish.acquire().await.unwrap().forget();
+                    Ok(ControlStatus {
+                        phase: "generation_ready".into(),
+                        background_session: true,
+                        native_text_report: Some(crate::native_probe::Report {
+                            client_build: "fixture".into(),
+                            catalog_codec: "fixture".into(),
+                            executable_sha256: "a".repeat(64),
+                            exact_text_received: true,
+                            native_tools_executed: 0,
+                            browser_reused: true,
+                            routing_installed: false,
+                            actual_picker_verified: false,
+                        }),
+                        ..Default::default()
+                    })
+                })
+            }
+        }
+        let channel = format!("{:032x}", rand::random::<u128>());
+        let listener = control_pipe::listen(&channel).unwrap();
+        let backend = Arc::new(Native {
+            started: Notify::new(),
+            finish: Arc::new(Semaphore::new(0)),
+            calls: AtomicUsize::new(0),
+        });
+        let service = Service::login(backend.clone());
+        let stop = CancellationToken::new();
+        let server = tokio::spawn({
+            let stop = stop.clone();
+            async move { service.serve(listener, stop).await }
+        });
+        let remote = client(&channel);
+        let waiting = tokio::spawn(async move {
+            remote
+                .native_text(crate::setup_owner::NativeTarget {
+                    client: r"C:\fixture\codex.exe".into(),
+                    home: r"C:\fixture\home".into(),
+                    cwd: r"C:\fixture\workspace".into(),
+                    route: "webbridge/fixture".into(),
+                })
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(2), backend.started.notified())
+            .await
+            .unwrap();
+        waiting.abort();
+        assert!(waiting.await.unwrap_err().is_cancelled());
+        backend.finish.add_permits(1);
+        let reopened = client(&channel);
+        let status = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let status = reopened.status(false).await.unwrap();
+                if status.native_text_report.is_some() {
+                    break status;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(status.phase, "generation_ready");
+        assert!(status.native_text_report.unwrap().exact_text_received);
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+        stop.cancel();
+        server.await.unwrap().unwrap();
+    }
+
     #[tokio::test]
     async fn slow_existing_peer_does_not_trigger_another_launch() {
         let channel = format!("{:032x}", rand::random::<u128>());

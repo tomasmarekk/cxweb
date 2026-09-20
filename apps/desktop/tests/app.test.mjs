@@ -477,3 +477,53 @@ test('preflight failures stay local, are not retried and do not export arbitrary
     assert.equal(ui.nodes.get('heading').textContent, 'Session awaiting verification');
   }
 });
+
+test('native text test requires background protocol proof and all selected paths', async () => {
+  for (const background of [false, true]) {
+    const ui = panel(async () => ({phase:'tool_protocol_qualified', background_session:background, tool_qualified_model:'webbridge/fixture'}));
+    await flush();
+    assert.equal(ui.nodes.get('native-text').disabled, !background);
+    await ui.nodes.get('native-text').click();
+    assert.deepEqual(ui.calls, ['status']);
+    if (background) assert.match(ui.nodes.get('native-text-result').textContent, /Enter the executable/);
+  }
+});
+
+test('native text test sends the selected target once and retains the returned receipt', async () => {
+  let finish;
+  const initial = {phase:'tool_protocol_qualified', background_session:true, tool_qualified_model:'webbridge/fixture'};
+  const ui = panel(async command => command === 'native_text' ? new Promise(resolve => { finish = resolve; }) : initial);
+  await flush();
+  for (const [id, value] of [['native-client','C:\\fixture\\codex.exe'], ['native-home','C:\\fixture\\home'], ['native-cwd','C:\\fixture\\workspace']]) ui.nodes.get(id).value = value;
+  const action = ui.nodes.get('native-text').click();
+  await flush();
+  for (const id of ['connect','test-text','test-tools','background','native-text','native-client','native-home','native-cwd','native-discover']) assert.equal(ui.nodes.get(id).disabled, true);
+  await ui.nodes.get('native-text').click();
+  await ui.nodes.get('native-discover').click();
+  await ui.nodes.get('native-preflight-form').submit({preventDefault(){}});
+  assert.deepEqual(ui.calls, ['status','native_text']);
+  assert.equal(ui.requests.at(-1).params.client, 'C:\\fixture\\codex.exe');
+  assert.equal(ui.requests.at(-1).params.home, 'C:\\fixture\\home');
+  assert.equal(ui.requests.at(-1).params.cwd, 'C:\\fixture\\workspace');
+  assert.equal(ui.requests.at(-1).params.route, 'webbridge/fixture');
+  finish({...initial, phase:'generation_ready', native_text_report:{client_build:'fixture-build', exact_text_received:true}});
+  await action;
+  assert.match(ui.nodes.get('native-text-result').textContent, /Text transport verified through Codex fixture-build/);
+  assert.match(ui.nodes.get('native-text-result').textContent, /production activation still need verification/);
+  assert.equal(ui.nodes.get('codex').textContent, 'Awaiting integration');
+  assert.equal(ui.nodes.get('native-client').disabled, false);
+  assert.equal(ui.nodes.get('native-text').disabled, false);
+  ui.nodes.get('native-client').input();
+  assert.equal(ui.nodes.get('native-text-result').hidden, true);
+});
+
+test('cached native text failure preserves background status and never resubmits automatically', async () => {
+  const ui = panel(async () => ({phase:'generation_ready', background_session:true, tool_qualified_model:'webbridge/fixture', native_text_error:'PRIVATE_BACKEND_ERROR'}));
+  await flush();
+  assert.equal(ui.nodes.get('heading').textContent, 'Background session ready');
+  assert.equal(ui.nodes.get('native-text-result').hidden, false);
+  assert.match(ui.nodes.get('native-text-result').textContent, /No automatic retry/);
+  assert.doesNotMatch(ui.nodes.get('native-text-result').textContent, /PRIVATE/);
+  assert.deepEqual(ui.calls, ['status']);
+  assert.equal(ui.nodes.get('native-text').disabled, false);
+});

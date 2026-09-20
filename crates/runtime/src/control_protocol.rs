@@ -38,6 +38,9 @@ pub enum LoginAction {
 pub type LoginWork = Pin<Box<dyn Future<Output = Result<ControlStatus, &'static str>> + Send>>;
 pub trait LoginBackend: Send + Sync + 'static {
     fn request(&self, action: LoginAction) -> LoginWork;
+    fn native_text(&self, _target: crate::setup_owner::NativeTarget) -> LoginWork {
+        Box::pin(async { Err("E_NATIVE_TEST_FAILED") })
+    }
 }
 impl LoginBackend for Control {
     fn request(&self, action: LoginAction) -> LoginWork {
@@ -54,10 +57,11 @@ impl LoginBackend for Control {
         })
     }
 }
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 enum OperationKind {
     Disconnect,
     Login(LoginAction),
+    NativeText(crate::setup_owner::NativeTarget),
 }
 impl Lifecycle for DisconnectController {
     fn state(&self) -> DisconnectState {
@@ -84,6 +88,11 @@ pub enum Command {
         instance: String,
         operation: String,
         action: LoginAction,
+    },
+    NativeText {
+        instance: String,
+        operation: String,
+        target: crate::setup_owner::NativeTarget,
     },
     Disconnect {
         instance: String,
@@ -281,6 +290,11 @@ impl Service {
                 operation,
                 action,
             } => (instance, operation, Some(OperationKind::Login(action))),
+            Command::NativeText {
+                instance,
+                operation,
+                target,
+            } => (instance, operation, Some(OperationKind::NativeText(target))),
             Command::Disconnect {
                 instance,
                 operation,
@@ -314,7 +328,10 @@ impl Service {
             return error(ErrorCode::UnknownOperation);
         };
         if (kind == OperationKind::Disconnect && self.backend.is_none())
-            || (matches!(kind, OperationKind::Login(_)) && self.login.is_none())
+            || (matches!(
+                &kind,
+                OperationKind::Login(_) | OperationKind::NativeText(_)
+            ) && self.login.is_none())
         {
             return error(ErrorCode::Unsupported);
         }
@@ -328,7 +345,7 @@ impl Service {
         if receipts.len() >= RECEIPTS {
             return error(ErrorCode::Capacity);
         }
-        receipts.insert(operation.clone(), (kind, Outcome::Running {}));
+        receipts.insert(operation.clone(), (kind.clone(), Outcome::Running {}));
         let backend = self.backend.clone();
         let login = self.login.clone();
         let status = self.login_status.clone();
@@ -337,8 +354,9 @@ impl Service {
         // Ownership transfers before replying. A disconnected/slow UI cannot
         // cancel a mutation, and a worker panic produces only a fixed error.
         tokio::spawn(async move {
+            let work_kind = kind.clone();
             let worker = tokio::spawn(async move {
-                match kind {
+                match work_kind {
                     OperationKind::Disconnect => match backend
                         .expect("validated disconnect backend")
                         .disconnect()
@@ -347,29 +365,37 @@ impl Service {
                         Ok(result) => Outcome::Completed { result },
                         Err(_) => Outcome::Failed {},
                     },
-                    OperationKind::Login(action) => match login
-                        .expect("validated login backend")
-                        .request(action)
-                        .await
-                    {
-                        Ok(result) => {
-                            *status.lock().expect("login status lock poisoned") = result.clone();
-                            Outcome::LoginCompleted {
-                                status: Box::new(result),
+                    action @ (OperationKind::Login(_) | OperationKind::NativeText(_)) => {
+                        let backend = login.expect("validated login backend");
+                        let result = match action {
+                            OperationKind::Login(action) => backend.request(action),
+                            OperationKind::NativeText(target) => backend.native_text(target),
+                            OperationKind::Disconnect => unreachable!(),
+                        }
+                        .await;
+                        match result {
+                            Ok(result) => {
+                                *status.lock().expect("login status lock poisoned") =
+                                    result.clone();
+                                Outcome::LoginCompleted {
+                                    status: Box::new(result),
+                                }
+                            }
+                            Err(code) => {
+                                let mut cached = status.lock().expect("login status lock poisoned");
+                                cached.native_text_report = None;
+                                cached.native_text_error = None;
+                                cached.text_qualified_model = None;
+                                cached.tool_qualified_model = None;
+                                cached.qualification_evidence = None;
+                                cached.qualification_diagnostic = None;
+                                cached.phase = "awaiting_qualification".into();
+                                Outcome::LoginFailed {
+                                    code: login_error(code).to_owned(),
+                                }
                             }
                         }
-                        Err(code) => {
-                            let mut cached = status.lock().expect("login status lock poisoned");
-                            cached.text_qualified_model = None;
-                            cached.tool_qualified_model = None;
-                            cached.qualification_evidence = None;
-                            cached.qualification_diagnostic = None;
-                            cached.phase = "awaiting_qualification".into();
-                            Outcome::LoginFailed {
-                                code: login_error(code).to_owned(),
-                            }
-                        }
-                    },
+                    }
                 }
             });
             let outcome = worker.await.unwrap_or(Outcome::Failed {});
@@ -454,7 +480,8 @@ pub async fn exchange(installation: &str, request: &Request) -> io::Result<Reply
             (
                 Command::Disconnect { operation, .. }
                 | Command::Operation { operation, .. }
-                | Command::Browser { operation, .. },
+                | Command::Browser { operation, .. }
+                | Command::NativeText { operation, .. },
                 Reply::Operation {
                     operation: received,
                     ..
@@ -509,6 +536,102 @@ mod tests {
     fn dispatch(service: &Service, command: Command) -> Reply {
         service.handle(&serde_json::to_vec(&request(command)).unwrap())
     }
+    #[tokio::test]
+    async fn native_test_receipt_survives_requester_drop_and_binds_all_target_fields() {
+        struct NativeBackend {
+            calls: AtomicUsize,
+            release: Arc<Semaphore>,
+        }
+        impl LoginBackend for NativeBackend {
+            fn request(&self, _: LoginAction) -> LoginWork {
+                panic!("unexpected browser observation");
+            }
+            fn native_text(&self, target: crate::setup_owner::NativeTarget) -> LoginWork {
+                assert_eq!(target.route, "webbridge/fixture");
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                let release = self.release.clone();
+                Box::pin(async move {
+                    release.acquire().await.unwrap().forget();
+                    Ok(ControlStatus {
+                        phase: "generation_ready".into(),
+                        background_session: true,
+                        native_text_error: Some("E_NATIVE_PROBE_TEXT".into()),
+                        ..Default::default()
+                    })
+                })
+            }
+        }
+        let backend = Arc::new(NativeBackend {
+            calls: AtomicUsize::new(0),
+            release: Arc::new(Semaphore::new(0)),
+        });
+        let service = Service::login(backend.clone());
+        let target = crate::setup_owner::NativeTarget {
+            client: r"C:\fixture\codex.exe".into(),
+            home: r"C:\fixture\home".into(),
+            cwd: r"C:\fixture\workspace".into(),
+            route: "webbridge/fixture".into(),
+        };
+        let command = |target| Command::NativeText {
+            instance: service.instance.clone(),
+            operation: "a".repeat(32),
+            target,
+        };
+        assert!(matches!(
+            dispatch(&service, command(target.clone())),
+            Reply::Operation {
+                outcome: Outcome::Running {},
+                ..
+            }
+        ));
+        for field in 0..4 {
+            let mut changed = target.clone();
+            match field {
+                0 => changed.client.push("other"),
+                1 => changed.home.push("other"),
+                2 => changed.cwd.push("other"),
+                _ => changed.route.push_str("other"),
+            }
+            assert_eq!(
+                dispatch(&service, command(changed)),
+                error(ErrorCode::OperationConflict)
+            );
+        }
+        assert!(matches!(
+            dispatch(&service, command(target.clone())),
+            Reply::Operation {
+                outcome: Outcome::Running {},
+                ..
+            }
+        ));
+        backend.release.add_permits(1);
+        let terminal = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let reply = dispatch(&service, command(target.clone()));
+                if !matches!(
+                    reply,
+                    Reply::Operation {
+                        outcome: Outcome::Running {},
+                        ..
+                    }
+                ) {
+                    break reply;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            matches!(&terminal, Reply::Operation { outcome:Outcome::LoginCompleted {status}, .. } if status.phase == "generation_ready" && status.native_text_error.as_deref() == Some("E_NATIVE_PROBE_TEXT"))
+        );
+        assert_eq!(dispatch(&service, command(target)), terminal);
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+        assert!(
+            matches!(dispatch(&service, Command::BrowserStatus {}), Reply::BrowserStatus {status, ..} if status.phase == "generation_ready" && status.native_text_error.as_deref() == Some("E_NATIVE_PROBE_TEXT"))
+        );
+    }
+
     #[tokio::test]
     async fn failed_text_test_receipt_is_replayed_without_resubmission() {
         struct Failing(AtomicUsize);

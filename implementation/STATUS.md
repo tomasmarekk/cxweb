@@ -21,6 +21,45 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Desktop-to-runtime native qualification control (2026-09-20)
+
+- Added a daemon-owned SetupOwner. It reinspects the selected executable/home/cwd,
+  holds the original home path identity, reserves a reversible installation plan
+  without applying it, and hands the background-qualified route to that persistent
+  installation scope. It retains the prepared listener/journal and generation
+  receipt across both successful and failed native text tests. A different home
+  or route cannot silently reuse an existing preparation.
+- Added a typed private NativeText command. Operation receipts include every
+  selected target field, reject conflicting reuse, and finish independently of
+  the requesting desktop future. Cached status carries a sanitized native text
+  result/error. The new non-observing Control snapshot preserves qualification
+  while the setup owner checks eligibility or reports a failed test.
+- Desktop Details now exposes Test selected client after background protocol
+  qualification. It requires the selected paths, disables conflicting controls,
+  sends one explicit request, and distinguishes text transport from coding,
+  actual picker qualification and production activation. The Tauri command is
+  scoped to the existing local main window; its permission file was generated
+  from build.rs. The report uses owned strings for private protocol decoding.
+- Tests cover native request deduplication and conflicts across all four target
+  fields, preservation of qualification on early refusal, fixed error redaction,
+  the actual Windows private pipe with a dropped desktop waiter and a reopened
+  status client, and frontend selection/gating/single submission/error display.
+- Verification: cargo test --workspace --quiet (209 passed, 9 ignored), node --test
+  apps/desktop/tests/app.test.mjs (31 passed), workspace Clippy with warnings
+  denied, cargo fmt check, explicit native_context_probe.rs rustfmt, diff check
+  and release CLI/daemon/desktop builds passed.
+- Live state: the previous manual-login probe was authoritatively polled and is
+  still running. It retains the saved browser profile. Computer Use again stopped
+  when attempting to observe the existing Chrome login window because it could
+  not determine the URL confidently enough to enforce policy. No further Windows
+  UI input or alternate access to that blocked surface was attempted. The user
+  was asked to close that manual test window. The new desktop binary was not
+  launched and the new authenticated end-to-end action has not yet run.
+- Evidence: integration-tests/compatibility/desktop-native-text-control-windows.json.
+  Remaining: finish the live browser/native test after the profile is released,
+  expose cancellation/recovery and complete coding/picker/native coexistence and
+  production activation. G0 and the original acceptance goal remain incomplete.
+
 ## Runtime-owned native text qualification (2026-09-20)
 
 - Added a Rust native client runner and an in-process qualification entry point

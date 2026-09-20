@@ -44,6 +44,8 @@ mod qualification;
 pub mod remote_control;
 mod request_body;
 pub mod scheduler;
+#[cfg(windows)]
+pub mod setup_owner;
 pub mod turn;
 pub mod web_provider;
 mod web_ws;

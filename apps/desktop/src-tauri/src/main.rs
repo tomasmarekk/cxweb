@@ -26,6 +26,28 @@ mod desktop {
     }
 
     #[tauri::command]
+    async fn native_text(
+        state: tauri::State<'_, AppState>,
+        client: std::path::PathBuf,
+        home: std::path::PathBuf,
+        cwd: std::path::PathBuf,
+        route: String,
+    ) -> Result<ControlStatus, String> {
+        state
+            .control
+            .as_ref()
+            .map_err(|e| e.to_string())?
+            .native_text(cxweb_runtime::setup_owner::NativeTarget {
+                client,
+                home,
+                cwd,
+                route,
+            })
+            .await
+            .map_err(str::to_owned)
+    }
+
+    #[tauri::command]
     async fn connect(state: tauri::State<'_, AppState>) -> Result<ControlStatus, String> {
         state
             .control
@@ -121,7 +143,8 @@ mod desktop {
                 qualify_tools,
                 background,
                 native_discover,
-                native_preflight
+                native_preflight,
+                native_text
             ])
             .run(tauri::generate_context!())
             .expect("cxweb desktop runtime");

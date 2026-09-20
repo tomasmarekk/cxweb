@@ -1,0 +1,42 @@
+{
+  "schema": "cxweb.desktop-native-text-control.v1",
+  "date": "2026-09-20",
+  "result": "PASS component and private IPC tests; live UI NOT RUN",
+  "verification": {
+    "rust_workspace": {
+      "passed": 209,
+      "ignored": 9
+    },
+    "desktop_ui_unit_tests": {
+      "passed": 31
+    },
+    "clippy": "PASS",
+    "format": "PASS",
+    "release_builds": [
+      "CLI",
+      "daemon",
+      "desktop"
+    ]
+  },
+  "checks": {
+    "typed_native_target_through_private_protocol": true,
+    "duplicate_request_not_reexecuted": true,
+    "changed_executable_home_cwd_or_route_conflicts_with_receipt": true,
+    "early_refusal_preserves_browser_qualification": true,
+    "fixed_native_error_codes": true,
+    "private_pipe_result_survives_desktop_waiter_drop": true,
+    "reopened_client_reads_cached_result": true,
+    "frontend_requires_background_protocol_proof": true,
+    "frontend_requires_all_paths": true,
+    "frontend_disables_conflicting_actions": true,
+    "frontend_never_claims_production_activation": true
+  },
+  "live_limits": [
+    "The actual previous manual-login process remains running and retains the browser profile.",
+    "Computer Use stopped because the current browser URL could not be determined confidently enough to enforce policy.",
+    "The user was asked to close that manual test window; no bypass or subsequent Windows UI input was attempted.",
+    "The new cxweb desktop binary was built but not launched in this turn.",
+    "The newly connected authenticated browser-to-native action and actual Codex App picker have not been verified.",
+    "The prepared installation is not applied; production integration remains disabled."
+  ]
+}

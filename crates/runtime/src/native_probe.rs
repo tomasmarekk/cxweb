@@ -2,7 +2,7 @@
 use crate::{control::GenerationSession, native_preflight};
 use cxweb_codex_adapter::{catalog_codec::CatalogCodec, strict_json};
 use cxweb_platform::{state::protected_directory, target_path::TargetPathGuard};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{path::Path, process::Stdio, sync::Arc, time::Duration};
 use tokio::{
@@ -11,10 +11,11 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Report {
-    pub client_build: &'static str,
-    pub catalog_codec: &'static str,
+    pub client_build: String,
+    pub catalog_codec: String,
     pub executable_sha256: String,
     pub exact_text_received: bool,
     pub native_tools_executed: u32,
@@ -101,8 +102,8 @@ async fn qualify_owned(
         return Err("E_NATIVE_PROBE_TARGET_CHANGED");
     }
     Ok(Report {
-        client_build: build,
-        catalog_codec: codec.id(),
+        client_build: build.into(),
+        catalog_codec: codec.id().into(),
         executable_sha256: hash,
         exact_text_received: true,
         native_tools_executed: 0,

@@ -9,6 +9,7 @@ fn main() {
             "background",
             "native_discover",
             "native_preflight",
+            "native_text",
         ]),
     ))
     .expect("Tauri build configuration");

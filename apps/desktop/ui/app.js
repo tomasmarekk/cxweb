@@ -7,6 +7,40 @@ let signInRequired = false;
 let discoveryPending = false;
 let preflightPending = false;
 let targetRevision = 0;
+let nativeRoute = null;
+let nativeReady = false;
+const nativeControls = ['native-choice', 'native-client', 'native-home', 'native-cwd', 'native-preflight', 'native-discover'];
+function updateNativeButton() {
+  $('native-text').disabled = pending || preflightPending || discoveryPending || !nativeReady;
+}
+function renderNative(status) {
+  nativeRoute = status.tool_qualified_model || null;
+  nativeReady = status.background_session === true && Boolean(nativeRoute) && ['tool_protocol_qualified', 'generation_ready'].includes(status.phase);
+  const result = $('native-text-result');
+  const report = status.phase === 'generation_ready' ? status.native_text_report : null;
+  result.hidden = !report && !status.native_text_error;
+  if (status.native_text_error) {
+    const errors = {
+      E_NATIVE_TEST_BACKGROUND: 'Complete the tool protocol test in background mode before testing Codex.',
+      E_NATIVE_TEST_TARGET_CHANGED: 'This runtime already prepared a different Codex home or ChatGPT route. Continue with the original target.',
+      E_NATIVE_TEST_PREPARE: 'The selected configuration could not be prepared. No configuration was changed.',
+      E_NATIVE_PROBE_TARGET: 'Select existing original absolute paths for the executable, home and working directory.',
+      E_NATIVE_PROBE_CLIENT_UNQUALIFIED: 'This backend version is not reviewed. It was not started.',
+      E_NATIVE_PROBE_TIMEOUT: 'The client test did not finish in time. No automatic retry was made.',
+      E_NATIVE_PROBE_TEXT: 'The client did not return the exact expected text. No automatic retry was made.',
+      E_NATIVE_PROBE_CONFIG: 'The isolated client configuration or account state could not be verified.',
+      E_NATIVE_PROBE_ACTION: 'The text test requested an unexpected action. The test was stopped.',
+      E_BROWSER_CLOSED: 'The background browser has stopped. Check status to restore the session.',
+      E_BROWSER_OTHER_PAGES: 'Other cxweb browser tabs are open. Finish or close them before transferring the session.',
+      E_BROWSER_BUSY: 'The browser contains a draft or active response. Finish it before testing the client.',
+      E_MODEL_SELECTION: 'The selected ChatGPT route changed. Refresh and qualify it again.'
+    };
+    result.textContent = errors[status.native_text_error] || 'The native client text test could not be verified. No automatic retry was made.';
+  } else if (report) {
+    result.textContent = `Text transport verified through Codex ${report.client_build}. Coding support, the actual picker and production activation still need verification.`;
+  } else result.textContent = '';
+  updateNativeButton();
+}
 function showError(code) {
   const messages = {
     E_ALREADY_RUNNING: 'cxweb is already running. Use the existing app window.',
@@ -58,6 +92,7 @@ function showError(code) {
   $('error').hidden = false; $('diagnostic').textContent = String(code).slice(0, 80);
 }
 function render(status) {
+  renderNative(status);
   phase = status.phase;
   signInRequired = phase === 'authenticating' && status.background_session === true && (status.observation?.login_action === true || status.observation?.verification_required === true);
   $('error').hidden = true;
@@ -143,10 +178,11 @@ function render(status) {
     $('chatgpt').textContent = 'Unverified'; $('connect').textContent = 'Check status';
   }
 }
-const actionButtons = ['connect', 'test-text', 'test-tools', 'background'];
+const actionButtons = ['connect', 'test-text', 'test-tools', 'background', 'native-text'];
 async function runAction(command, params = {}) {
   if (pending) return;
   pending = true;
+  if (command === 'native_text') for (const id of nativeControls) $(id).disabled = true;
   for (const id of actionButtons) $(id).disabled = true;
   try { render(await invoke(command, params)); }
   catch (error) {
@@ -161,6 +197,8 @@ async function runAction(command, params = {}) {
   finally {
     pending = false;
     for (const id of actionButtons) $(id).disabled = false;
+    if (command === 'native_text') for (const id of nativeControls) $(id).disabled = false;
+    updateNativeButton();
   }
 }
 async function check(connect = false, refresh = true) {
@@ -193,7 +231,7 @@ $('background').addEventListener('click', async () => {
   await runAction('background');
 });
 $('native-discover').addEventListener('click', async () => {
-  if (discoveryPending || preflightPending) return;
+  if (pending || discoveryPending || preflightPending) return;
   discoveryPending = true; $('native-discover').disabled = true;
   const results = $('native-targets');
   results.hidden = false; results.textContent = 'Inspecting local executable filesâ€¦';
@@ -237,6 +275,7 @@ $('native-discover').addEventListener('click', async () => {
 });
 function targetChanged() {
   targetRevision += 1;
+  $('native-text-result').hidden = true;
   $('native-preflight-result').hidden = true;
   $('native-preflight-result').replaceChildren();
 }
@@ -247,7 +286,7 @@ $('native-choice').addEventListener('change', () => {
 });
 $('native-preflight-form').addEventListener('submit', async event => {
   event.preventDefault();
-  if (preflightPending || discoveryPending) return;
+  if (pending || preflightPending || discoveryPending) return;
   const target = { client: $('native-client').value.trim(), home: $('native-home').value.trim(), cwd: $('native-cwd').value.trim() };
   const results = $('native-preflight-result');
   results.hidden = false; results.replaceChildren();
@@ -314,5 +353,17 @@ $('native-preflight-form').addEventListener('submit', async event => {
     preflightPending = false;
     for (const id of controls) $(id).disabled = false;
   }
+});
+$('native-text').addEventListener('click', async () => {
+  if (pending || preflightPending || discoveryPending || !nativeReady) return;
+  const target = { client: $('native-client').value.trim(), home: $('native-home').value.trim(), cwd: $('native-cwd').value.trim(), route: nativeRoute };
+  if (!target.client || !target.home || !target.cwd) {
+    $('native-text-result').hidden = false;
+    $('native-text-result').textContent = 'Enter the executable, Codex home and working directory before testing the selected client.';
+    return;
+  }
+  $('native-text').textContent = 'Waiting for the Codex text test…';
+  try { await runAction('native_text', target); }
+  finally { $('native-text').textContent = 'Test selected client'; }
 });
 if (invoke) check(false, false); else showError('E_DESKTOP_IPC');
