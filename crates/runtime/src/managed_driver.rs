@@ -17,6 +17,131 @@ pub struct Route {
     pub identity: String,
     pub label: String,
     pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reasoning: Vec<ReasoningVariant>,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReasoningVariant {
+    pub identity: String,
+    pub label: String,
+    pub effort: String,
+    pub protocol_evidence: String,
+}
+
+#[derive(Clone)]
+struct Selection {
+    identity: String,
+    label: String,
+    effort: Option<String>,
+}
+
+pub(crate) fn observed_effort(label: &str) -> Result<&'static str, &'static str> {
+    match label.rsplit_once(" · ").map(|(_, effort)| effort) {
+        // The reviewed App filters out `none` and `minimal` in its native UI.
+        // `low` is an explicit transport alias for the observed Instant mode.
+        Some("Instant") => Ok("low"),
+        Some("Medium") => Ok("medium"),
+        Some("High") => Ok("high"),
+        Some("Extra High") => Ok("xhigh"),
+        Some("Pro" | "6 PRO") => Ok("max"),
+        _ => Err("E_MODEL_UNAVAILABLE"),
+    }
+}
+
+impl Route {
+    fn selection(&self, effort: Option<&str>) -> Result<Selection, &'static str> {
+        let matches = |label: &str, recorded: Option<&str>| {
+            effort == recorded
+                || observed_effort(label).ok().is_some_and(|canonical| {
+                    (recorded == Some(canonical)
+                        || (canonical == "low" && recorded == Some("none")))
+                        && (effort == Some(canonical)
+                            || (canonical == "low" && effort == Some("none")))
+                })
+        };
+        if effort.is_none() || matches(&self.label, self.effort.as_deref()) {
+            return Ok(Selection {
+                identity: self.identity.clone(),
+                label: self.label.clone(),
+                effort: effort.map(str::to_owned).or_else(|| self.effort.clone()),
+            });
+        }
+        let variant = self
+            .reasoning
+            .iter()
+            .find(|variant| matches(&variant.label, Some(&variant.effort)))
+            .ok_or("E_REASONING_UNAVAILABLE")?;
+        Ok(Selection {
+            identity: variant.identity.clone(),
+            label: variant.label.clone(),
+            effort: effort.map(str::to_owned),
+        })
+    }
+
+    pub(crate) fn catalog(
+        &self,
+        coding: bool,
+    ) -> Result<cxweb_codex_adapter::catalog_codec::CatalogRoute, &'static str> {
+        use cxweb_codex_adapter::catalog_codec::{CatalogRoute, ReasoningLevel};
+        let recorded_effort = self.effort.clone().ok_or("E_MODEL_UNAVAILABLE")?;
+        let canonical = |label: &str, recorded: &str| -> Result<String, &'static str> {
+            let known = observed_effort(label)?;
+            if recorded != known && !(known == "low" && recorded == "none") {
+                return Err("E_MODEL_UNAVAILABLE");
+            }
+            Ok(known.into())
+        };
+        let effort = if self.reasoning.is_empty() {
+            if observed_effort(&self.label).is_ok() {
+                canonical(&self.label, &recorded_effort)?
+            } else {
+                recorded_effort.clone()
+            }
+        } else {
+            canonical(&self.label, &recorded_effort)?
+        };
+        let (observed_label, reasoning) = if self.reasoning.is_empty() {
+            (self.label.clone(), vec![])
+        } else {
+            let (family, label) = self.label.rsplit_once(" · ").ok_or("E_MODEL_UNAVAILABLE")?;
+            let mut levels = vec![ReasoningLevel {
+                effort: effort.clone(),
+                description: label.into(),
+            }];
+            for variant in &self.reasoning {
+                let (other, label) = variant
+                    .label
+                    .rsplit_once(" · ")
+                    .ok_or("E_MODEL_UNAVAILABLE")?;
+                if other != family {
+                    return Err("E_MODEL_UNAVAILABLE");
+                }
+                levels.push(ReasoningLevel {
+                    effort: canonical(&variant.label, &variant.effort)?,
+                    description: label.into(),
+                });
+            }
+            let order = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+            levels.sort_by_key(|level| {
+                order
+                    .iter()
+                    .position(|effort| *effort == level.effort)
+                    .unwrap_or(usize::MAX)
+            });
+            (family.into(), levels)
+        };
+        let catalog = CatalogRoute {
+            id: self.id.clone(),
+            observed_label,
+            effort,
+            reasoning,
+            coding,
+        };
+        catalog.reasoning_levels()?;
+        Ok(catalog)
+    }
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -30,6 +155,24 @@ pub struct Binding {
 }
 
 impl Binding {
+    pub(crate) fn validate_extension(&self, next: &Self) -> Result<(), &'static str> {
+        next.validate()?;
+        if self.installation != next.installation
+            || self.account != next.account
+            || self.workspace != next.workspace
+            || self.epoch != next.epoch
+            || self.routes.len() != next.routes.len()
+            || self.routes.iter().zip(&next.routes).any(|(old, new)| {
+                old.id != new.id
+                    || old.identity != new.identity
+                    || old.label != new.label
+                    || old.effort != new.effort
+            })
+        {
+            return Err("E_SESSION_SCOPE");
+        }
+        Ok(())
+    }
     fn route(&self, session: &SessionKey) -> Result<&Route, &'static str> {
         if session.installation != self.installation
             || session.account_scope != self.account
@@ -69,6 +212,51 @@ impl Binding {
             {
                 return Err("E_MODEL_UNAVAILABLE");
             }
+            if !route.reasoning.is_empty() {
+                if route.reasoning.len() > 4 {
+                    return Err("E_MODEL_UNAVAILABLE");
+                }
+                let decode = |identity: &str| {
+                    serde_json::from_str::<(String, String, i64, i64, i64)>(identity)
+                        .map_err(|_| "E_MODEL_UNAVAILABLE")
+                };
+                let original = decode(&route.identity)?;
+                if original.0 != "reasoning-slider-v2"
+                    || original.2 > original.4
+                    || original.4 > original.3
+                    || original
+                        .3
+                        .checked_sub(original.2)
+                        .is_none_or(|width| width >= 5)
+                {
+                    return Err("E_MODEL_UNAVAILABLE");
+                }
+                let mut positions = std::collections::HashSet::from([original.4]);
+                for variant in &route.reasoning {
+                    let identity = decode(&variant.identity)?;
+                    if !valid(&variant.identity)
+                        || !valid(&variant.label)
+                        || (identity.0, identity.1, identity.2, identity.3)
+                            != (
+                                original.0.clone(),
+                                original.1.clone(),
+                                original.2,
+                                original.3,
+                            )
+                        || identity.4 < original.2
+                        || identity.4 > original.3
+                        || !positions.insert(identity.4)
+                        || variant.protocol_evidence.len() != 64
+                        || !variant
+                            .protocol_evidence
+                            .bytes()
+                            .all(|byte| byte.is_ascii_hexdigit())
+                    {
+                        return Err("E_MODEL_UNAVAILABLE");
+                    }
+                }
+                route.catalog(true)?;
+            }
         }
         Ok(())
     }
@@ -94,6 +282,7 @@ pub(crate) fn temporary_chat_error(code: &str) -> &'static str {
         "E_BROWSER_TEMPORARY_ROUTE" => "E_BROWSER_TEMPORARY_ROUTE",
         "E_BROWSER_TEMPORARY_LOADING" => "E_BROWSER_TEMPORARY_LOADING",
         "E_BROWSER_TEMPORARY_COMPOSER" => "E_BROWSER_TEMPORARY_COMPOSER",
+        "E_BROWSER_TEMPORARY_ACCOUNT" => "E_BROWSER_TEMPORARY_ACCOUNT",
         "E_BROWSER_TEMPORARY_AMBIGUOUS" => "E_BROWSER_TEMPORARY_AMBIGUOUS",
         "E_BROWSER_TEMPORARY_OBSERVATION" => "E_BROWSER_TEMPORARY_OBSERVATION",
         _ => "E_TEMPORARY_CHAT",
@@ -101,7 +290,13 @@ pub(crate) fn temporary_chat_error(code: &str) -> &'static str {
 }
 
 enum Command {
-    Prepare(SessionKey, Reply<Prepared>),
+    QualifyReasoning(
+        std::path::PathBuf,
+        tokio_util::sync::CancellationToken,
+        Reply<Binding>,
+    ),
+    AdoptBinding(Binding, Reply<()>),
+    Prepare(SessionKey, Option<String>, Reply<Prepared>),
     Submit(String, String, String, Reply<()>),
     Observe(String, Reply<Observation>),
     VerifyCompletion(String, Reply<()>),
@@ -117,6 +312,7 @@ struct Lease {
     baseline: Baseline,
     prompt: Option<String>,
     attempted: bool,
+    selection: Selection,
 }
 
 #[derive(Clone)]
@@ -125,6 +321,16 @@ pub struct ManagedDriver {
 }
 
 impl ManagedDriver {
+    pub(crate) fn qualify_reasoning(
+        &self,
+        directory: std::path::PathBuf,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> BrowserFuture<Binding> {
+        self.request(move |reply| Command::QualifyReasoning(directory, cancel, reply))
+    }
+    pub(crate) fn adopt_binding(&self, binding: Binding) -> BrowserFuture<()> {
+        self.request(move |reply| Command::AdoptBinding(binding, reply))
+    }
     pub fn is_closed(&self) -> bool {
         self.commands.is_closed()
     }
@@ -132,7 +338,7 @@ impl ManagedDriver {
     /// must have exactly one owner; login control cannot keep another handle.
     pub fn start(
         mut browser: ManagedBrowser,
-        binding: Binding,
+        mut binding: Binding,
         ownership: std::fs::File,
     ) -> Result<Self, &'static str> {
         binding.validate()?;
@@ -153,17 +359,34 @@ impl ManagedDriver {
                 let mut orphaned = Vec::<ManagedPage>::new();
                 let mut shutdown_reply = None;
                 let mut output_shape = serde_json::Value::Null;
+                let expected_account = binding.account.clone();
+                let expected_workspace = binding.workspace.clone();
                 let check_scope = |browser: &mut ManagedBrowser,
                                    page: &ManagedPage,
                                    verify: &mut ScopeVerifier| {
                     let (account, workspace) = verify(browser, page)?;
-                    if account != binding.account || workspace != binding.workspace {
+                    if account != expected_account || workspace != expected_workspace {
                         return Err("E_SESSION_SCOPE");
                     }
                     Ok(())
                 };
                 while let Some(command) = incoming.blocking_recv() {
                     match command {
+                        Command::QualifyReasoning(directory, cancel, reply) => {
+                            let result = if leases.is_empty() && orphaned.is_empty() {
+                                crate::reasoning_qualification::qualify(&mut browser, &binding, &directory, &cancel)
+                            } else { Err("E_BROWSER_BUSY") };
+                            let _ = reply.send(result);
+                        }
+                        Command::AdoptBinding(next, reply) => {
+                            let result = (|| {
+                                if !leases.is_empty() || !orphaned.is_empty() { return Err("E_BROWSER_BUSY"); }
+                                binding.validate_extension(&next)?;
+                                binding = next;
+                                Ok(())
+                            })();
+                            let _ = reply.send(result);
+                        }
                         Command::RetireIdle(reply) => {
                             if !leases.is_empty() || !orphaned.is_empty() {
                                 let _ = reply.send(Err("E_BROWSER_BUSY"));
@@ -188,13 +411,14 @@ impl ManagedDriver {
                             shutdown_reply = Some(reply);
                             break;
                         }
-                        Command::Prepare(session, reply) => {
+                        Command::Prepare(session, effort, reply) => {
                             if reply.is_closed() {
                                 continue;
                             }
                             orphaned.retain(|page| browser.close_page_checked(page).is_err());
                             let result = (|| {
                                 let route = binding.route(&session)?;
+                                let selection = route.selection(effort.as_deref())?;
                                 if leases.len() + orphaned.len() >= 8
                                     || leases.values().any(|lease| lease.session == session)
                                 {
@@ -206,9 +430,9 @@ impl ManagedDriver {
                                 let prepared = (|| {
                                     check_scope(&mut browser, &page, &mut verify)?;
                                     let label = browser
-                                        .select_candidate(&page, &route.identity)
+                                        .select_candidate(&page, &selection.identity)
                                         .map_err(|_| "E_MODEL_SELECTION")?;
-                                    if label != route.label {
+                                    if label != selection.label {
                                         return Err("E_MODEL_SELECTION");
                                     }
                                     let baseline = browser
@@ -234,7 +458,7 @@ impl ManagedDriver {
                                     verified_session: session.clone(),
                                     baseline: baseline.clone(),
                                     verified_route: route.id.clone(),
-                                    verified_effort: route.effort.clone(),
+                                    verified_effort: selection.effort.clone(),
                                 };
                                 leases.insert(
                                     handle,
@@ -244,6 +468,7 @@ impl ManagedDriver {
                                         baseline,
                                         prompt: None,
                                         attempted: false,
+                                        selection,
                                     },
                                 );
                                 Ok(prepared)
@@ -273,9 +498,9 @@ impl ManagedDriver {
                                 browser
                                     .insert_prompt(&lease.page, &prompt)
                                     .map_err(|_| "E_COMPOSER_INSERT")?;
-                                let route = binding.route(&lease.session)?;
+                                binding.route(&lease.session)?;
                                 browser
-                                    .verify_candidate(&lease.page, &route.identity, &route.label)
+                                    .verify_candidate(&lease.page, &lease.selection.identity, &lease.selection.label)
                                     .map_err(|_| "E_MODEL_SELECTION")?;
                                 lease.prompt = Some(prompt);
                                 browser
@@ -456,7 +681,14 @@ impl BrowserDriver for ManagedDriver {
         self.request(move |reply| Command::VerifyCompletion(handle, reply))
     }
     fn prepare(&self, session: SessionKey) -> BrowserFuture<Prepared> {
-        self.request(move |reply| Command::Prepare(session, reply))
+        self.prepare_with_effort(session, None)
+    }
+    fn prepare_with_effort(
+        &self,
+        session: SessionKey,
+        effort: Option<String>,
+    ) -> BrowserFuture<Prepared> {
+        self.request(move |reply| Command::Prepare(session, effort, reply))
     }
     fn submit(&self, handle: String, prompt: String, selected_model: String) -> BrowserFuture<()> {
         self.request(move |reply| Command::Submit(handle, prompt, selected_model, reply))
@@ -532,6 +764,7 @@ mod tests {
                 id: "webbridge/fixture".into(),
                 identity: "reasoning-slider:0:4:3".into(),
                 label: "Observed route".into(),
+                reasoning: vec![],
                 effort: None,
             }],
         }
@@ -568,12 +801,103 @@ mod tests {
     }
 
     #[test]
+    fn each_reasoning_choice_selects_its_own_verified_browser_position() {
+        let mut binding = binding();
+        let route = &mut binding.routes[0];
+        route.identity = serde_json::json!(["reasoning-slider-v2", "Latest", 1, 5, 4]).to_string();
+        route.label = "Latest · Extra High".into();
+        route.effort = Some("xhigh".into());
+        route.reasoning = [
+            (1, "Instant", "low"),
+            (2, "Medium", "medium"),
+            (3, "High", "high"),
+            (5, "6 PRO", "max"),
+        ]
+        .into_iter()
+        .map(|(position, label, effort)| ReasoningVariant {
+            identity: serde_json::json!(["reasoning-slider-v2", "Latest", 1, 5, position])
+                .to_string(),
+            label: format!("Latest · {label}"),
+            effort: effort.into(),
+            protocol_evidence: "a".repeat(64),
+        })
+        .collect();
+        binding.validate().unwrap();
+        let route = &binding.routes[0];
+        assert_eq!(route.selection(None).unwrap().identity, route.identity);
+        for (position, effort) in [
+            (1, "low"),
+            (2, "medium"),
+            (3, "high"),
+            (4, "xhigh"),
+            (5, "max"),
+        ] {
+            let selected = route.selection(Some(effort)).unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&selected.identity).unwrap()[4],
+                position
+            );
+            assert_eq!(selected.effort.as_deref(), Some(effort));
+        }
+        assert!(route.selection(Some("minimal")).is_err());
+        assert_eq!(
+            route.selection(Some("none")).unwrap().identity,
+            route.selection(Some("low")).unwrap().identity
+        );
+        let mut legacy_alias = binding.clone();
+        legacy_alias.routes[0].reasoning[0].effort = "none".into();
+        legacy_alias.validate().unwrap();
+        assert_eq!(
+            legacy_alias.routes[0].catalog(true).unwrap().reasoning[0].effort,
+            "low"
+        );
+        assert_eq!(
+            legacy_alias.routes[0]
+                .selection(Some("low"))
+                .unwrap()
+                .effort
+                .as_deref(),
+            Some("low")
+        );
+        let catalog = route.catalog(true).unwrap();
+        assert_eq!(catalog.observed_label, "Latest");
+        assert_eq!(catalog.reasoning.len(), 5);
+        for mutation in 0..6 {
+            let mut changed = binding.clone();
+            let variant = &mut changed.routes[0].reasoning[0];
+            match mutation {
+                0 => variant.effort = "xhigh".into(),
+                1 => {
+                    variant.identity =
+                        serde_json::json!(["reasoning-slider-v2", "Other", 1, 5, 1]).to_string()
+                }
+                2 => variant.identity = binding.routes[0].identity.clone(),
+                3 => variant.protocol_evidence.clear(),
+                4 => variant.label = "Latest · Unknown".into(),
+                _ => variant.effort = "max".into(),
+            }
+            assert!(changed.validate().is_err());
+        }
+        let mut legacy = serde_json::to_value(self::binding()).unwrap();
+        legacy["routes"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("reasoning");
+        assert!(
+            serde_json::from_value::<Binding>(legacy).unwrap().routes[0]
+                .reasoning
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn activation_rejects_duplicate_or_foreign_routes() {
         let mut duplicate = binding();
         duplicate.routes.push(Route {
             id: "webbridge/fixture".into(),
             identity: "different".into(),
             label: "Different".into(),
+            reasoning: vec![],
             effort: None,
         });
         assert!(duplicate.validate().is_err());

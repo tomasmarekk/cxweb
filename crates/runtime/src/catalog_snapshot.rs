@@ -40,7 +40,11 @@ impl CatalogSnapshot {
                 }
                 // Client-specific tool qualification may differ, but a route ID
                 // must retain its observed model/effort identity in every picker.
-                let observation = (route.observed_label.clone(), route.effort.clone());
+                let observation = (
+                    route.observed_label.clone(),
+                    route.effort.clone(),
+                    route.reasoning_levels()?,
+                );
                 if observations
                     .insert(route.id.clone(), observation.clone())
                     .is_some_and(|previous| previous != observation)
@@ -87,6 +91,7 @@ mod tests {
             id: "webbridge/fixture-high".into(),
             observed_label: "Fixture High".into(),
             effort: "high".into(),
+            reasoning: vec![],
             coding: false,
         }
     }
@@ -163,6 +168,24 @@ mod tests {
                 &routes(),
                 1,
                 vec![(codec, vec![invalid])],
+                None
+            )
+            .is_err()
+        );
+        let mut other = route();
+        other.reasoning = vec![cxweb_codex_adapter::catalog_codec::ReasoningLevel {
+            effort: "high".into(),
+            description: "Different browser label".into(),
+        }];
+        assert!(
+            CatalogSnapshot::new(
+                &fixture_scope(),
+                &routes(),
+                1,
+                vec![
+                    (codec, vec![route()]),
+                    (CatalogCodec::App01550Alpha92, vec![other])
+                ],
                 None
             )
             .is_err()

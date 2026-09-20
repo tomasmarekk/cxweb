@@ -52,6 +52,27 @@ fn supervision_error(error: std::io::Error) -> &'static str {
 }
 
 impl DisconnectController {
+    pub(crate) async fn qualify_reasoning(&self) -> Result<DisconnectState, &'static str> {
+        let controller = self.clone();
+        tokio::spawn(async move {
+            {
+                let _operation = controller.serial.lock().await;
+                if *controller.state.borrow() != DisconnectState::Idle {
+                    return Err("E_WEB_RECOVERY_STATE");
+                }
+            }
+            let recovery = controller.recovery.as_ref().ok_or("E_WEB_RECOVERY_STATE")?;
+            controller
+                .gateway
+                .maintain_web(|cancel| {
+                    recovery.qualify_reasoning(controller.journal.clone(), cancel)
+                })
+                .await?;
+            Ok(*controller.state.borrow())
+        })
+        .await
+        .map_err(|_| "E_REASONING_WORKER")?
+    }
     pub(crate) async fn routing_installed(&self) -> bool {
         if *self.state.borrow() != DisconnectState::Idle {
             return false;

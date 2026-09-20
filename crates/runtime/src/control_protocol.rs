@@ -22,6 +22,9 @@ const EXCHANGE: Duration = Duration::from_secs(2);
 pub type Work = Pin<Box<dyn Future<Output = Result<DisconnectState, &'static str>> + Send>>;
 
 pub trait Lifecycle: Send + Sync + 'static {
+    fn qualify_reasoning(&self) -> Work {
+        Box::pin(async { Err("E_REASONING_UNSUPPORTED") })
+    }
     fn retry_web(&self) -> Work {
         Box::pin(async { Err("E_WEB_RECOVERY_NOT_RETRYABLE") })
     }
@@ -77,6 +80,7 @@ impl LoginBackend for Control {
 }
 #[derive(Clone, PartialEq, Eq)]
 enum OperationKind {
+    QualifyReasoning,
     Activate(crate::setup_owner::ActivationTarget),
     RetryWeb,
     Disconnect,
@@ -85,6 +89,10 @@ enum OperationKind {
     NativeText(crate::setup_owner::NativeTarget),
 }
 impl Lifecycle for DisconnectController {
+    fn qualify_reasoning(&self) -> Work {
+        let controller = self.clone();
+        Box::pin(async move { controller.qualify_reasoning().await })
+    }
     fn retry_web(&self) -> Work {
         let controller = self.clone();
         Box::pin(async move { controller.retry_web().await })
@@ -118,6 +126,10 @@ pub struct Request {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    QualifyReasoning {
+        instance: String,
+        operation: String,
+    },
     Activate {
         instance: String,
         operation: String,
@@ -186,12 +198,54 @@ pub enum Reply {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Outcome {
+    ReasoningFailed { code: ReasoningFailure },
     Running {},
     ActiveWork {},
     Completed { result: DisconnectState },
     Failed {},
     LoginCompleted { status: Box<ControlStatus> },
     LoginFailed { code: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningFailure {
+    Discovery,
+    Protocol,
+    Timeout,
+    Scope,
+    Cleanup,
+    Cancelled,
+    Publication,
+    Unavailable,
+}
+impl ReasoningFailure {
+    fn from_code(code: &str) -> Self {
+        match code {
+            "E_REASONING_DISCOVERY" | "E_MODEL_UNAVAILABLE" | "E_MODEL_SELECTION" => {
+                Self::Discovery
+            }
+            "E_QUALIFICATION_PROTOCOL" => Self::Protocol,
+            "E_QUALIFICATION_TIMEOUT" => Self::Timeout,
+            "E_SESSION_SCOPE" => Self::Scope,
+            "E_WEB_CLEANUP_UNCONFIRMED" => Self::Cleanup,
+            "E_CANCELLED" => Self::Cancelled,
+            "E_WEB_RECOVERY_RECEIPT" => Self::Publication,
+            _ => Self::Unavailable,
+        }
+    }
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Discovery => "E_REASONING_DISCOVERY",
+            Self::Protocol => "E_QUALIFICATION_PROTOCOL",
+            Self::Timeout => "E_QUALIFICATION_TIMEOUT",
+            Self::Scope => "E_SESSION_SCOPE",
+            Self::Cleanup => "E_WEB_CLEANUP_UNCONFIRMED",
+            Self::Cancelled => "E_CANCELLED",
+            Self::Publication => "E_WEB_RECOVERY_RECEIPT",
+            Self::Unavailable => "E_REASONING_QUALIFICATION",
+        }
+    }
 }
 
 pub(crate) fn login_error(code: &str) -> &'static str {
@@ -327,6 +381,10 @@ impl Service {
         }
         let cancel_native = matches!(&request.command, Command::CancelNative { .. });
         let (instance, operation, start) = match request.command {
+            Command::QualifyReasoning {
+                instance,
+                operation,
+            } => (instance, operation, Some(OperationKind::QualifyReasoning)),
             Command::RetryWeb {
                 instance,
                 operation,
@@ -451,7 +509,10 @@ impl Service {
         };
         if (matches!(
             kind,
-            OperationKind::Disconnect | OperationKind::DisconnectWhenIdle | OperationKind::RetryWeb
+            OperationKind::Disconnect
+                | OperationKind::DisconnectWhenIdle
+                | OperationKind::RetryWeb
+                | OperationKind::QualifyReasoning
         ) && self.backend.is_none())
             || (matches!(
                 &kind,
@@ -460,10 +521,11 @@ impl Service {
         {
             return error(ErrorCode::Unsupported);
         }
-        if receipts
-            .values()
-            .any(|(_, outcome)| *outcome == Outcome::Running {})
-        {
+        if receipts.values().any(|(running, outcome)| {
+            *outcome == Outcome::Running {}
+                && !(kind == OperationKind::Disconnect
+                    && *running == OperationKind::QualifyReasoning)
+        }) {
             return error(ErrorCode::Busy);
         }
         // Never evict a receipt and accidentally re-execute its operation ID.
@@ -496,6 +558,19 @@ impl Service {
             let work_kind = kind.clone();
             let worker = tokio::spawn(async move {
                 match work_kind {
+                    OperationKind::QualifyReasoning => {
+                        match backend
+                            .expect("validated lifecycle backend")
+                            .qualify_reasoning()
+                            .await
+                        {
+                            Ok(result) => Outcome::Completed { result },
+                            Err("E_WEB_ACTIVE") => Outcome::ActiveWork {},
+                            Err(code) => Outcome::ReasoningFailed {
+                                code: ReasoningFailure::from_code(code),
+                            },
+                        }
+                    }
                     OperationKind::RetryWeb => {
                         match backend
                             .expect("validated lifecycle backend")
@@ -533,7 +608,8 @@ impl Service {
                             OperationKind::Activate(target) => backend.activate(target),
                             OperationKind::Disconnect
                             | OperationKind::DisconnectWhenIdle
-                            | OperationKind::RetryWeb => {
+                            | OperationKind::RetryWeb
+                            | OperationKind::QualifyReasoning => {
                                 unreachable!()
                             }
                         }
@@ -669,6 +745,7 @@ pub async fn exchange(installation: &str, request: &Request) -> io::Result<Reply
                 Command::Disconnect { operation, .. }
                 | Command::DisconnectWhenIdle { operation, .. }
                 | Command::RetryWeb { operation, .. }
+                | Command::QualifyReasoning { operation, .. }
                 | Command::Operation { operation, .. }
                 | Command::Browser { operation, .. }
                 | Command::NativeText { operation, .. }
@@ -774,6 +851,9 @@ mod tests {
         release: Arc<Semaphore>,
     }
     impl Lifecycle for Backend {
+        fn qualify_reasoning(&self) -> Work {
+            self.retry_web()
+        }
         fn retry_web(&self) -> Work {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let release = self.release.clone();
@@ -809,6 +889,80 @@ mod tests {
     }
     fn dispatch(service: &Service, command: Command) -> Reply {
         service.handle(&serde_json::to_vec(&request(command)).unwrap())
+    }
+    #[tokio::test]
+    async fn reasoning_receipts_deduplicate_generation_and_allow_explicit_disconnect() {
+        let (service, backend) = fixture();
+        let operation = "a".repeat(32);
+        let command = || Command::QualifyReasoning {
+            instance: service.instance.clone(),
+            operation: operation.clone(),
+        };
+        assert_eq!(
+            dispatch(
+                &service,
+                Command::QualifyReasoning {
+                    instance: "other".into(),
+                    operation: operation.clone()
+                }
+            ),
+            error(ErrorCode::Instance)
+        );
+        for _ in 0..2 {
+            assert!(matches!(
+                dispatch(&service, command()),
+                Reply::Operation {
+                    outcome: Outcome::Running {},
+                    ..
+                }
+            ));
+        }
+        assert_eq!(
+            dispatch(
+                &service,
+                Command::QualifyReasoning {
+                    instance: service.instance.clone(),
+                    operation: "b".repeat(32)
+                }
+            ),
+            error(ErrorCode::Busy)
+        );
+        assert!(matches!(
+            dispatch(
+                &service,
+                Command::Disconnect {
+                    instance: service.instance.clone(),
+                    operation: "c".repeat(32)
+                }
+            ),
+            Reply::Operation {
+                outcome: Outcome::Running {},
+                ..
+            }
+        ));
+        backend.release.add_permits(2);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if matches!(
+                    dispatch(&service, command()),
+                    Reply::Operation {
+                        outcome: Outcome::Completed { .. },
+                        ..
+                    }
+                ) && backend.calls.load(Ordering::SeqCst) == 2
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            ReasoningFailure::from_code("private text").code(),
+            "E_REASONING_QUALIFICATION"
+        );
     }
     #[tokio::test]
     async fn retry_receipts_are_instance_bound_deduplicated_and_distinct_from_removal() {

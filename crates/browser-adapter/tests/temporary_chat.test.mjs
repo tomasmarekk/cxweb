@@ -4,15 +4,15 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
 const source = await readFile(new URL('../src/dom/temporary_chat.js', import.meta.url), 'utf8');
-function observe({ pathname = '/', search = '?temporary-chat=true', challenge = false, login = false, composers = 1, loading = false, hidden = false } = {}) {
-  class Element { getClientRects() { return hidden ? [] : [{}]; } }
+function observe({ pathname = '/', search = '?temporary-chat=true', challenge = false, login = false, composers = 1, profiles = 1, loading = false, hidden = false } = {}) {
+  class Element { getClientRects() { return hidden ? [] : [{}]; } checkVisibility() { return !hidden; } }
   return vm.runInNewContext(`(${source})`, {
     URLSearchParams, HTMLElement: Element, location: { pathname, search },
     document: {
       title: '', readyState: loading ? 'loading' : 'complete',
       querySelector: () => challenge ? new Element() : null,
       querySelectorAll: selector => selector.includes('login-button')
-        ? (login ? [new Element()] : []) : Array.from({ length: composers }, () => new Element()),
+        ? (login ? [new Element()] : []) : Array.from({ length: selector.includes('accounts-profile-button') ? profiles : composers }, () => new Element()),
     },
   })();
 }
@@ -31,4 +31,10 @@ test('preparation diagnostics distinguish loading, authentication and verificati
   assert.equal(observe({ composers: 0, loading: true }), 'loading');
   assert.equal(observe({ login: true }), 'login');
   assert.equal(observe({ challenge: true, login: true }), 'verification');
+});
+
+test('a hydrated composer cannot start account verification before the profile control exists', () => {
+  assert.equal(observe({ profiles: 0 }), 'account_loading');
+  assert.equal(observe({ profiles: 2 }), 'ready');
+  assert.equal(observe({ profiles: 1 }), 'ready');
 });

@@ -99,11 +99,24 @@ struct WebAdmission {
 }
 struct AdmissionState {
     accepting: bool,
+    maintenance: bool,
     active: usize,
     active_turns: u64,
     cleanup_failed: bool,
 }
 struct WebLease(Arc<WebAdmission>, bool);
+#[cfg(windows)]
+struct MaintenanceLease(WebLease);
+#[cfg(windows)]
+impl Drop for MaintenanceLease {
+    fn drop(&mut self) {
+        if !std::thread::panicking()
+            && let Ok(mut state) = self.0.0.state.lock()
+        {
+            state.maintenance = false;
+        }
+    }
+}
 impl Drop for WebLease {
     fn drop(&mut self) {
         if let Ok(mut state) = self.0.state.lock() {
@@ -125,7 +138,7 @@ impl Drop for WebLease {
 impl WebAdmission {
     fn acquire(self: &Arc<Self>, turn: bool) -> Option<WebLease> {
         let mut state = self.state.lock().ok()?;
-        if !state.accepting {
+        if !state.accepting || state.maintenance {
             return None;
         }
         state.active += 1;
@@ -154,6 +167,32 @@ impl WebAdmission {
 }
 
 impl Gateway {
+    /// Exclude catalog and generation admission atomically while updating a
+    /// qualified family. Native forwarding remains independent of this gate.
+    #[cfg(windows)]
+    pub(crate) async fn maintain_web<F, Fut>(&self, work: F) -> Result<(), &'static str>
+    where
+        F: FnOnce(CancellationToken) -> Fut,
+        Fut: Future<Output = Result<(), &'static str>>,
+    {
+        let _lease = {
+            let mut state = self.admission.state.lock().map_err(|_| "E_GATEWAY_STATE")?;
+            if !state.accepting || state.cleanup_failed || state.maintenance || state.active != 0 {
+                return Err("E_WEB_ACTIVE");
+            }
+            state.maintenance = true;
+            state.active += 1;
+            state.active_turns += 1;
+            MaintenanceLease(WebLease(self.admission.clone(), true))
+        };
+        let result = work(self.admission.cancel.child_token()).await;
+        if result == Err("E_WEB_CLEANUP_UNCONFIRMED") {
+            let mut state = self.admission.state.lock().map_err(|_| "E_GATEWAY_STATE")?;
+            state.cleanup_failed = true;
+            state.accepting = false;
+        }
+        result
+    }
     /// Atomically stop new web admission only if no generation is in flight.
     /// The normal disconnect path then drains recovery and catalog leases.
     #[cfg(windows)]
@@ -255,6 +294,7 @@ impl Gateway {
             web,
             admission: Arc::new(WebAdmission {
                 state: Mutex::new(AdmissionState {
+                    maintenance: false,
                     accepting: true,
                     active: 0,
                     active_turns: 0,
@@ -507,6 +547,68 @@ async fn handle(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn reasoning_maintenance_excludes_work_reopens_after_failure_and_drains_on_disconnect() {
+        let gateway = Gateway::new(
+            12345,
+            NativeTransport::subscription().unwrap(),
+            Arc::new(UnqualifiedProvider),
+        );
+        let request = gateway.admission.acquire(true).unwrap();
+        assert_eq!(
+            gateway
+                .maintain_web(|_| async { panic!("must not run while active") })
+                .await,
+            Err("E_WEB_ACTIVE")
+        );
+        drop(request);
+        assert_eq!(
+            gateway
+                .maintain_web(|_| async { Err("E_QUALIFICATION_PROTOCOL") })
+                .await,
+            Err("E_QUALIFICATION_PROTOCOL")
+        );
+        assert!(gateway.admission.acquire(true).is_some());
+        assert!(!gateway.health().cleanup_failed);
+        let (entered, wait) = tokio::sync::oneshot::channel();
+        let other = gateway.clone();
+        let operation = tokio::spawn(async move {
+            other
+                .maintain_web(|cancel| async move {
+                    entered.send(()).unwrap();
+                    cancel.cancelled().await;
+                    Err("E_CANCELLED")
+                })
+                .await
+        });
+        wait.await.unwrap();
+        assert_eq!(gateway.health().active_turns, 1);
+        assert!(gateway.admission.acquire(true).is_none());
+        assert!(gateway.admission.acquire(false).is_none());
+        gateway
+            .disconnect_web(Duration::from_secs(1))
+            .await
+            .unwrap();
+        assert_eq!(operation.await.unwrap(), Err("E_CANCELLED"));
+        assert_eq!(gateway.health().active_turns, 0);
+        assert!(!gateway.health().accepting);
+        assert!(gateway.admission.acquire(true).is_none());
+        let gateway = Gateway::new(
+            12345,
+            NativeTransport::subscription().unwrap(),
+            Arc::new(UnqualifiedProvider),
+        );
+        assert_eq!(
+            gateway
+                .maintain_web(|_| async { Err("E_WEB_CLEANUP_UNCONFIRMED") })
+                .await,
+            Err("E_WEB_CLEANUP_UNCONFIRMED")
+        );
+        assert!(gateway.health().cleanup_failed);
+        assert!(gateway.admission.acquire(true).is_none());
+    }
     use axum::{body::Body, http::Request};
     use http_body_util::BodyExt;
     use serde_json::json;

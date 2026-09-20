@@ -18,4 +18,5 @@ jobs:
       - run: node --test crates/browser-adapter/tests/composer.test.mjs
       - run: node --test crates/browser-adapter/tests/answer_content.test.mjs
       - run: node --test crates/browser-adapter/tests/account_scope.test.mjs
+      - run: node --test crates/browser-adapter/tests/temporary_chat.test.mjs
       - run: node --test scripts/probe-client-approval.test.mjs

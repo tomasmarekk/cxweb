@@ -81,6 +81,7 @@ impl PreparedInstallation {
         if scope.installation != self.installation_id() || session.driver.is_closed() {
             return Err("E_SESSION_SCOPE");
         }
+        let expected = session.route.catalog(true)?;
         if qualified.is_empty()
             || native_models.is_empty()
             || qualified.iter().any(|(_, routes)| {
@@ -88,8 +89,9 @@ impl PreparedInstallation {
                     || routes.iter().any(|route| {
                         !route.coding
                             || route.id != session.route.id
-                            || route.observed_label != session.route.label
-                            || Some(route.effort.as_str()) != session.route.effort.as_deref()
+                            || route.observed_label != expected.observed_label
+                            || route.effort != expected.effort
+                            || route.reasoning != expected.reasoning
                     })
             })
         {

@@ -235,6 +235,7 @@ pub async fn serve(
                 id: ROUTE.into(),
                 identity: selected.identity,
                 label: selected.label.clone(),
+                reasoning: vec![],
                 effort: Some(effort.clone()),
             }],
         };
@@ -495,6 +496,7 @@ async fn run_probe(
         id: route.clone(),
         observed_label: label.clone(),
         effort,
+        reasoning: vec![],
         coding,
     };
     let model = if compaction {

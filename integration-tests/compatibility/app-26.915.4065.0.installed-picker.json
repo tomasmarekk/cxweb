@@ -1,0 +1,46 @@
+{
+  "schema": "cxweb.installed-gui.v1",
+  "observedAt": "2026-09-20T14:47:57.663Z",
+  "appBuild": "26.915.4065.0",
+  "backendBuild": "0.155.0-alpha.9.2",
+  "backendSha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+  "synthetic": false,
+  "isolatedNativeHome": false,
+  "separateAppUserData": true,
+  "clientPatched": false,
+  "catalogOrProviderOverride": false,
+  "observationMethod": "Computer Use screenshot and accessibility; native turn context and completed task transcript",
+  "model": "webbridge/402f0b19d5610fcbee25b681",
+  "displayName": "ChatGPT Web · Latest",
+  "reasoningPositions": [
+    { "position": 1, "effort": "low", "visibleLabel": "Light", "webLabel": "Instant", "selected": true },
+    { "position": 2, "effort": "medium", "visibleLabel": "Medium", "webLabel": "Medium", "selected": true },
+    { "position": 3, "effort": "high", "visibleLabel": "High", "webLabel": "High", "selected": true },
+    { "position": 4, "effort": "xhigh", "visibleLabel": "Extra High", "webLabel": "Extra High", "selected": true },
+    { "position": 5, "effort": "max", "visibleLabel": "Max", "webLabel": "Pro", "selected": true }
+  ],
+  "ownedAndNativeVisibleTogether": true,
+  "switchWebToNativeAndBack": true,
+  "nativeSwitchModel": "gpt-6-astra",
+  "guiRoundTrip": {
+    "submittedOnce": true,
+    "effort": "xhigh",
+    "nativeTurnContextModelMatches": true,
+    "nativeTurnContextEffortMatches": true,
+    "responseUsesOwnedId": true,
+    "renderedTextMatches": true,
+    "completedWithoutError": true,
+    "toolCalls": 0,
+    "durationMs": 26600,
+    "visibleBrowserRequired": false,
+    "runtimeIdleAfterCompletion": true,
+    "accountAndModelsHealthyAfterCompletion": true
+  },
+  "allFiveNativeBackendTurns": "app-backend-0.155.0-alpha.9.2.installed-reasoning.json",
+  "limitations": [
+    "Native client presentation controls the displayed reasoning names.",
+    "The original already-running App still needs a full restart to replace its old catalog.",
+    "This establishes picker and one GUI text round trip, not full coding or release qualification."
+  ],
+  "result": "PASS"
+}

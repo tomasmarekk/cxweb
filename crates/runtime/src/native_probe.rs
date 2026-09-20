@@ -424,11 +424,32 @@ impl Client {
         let models = self
             .rpc(3, "model/list", json!({"includeHidden":true}))
             .await?;
-        if !models["data"]
+        let selected = models["data"]
             .as_array()
-            .is_some_and(|models| models.iter().any(|model| model["model"] == endpoint.model))
-        {
+            .and_then(|models| models.iter().find(|model| model["model"] == endpoint.model));
+        let Some(selected) = selected else {
             return Err("E_NATIVE_PROBE_MODEL");
+        };
+        let expected_model = endpoint.catalog["models"]
+            .as_array()
+            .and_then(|models| models.iter().find(|model| model["slug"] == endpoint.model))
+            .ok_or("E_NATIVE_PROBE_MODEL")?;
+        let levels = selected["supportedReasoningEfforts"]
+            .as_array()
+            .ok_or("E_NATIVE_PROBE_REASONING")?;
+        let expected_levels = expected_model["supported_reasoning_levels"]
+            .as_array()
+            .ok_or("E_NATIVE_PROBE_REASONING")?;
+        if selected["defaultReasoningEffort"] != expected_model["default_reasoning_level"]
+            || levels.len() != expected_levels.len()
+            || expected_levels.iter().any(|expected| {
+                !levels.iter().any(|actual| {
+                    actual["reasoningEffort"] == expected["effort"]
+                        && actual["description"] == expected["description"]
+                })
+            })
+        {
+            return Err("E_NATIVE_PROBE_REASONING");
         }
         let thread = self
             .rpc(
@@ -1091,7 +1112,7 @@ mod tests {
             let fixture = Arc::new(fixture);
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let state = crate::ProbeState::new(listener.local_addr().unwrap().port());
-            let endpoint = Endpoint::parse(json!({"base_url":state.base_url(),"model":"webbridge/diagnostic","catalog_codec":codec.id(),"catalog":{"models":[codec.encode(&CatalogRoute {id:"webbridge/diagnostic".into(),observed_label:"Synthetic read and patch".into(),effort:"medium".into(),coding:true}).unwrap()]}}), "webbridge/diagnostic", codec).unwrap();
+            let endpoint = Endpoint::parse(json!({"base_url":state.base_url(),"model":"webbridge/diagnostic","catalog_codec":codec.id(),"catalog":{"models":[codec.encode(&CatalogRoute {id:"webbridge/diagnostic".into(),observed_label:"Synthetic read and patch".into(),effort:"medium".into(),reasoning: vec![], coding:true}).unwrap()]}}), "webbridge/diagnostic", codec).unwrap();
             let count = Arc::new(AtomicUsize::new(0));
             let route = state.base_url().split("/wb/").nth(1).unwrap().to_owned();
             let router = crate::diagnostic_router(state).layer(axum::middleware::from_fn({
@@ -1246,7 +1267,22 @@ mod tests {
         protected_directory(&directory).unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let state = crate::ProbeState::new(listener.local_addr().unwrap().port());
-        let endpoint = Endpoint::parse(json!({"base_url":state.base_url(),"model":"webbridge/diagnostic","catalog_codec":codec.id(),"catalog":{"models":[codec.encode(&CatalogRoute {id:"webbridge/diagnostic".into(),observed_label:"Synthetic text".into(),effort:"medium".into(),coding:false}).unwrap()]}}), "webbridge/diagnostic", codec).unwrap();
+        let reasoning = [
+            ("low", "Instant"),
+            ("medium", "Medium"),
+            ("high", "High"),
+            ("xhigh", "Extra High"),
+            ("max", "6 PRO"),
+        ]
+        .into_iter()
+        .map(
+            |(effort, description)| cxweb_codex_adapter::catalog_codec::ReasoningLevel {
+                effort: effort.into(),
+                description: description.into(),
+            },
+        )
+        .collect();
+        let endpoint = Endpoint::parse(json!({"base_url":state.base_url(),"model":"webbridge/diagnostic","catalog_codec":codec.id(),"catalog":{"models":[codec.encode(&CatalogRoute {id:"webbridge/diagnostic".into(),observed_label:"Synthetic text".into(),effort:"medium".into(),reasoning, coding:false}).unwrap()]}}), "webbridge/diagnostic", codec).unwrap();
         let hold = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let entered = Arc::new(tokio::sync::Notify::new());
         let release = CancellationToken::new();

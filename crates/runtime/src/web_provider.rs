@@ -251,6 +251,24 @@ impl CoordinatorProvider {
         Ok(self)
     }
 
+    /// Preserve the scheduler and completed-turn replay while the installed
+    /// owner replaces metadata within the same qualified scope.
+    #[cfg(windows)]
+    pub(crate) fn with_refreshed_catalog(
+        &self,
+        qualified: Vec<(
+            cxweb_codex_adapter::catalog_codec::CatalogCodec,
+            Vec<cxweb_codex_adapter::catalog_codec::CatalogRoute>,
+        )>,
+    ) -> Result<Self, &'static str> {
+        if self.catalog.is_none() {
+            return Err("E_CATALOG_SNAPSHOT");
+        }
+        let mut next = self.clone();
+        next.catalog = None;
+        next.with_catalog(2, qualified)
+    }
+
     pub(crate) async fn execute(&self, request: WebRequest) -> Result<Response, &'static str> {
         if request.compact {
             return Err("E_COMPACTION_UNQUALIFIED");
@@ -578,6 +596,7 @@ mod tests {
                         id: "webbridge/test".into(),
                         observed_label: "Fixture text".into(),
                         effort: "medium".into(),
+                        reasoning: vec![],
                         coding: false,
                     }],
                 )],
@@ -777,6 +796,7 @@ mod tests {
                         id: "webbridge/test".into(),
                         observed_label: "Fixture text".into(),
                         effort: "high".into(),
+                        reasoning: vec![],
                         coding: false,
                     }],
                 )],
@@ -990,6 +1010,69 @@ mod tests {
         assert_eq!(sessions[0].account_scope, "qualified-account");
         assert_eq!(sessions[0].workspace_scope, "qualified-workspace");
         assert_eq!(sessions[0].epoch, 4);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn refreshing_reasoning_catalog_preserves_completed_turn_replay() {
+        use cxweb_codex_adapter::catalog_codec::{CatalogCodec, CatalogRoute, ReasoningLevel};
+        let (provider, browser) = provider_fixture(false);
+        let mut route = CatalogRoute {
+            id: "webbridge/test".into(),
+            observed_label: "Fixture".into(),
+            effort: "high".into(),
+            reasoning: vec![],
+            coding: false,
+        };
+        let provider = provider
+            .with_catalog(1, vec![(CatalogCodec::Cli01551, vec![route.clone()])])
+            .unwrap();
+        let gateway = Gateway::new(
+            12345,
+            NativeTransport::subscription().unwrap(),
+            Arc::new(provider.clone()),
+        );
+        let base = gateway.base_url();
+        let first = gateway
+            .router()
+            .oneshot(request(&base, "same-turn", "same-context", false))
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        let original = first.into_body().collect().await.unwrap().to_bytes();
+        route.reasoning = vec![
+            ReasoningLevel {
+                effort: "medium".into(),
+                description: "Medium".into(),
+            },
+            ReasoningLevel {
+                effort: "high".into(),
+                description: "High".into(),
+            },
+        ];
+        let refreshed = provider
+            .with_refreshed_catalog(vec![(CatalogCodec::Cli01551, vec![route])])
+            .unwrap();
+        assert_eq!(provider.catalog(CatalogCodec::Cli01551).unwrap().entries[0]["supported_reasoning_levels"].as_array().unwrap().len(), 1);
+        assert_eq!(refreshed.catalog(CatalogCodec::Cli01551).unwrap().entries[0]["supported_reasoning_levels"].as_array().unwrap().len(), 2);
+        let gateway = Gateway::new(
+            12345,
+            NativeTransport::subscription().unwrap(),
+            Arc::new(refreshed),
+        );
+        let base = gateway.base_url();
+        let replay = gateway
+            .router()
+            .oneshot(request(&base, "same-turn", "same-context", false))
+            .await
+            .unwrap();
+        assert_eq!(replay.status(), StatusCode::OK);
+        assert!(replay.extensions().get::<BrowserEvidence>().is_none());
+        assert_eq!(
+            replay.into_body().collect().await.unwrap().to_bytes(),
+            original
+        );
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
     }
     #[tokio::test]
     async fn missing_conflicting_identity_and_unknown_routes_never_prepare_browser() {

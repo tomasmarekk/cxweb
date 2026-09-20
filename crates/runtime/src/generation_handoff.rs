@@ -173,17 +173,12 @@ impl PreparedHandoff {
             return Err("E_SESSION_SCOPE");
         }
         let scope = BrowserScope::from_surface(installation, &surface)?;
-        let effort = match model.label.rsplit_once(" · ").map(|(_, effort)| effort) {
-            Some("Instant") => "none",
-            Some("Medium") => "medium",
-            Some("High") => "high",
-            Some("Extra High") => "xhigh",
-            _ => return Err("E_MODEL_UNAVAILABLE"),
-        };
+        let effort = crate::managed_driver::observed_effort(&model.label)?;
         let route = Route {
             id: model.id.clone(),
             identity: identity.clone(),
             label: model.label.clone(),
+            reasoning: vec![],
             effort: Some(effort.into()),
         };
         let browser_version = browser.version().map_err(|_| "E_BROWSER_OBSERVATION")?["product"]
@@ -346,6 +341,7 @@ mod tests {
                 id: "webbridge/fixture".into(),
                 identity: "fixture".into(),
                 label: "Fixture · High".into(),
+                reasoning: vec![],
                 effort: Some("high".into()),
             };
             let prepared = PreparedHandoff {
@@ -436,6 +432,7 @@ mod tests {
             id: "webbridge/fixture".into(),
             identity: "fixture".into(),
             label: "Fixture · High".into(),
+            reasoning: vec![],
             effort: Some("high".into()),
         };
         let browser =
@@ -578,6 +575,7 @@ mod tests {
                         id: session.route.id.clone(),
                         observed_label: session.route.label.clone(),
                         effort: "high".into(),
+                        reasoning: vec![],
                         coding: true,
                     }],
                 )],

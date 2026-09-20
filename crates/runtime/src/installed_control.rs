@@ -168,8 +168,18 @@ pub async fn retry_web(installation: &str, instance: String) -> Result<Snapshot,
     read(installation).await
 }
 
+pub async fn qualify_reasoning(
+    installation: &str,
+    instance: String,
+) -> Result<Snapshot, &'static str> {
+    selected(installation).await?;
+    mutate(installation, instance, Action::QualifyReasoning).await?;
+    read(installation).await
+}
+
 #[derive(Clone, Copy)]
 enum Action {
+    QualifyReasoning,
     Remove(bool),
     RetryWeb,
 }
@@ -186,6 +196,10 @@ async fn remove(
 async fn mutate(installation: &str, instance: String, action: Action) -> Result<(), &'static str> {
     let operation = format!("{:032x}", rand::random::<u128>());
     let command = match action {
+        Action::QualifyReasoning => Command::QualifyReasoning {
+            instance: instance.clone(),
+            operation: operation.clone(),
+        },
         Action::RetryWeb => Command::RetryWeb {
             instance: instance.clone(),
             operation: operation.clone(),
@@ -208,13 +222,19 @@ async fn mutate(installation: &str, instance: String, action: Action) -> Result<
     )
     .await;
     let deadline = tokio::time::Instant::now()
-        + Duration::from_secs(if matches!(action, Action::RetryWeb) {
+        + Duration::from_secs(if matches!(action, Action::QualifyReasoning) {
+            2700
+        } else if matches!(action, Action::RetryWeb) {
             90
         } else {
             45
         });
     loop {
         match reply {
+            Ok(Reply::Operation {
+                outcome: Outcome::ReasoningFailed { code },
+                ..
+            }) => return Err(code.code()),
             Ok(Reply::Operation {
                 outcome: Outcome::Completed { .. },
                 ..

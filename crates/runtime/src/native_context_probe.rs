@@ -193,7 +193,7 @@ async fn run_actual_backend_probe(expected_error: Option<&'static str>) {
                     id: "webbridge/test".into(),
                     observed_label: "Context fixture".into(),
                     effort: "medium".into(),
-                    coding: false,
+                    reasoning: vec![], coding: false,
                 },
                 budget,
             )

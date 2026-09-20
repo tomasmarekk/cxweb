@@ -10,6 +10,18 @@ use std::{
 
 const MAX_FRAME: usize = 8 * 1024 * 1024;
 
+fn scope_error(code: &str) -> &'static str {
+    match code {
+        "E_ACCOUNT_OPEN" => "E_ACCOUNT_OPEN",
+        "E_ACCOUNT_READ" => "E_ACCOUNT_READ",
+        "E_ACCOUNT_SCOPE" => "E_ACCOUNT_SCOPE",
+        "E_ACCOUNT_PARSE" => "E_ACCOUNT_PARSE",
+        "E_ACCOUNT_SETTINGS_CLOSE" => "E_ACCOUNT_SETTINGS_CLOSE",
+        "E_MODEL_CLOSE" => "E_MODEL_CLOSE",
+        _ => "E_ACCOUNT_OPERATION",
+    }
+}
+
 pub struct ManagedPage {
     target: String,
     session: String,
@@ -743,6 +755,11 @@ impl ManagedBrowser {
         Ok(surface)
     }
 
+    /// Inspect only the currently selected family, preserving its selection.
+    pub fn discover_current_family(&mut self, page: &ManagedPage) -> io::Result<ModelSurface> {
+        self.discover_family_routes(page)
+    }
+
     /// Selects only a previously observed reasoning-slider identity and verifies
     /// the resulting accessible value. It cannot click an arbitrary DOM node.
     pub fn select_candidate(&mut self, page: &ManagedPage, identity: &str) -> io::Result<String> {
@@ -978,13 +995,42 @@ impl ManagedBrowser {
         self.qualification_diagnostic.clone()
     }
 
+    /// Installed maintenance uses the same attribution checks, with cancellation
+    /// observed before Send and throughout generation. Always close the owned
+    /// target before returning; an unconfirmed close prevents further work.
+    pub fn qualify_cancellable(
+        &mut self,
+        candidate: (&str, &str, &str),
+        before_send: impl FnOnce() -> io::Result<()>,
+        verify_scope: impl FnMut(&mut Self, &ManagedPage) -> io::Result<()>,
+        cancelled: impl Fn() -> bool,
+    ) -> io::Result<QualificationOutcome> {
+        self.qualification_diagnostic = None;
+        let page = self.open_temporary_chat()?;
+        let result =
+            self.qualify_page_checked(&page, candidate, before_send, verify_scope, cancelled);
+        if result.is_err() {
+            let _ = self.stop(&page);
+        }
+        self.close_page_checked(&page)
+            .map_err(|_| io::Error::other("E_WEB_CLEANUP_UNCONFIRMED"))?;
+        result
+    }
+
     pub fn model_diagnostic(&self) -> Option<ModelSurfaceDiagnostic> {
         self.model_diagnostic.clone()
     }
 
     pub fn account_scope(&mut self, page: &ManagedPage) -> io::Result<ScopeSurface> {
+        self.scope_diagnostic = None;
         let result = self.account_scope_inner(page);
-        self.scope_diagnostic = result.as_ref().ok().map(|scope| scope.diagnostic.clone());
+        self.scope_diagnostic = Some(match &result {
+            Ok(scope) => scope.diagnostic.clone(),
+            Err(error) => ScopeDiagnostic {
+                failure: Some(scope_error(&error.to_string()).into()),
+                ..Default::default()
+            },
+        });
         result
     }
 
@@ -1227,8 +1273,29 @@ impl ManagedBrowser {
         expected_label: &str,
         prompt: &str,
         before_send: impl FnOnce() -> io::Result<()>,
-        mut verify_scope: impl FnMut(&mut Self, &ManagedPage) -> io::Result<()>,
+        verify_scope: impl FnMut(&mut Self, &ManagedPage) -> io::Result<()>,
     ) -> io::Result<QualificationOutcome> {
+        self.qualify_page_checked(
+            page,
+            (identity, expected_label, prompt),
+            before_send,
+            verify_scope,
+            || false,
+        )
+    }
+
+    fn qualify_page_checked(
+        &mut self,
+        page: &ManagedPage,
+        candidate: (&str, &str, &str),
+        before_send: impl FnOnce() -> io::Result<()>,
+        mut verify_scope: impl FnMut(&mut Self, &ManagedPage) -> io::Result<()>,
+        cancelled: impl Fn() -> bool,
+    ) -> io::Result<QualificationOutcome> {
+        let (identity, expected_label, prompt) = candidate;
+        if cancelled() {
+            return Err(io::Error::other("E_CANCELLED"));
+        }
         verify_scope(self, page)?;
         let candidate_label = self
             .select_candidate(page, identity)
@@ -1244,6 +1311,9 @@ impl ManagedBrowser {
         self.insert_prompt(page, prompt)
             .map_err(|_| io::Error::other("E_QUALIFICATION_INSERT"))?;
         self.verify_candidate(page, identity, expected_label)?;
+        if cancelled() {
+            return Err(io::Error::other("E_CANCELLED"));
+        }
         before_send()?;
         tracker.begin_submission().map_err(io::Error::other)?;
         if let Err(error) = self.press_send(page, prompt, &baseline.selected_model) {
@@ -1258,6 +1328,9 @@ impl ManagedBrowser {
         }
         let deadline = Instant::now() + Duration::from_secs(300);
         loop {
+            if cancelled() {
+                return Err(io::Error::other("E_CANCELLED"));
+            }
             let observation = self
                 .observe(page, &baseline, prompt)
                 .map_err(|_| io::Error::other("E_QUALIFICATION_OBSERVE"))?;
@@ -1299,6 +1372,7 @@ impl ManagedBrowser {
                 Some("route") => "E_BROWSER_TEMPORARY_ROUTE",
                 Some("loading") => "E_BROWSER_TEMPORARY_LOADING",
                 Some("composer_missing") => "E_BROWSER_TEMPORARY_COMPOSER",
+                Some("account_loading") => "E_BROWSER_TEMPORARY_ACCOUNT",
                 Some("ambiguous") => "E_BROWSER_TEMPORARY_AMBIGUOUS",
                 _ => "E_BROWSER_TEMPORARY_OBSERVATION",
             };
@@ -1995,6 +2069,19 @@ fn check_replacement_targets(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn account_failures_export_only_fixed_diagnostics() {
+        assert_eq!(scope_error("E_ACCOUNT_READ"), "E_ACCOUNT_READ");
+        assert_eq!(
+            scope_error("E_ACCOUNT_OPEN private data"),
+            "E_ACCOUNT_OPERATION"
+        );
+        assert_eq!(
+            scope_error("private transport response"),
+            "E_ACCOUNT_OPERATION"
+        );
+    }
     #[test]
     fn replacement_preserves_other_tabs_even_after_login_is_closed() {
         let inventory = json!({"targetInfos":[

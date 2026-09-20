@@ -10,6 +10,11 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Qualify every observed reasoning choice in the installed family. Uses ChatGPT allowance.
+    RuntimeQualifyReasoning {
+        #[arg(long)]
+        installation: String,
+    },
     /// Connect a verified background ChatGPT route to the selected Codex home.
     ConnectCodex {
         #[arg(long)]
@@ -120,6 +125,23 @@ enum BrowserAction {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match Args::parse().command {
+        Command::RuntimeQualifyReasoning { installation } => {
+            #[cfg(windows)]
+            {
+                let current = cxweb_runtime::installed_control::check(&installation).await?;
+                let result = cxweb_runtime::installed_control::qualify_reasoning(
+                    &installation,
+                    current.instance,
+                )
+                .await?;
+                print_json(&serde_json::to_value(result.health)?);
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = installation;
+                return Err("runtime qualification requires Windows".into());
+            }
+        }
         Command::ConnectCodex {
             client,
             home,
@@ -383,6 +405,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     id: "webbridge/diagnostic".into(),
                     observed_label: "Diagnostic".into(),
                     effort: "medium".into(),
+                    reasoning: vec![],
                     coding,
                 };
                 if compaction {

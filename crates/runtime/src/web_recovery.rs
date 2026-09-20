@@ -32,6 +32,16 @@ pub(crate) struct Receipt {
 }
 
 impl Receipt {
+    pub(crate) fn validate_extension(&self, next: &Self) -> Result<(), &'static str> {
+        if self.version != next.version
+            || self.browser_version != next.browser_version
+            || self.builds != next.builds
+            || self.protocol_evidence != next.protocol_evidence
+        {
+            return Err("E_WEB_RECOVERY_RECEIPT");
+        }
+        self.binding.validate_extension(&next.binding)
+    }
     pub(crate) fn new(session: &GenerationSession, codecs: &[CatalogCodec]) -> Self {
         let scope = session.scope();
         Self {
@@ -100,14 +110,7 @@ impl Receipt {
                     .binding
                     .routes
                     .iter()
-                    .map(|route| {
-                        Ok(CatalogRoute {
-                            id: route.id.clone(),
-                            observed_label: route.label.clone(),
-                            effort: route.effort.clone().ok_or("E_WEB_RECOVERY_RECEIPT")?,
-                            coding: true,
-                        })
-                    })
+                    .map(|route| route.catalog(true))
                     .collect::<Result<Vec<_>, &'static str>>()?;
                 Ok((codec, routes))
             })
@@ -202,6 +205,14 @@ impl Receipt {
                 return Err("E_SESSION_SCOPE");
             }
             for route in &self.binding.routes {
+                for variant in &route.reasoning {
+                    let label = browser
+                        .select_candidate(&page, &variant.identity)
+                        .map_err(|_| "E_MODEL_SELECTION")?;
+                    if label != variant.label {
+                        return Err("E_MODEL_SELECTION");
+                    }
+                }
                 let label = browser
                     .select_candidate(&page, &route.identity)
                     .map_err(|_| "E_MODEL_SELECTION")?;
@@ -252,15 +263,22 @@ impl Receipt {
             let coordinator = Coordinator::new(ledger, Arc::new(driver.clone()));
             let provider =
                 CoordinatorProvider::new(coordinator, scope, routes)?.with_catalog(1, catalogs)?;
-            Ok(Arc::new(ObservedProvider::new(
-                Arc::new(provider),
-                driver.clone(),
-                verified_at,
-            )) as Arc<dyn WebProvider>)
+            Ok((
+                Arc::new(ObservedProvider::new(
+                    Arc::new(provider.clone()),
+                    driver.clone(),
+                    verified_at,
+                )) as Arc<dyn WebProvider>,
+                provider,
+            ))
         }
         .await;
         match result {
-            Ok(provider) => Ok(Restored { provider, driver }),
+            Ok((provider, coordinator)) => Ok(Restored {
+                provider,
+                driver,
+                coordinator,
+            }),
             Err(code) => {
                 driver
                     .shutdown()
@@ -406,6 +424,7 @@ fn observe_response(
 struct Restored {
     provider: Arc<dyn WebProvider>,
     driver: ManagedDriver,
+    coordinator: CoordinatorProvider,
 }
 
 type RecoveryResult = Result<Arc<dyn WebProvider>, &'static str>;
@@ -413,7 +432,10 @@ type RecoveryResult = Result<Arc<dyn WebProvider>, &'static str>;
 /// unavailable until a non-generative recovery attempt finishes. Only explicit
 /// retries of a completed transient startup failure may replace that result.
 #[derive(Clone, Default)]
-pub(crate) struct PendingProvider(Arc<Mutex<Option<RecoveryResult>>>);
+pub(crate) struct PendingProvider(
+    Arc<Mutex<Option<RecoveryResult>>>,
+    Arc<Mutex<Option<(ManagedDriver, CoordinatorProvider)>>>,
+);
 impl PendingProvider {
     fn begin_retry(&self) -> Result<(), &'static str> {
         let mut state = self.0.lock().map_err(|_| "E_WEB_RECOVERY_STATE")?;
@@ -431,6 +453,8 @@ impl PendingProvider {
     ) -> Result<(), &'static str> {
         match receipt.restore(directory, cancellation.clone()).await {
             Ok(restored) => {
+                *self.1.lock().map_err(|_| "E_WEB_RECOVERY_STATE")? =
+                    Some((restored.driver.clone(), restored.coordinator));
                 if !self.finish(Ok(restored.provider), &cancellation) {
                     // Retain the recovery drain lease until the browser and its
                     // profile lock are actually released, even if the UI left.
@@ -544,14 +568,14 @@ fn retryable(code: &str) -> bool {
 #[derive(Clone)]
 pub(crate) struct RecoveryController {
     pending: PendingProvider,
-    receipt: Receipt,
+    receipt: Arc<Mutex<Receipt>>,
     directory: PathBuf,
 }
 impl RecoveryController {
     pub(crate) fn new(pending: PendingProvider, receipt: Receipt, directory: PathBuf) -> Self {
         Self {
             pending,
-            receipt,
+            receipt: Arc::new(Mutex::new(receipt)),
             directory,
         }
     }
@@ -560,12 +584,17 @@ impl RecoveryController {
         gateway: &crate::gateway::Gateway,
     ) -> Result<(), &'static str> {
         self.pending.begin_retry()?;
+        let receipt = self
+            .receipt
+            .lock()
+            .map_err(|_| "E_WEB_RECOVERY_STATE")?
+            .clone();
         let mut admitted = false;
         let result = gateway
             .recover_web(|cancel| {
                 admitted = true;
                 self.pending
-                    .restore(self.receipt.clone(), self.directory.clone(), cancel)
+                    .restore(receipt, self.directory.clone(), cancel)
             })
             .await;
         if !admitted {
@@ -574,6 +603,59 @@ impl RecoveryController {
             return Err("E_WEB_DISCONNECTED");
         }
         result
+    }
+
+    pub(crate) async fn qualify_reasoning(
+        &self,
+        journal: Arc<Mutex<crate::config_journal::ConfigJournal>>,
+        cancel: CancellationToken,
+    ) -> Result<(), &'static str> {
+        self.pending.ready()?;
+        let (driver, coordinator) = self
+            .pending
+            .1
+            .lock()
+            .map_err(|_| "E_WEB_RECOVERY_STATE")?
+            .clone()
+            .ok_or("E_WEB_RECOVERY_STATE")?;
+        let previous = self
+            .receipt
+            .lock()
+            .map_err(|_| "E_WEB_RECOVERY_STATE")?
+            .clone();
+        let binding = driver
+            .qualify_reasoning(self.directory.clone(), cancel.clone())
+            .await?;
+        if cancel.is_cancelled() {
+            return Err("E_CANCELLED");
+        }
+        let mut next = previous.clone();
+        next.binding = binding;
+        previous.validate_extension(&next)?;
+        let coordinator = coordinator.with_refreshed_catalog(next.catalogs()?)?;
+        let provider = Arc::new(ObservedProvider::new(
+            Arc::new(coordinator.clone()),
+            driver.clone(),
+            cxweb_platform::clock::utc_timestamp(),
+        )) as Arc<dyn WebProvider>;
+        let saved = next.clone();
+        tokio::task::spawn_blocking(move || {
+            journal
+                .lock()
+                .map_err(|_| "E_INTEGRATION_STATE")?
+                .extend_web(&previous, &saved)
+                .map_err(|_| "E_WEB_RECOVERY_RECEIPT")
+        })
+        .await
+        .map_err(|_| "E_REASONING_WORKER")??;
+        *self.receipt.lock().map_err(|_| "E_WEB_RECOVERY_STATE")? = next.clone();
+        if let Err(code) = driver.adopt_binding(next.binding).await {
+            *self.pending.0.lock().map_err(|_| "E_WEB_RECOVERY_STATE")? = Some(Err(code));
+            return Err(code);
+        }
+        *self.pending.1.lock().map_err(|_| "E_WEB_RECOVERY_STATE")? = Some((driver, coordinator));
+        *self.pending.0.lock().map_err(|_| "E_WEB_RECOVERY_STATE")? = Some(Ok(provider));
+        Ok(())
     }
 }
 
@@ -591,6 +673,7 @@ impl Receipt {
                     id: "webbridge/fixture".into(),
                     identity: "fixture".into(),
                     label: "Fixture High".into(),
+                    reasoning: vec![],
                     effort: Some("high".into()),
                 }],
             },

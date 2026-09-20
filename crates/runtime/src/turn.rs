@@ -28,6 +28,13 @@ pub struct Prepared {
 /// never fall back to another route, and never resend a submission on timeout.
 pub trait BrowserDriver: Send + Sync {
     fn prepare(&self, session: SessionKey) -> BrowserFuture<Prepared>;
+    fn prepare_with_effort(
+        &self,
+        session: SessionKey,
+        _effort: Option<String>,
+    ) -> BrowserFuture<Prepared> {
+        self.prepare(session)
+    }
     fn submit(&self, handle: String, prompt: String, selected_model: String) -> BrowserFuture<()>;
     fn observe(&self, handle: String) -> BrowserFuture<Observation>;
     /// Recheck the account/workspace before any buffered output is delivered.
@@ -177,7 +184,10 @@ impl Coordinator {
         }
         let prepared = match tokio::time::timeout(
             Duration::from_secs(90),
-            self.browser.prepare(input.session.clone()),
+            self.browser.prepare_with_effort(
+                input.session.clone(),
+                request.request.requested_effort.clone(),
+            ),
         )
         .await
         {
@@ -454,6 +464,7 @@ mod tests {
     }
     struct MockBrowser {
         mode: Mode,
+        requested_efforts: Mutex<Vec<Option<String>>>,
         sends: AtomicUsize,
         stops: AtomicUsize,
         releases: AtomicUsize,
@@ -466,6 +477,7 @@ mod tests {
         fn new(mode: Mode) -> Arc<Self> {
             Arc::new(Self {
                 mode,
+                requested_efforts: Mutex::default(),
                 sends: AtomicUsize::new(0),
                 stops: AtomicUsize::new(0),
                 releases: AtomicUsize::new(0),
@@ -477,6 +489,19 @@ mod tests {
         }
     }
     impl BrowserDriver for MockBrowser {
+        fn prepare_with_effort(
+            &self,
+            session: SessionKey,
+            effort: Option<String>,
+        ) -> BrowserFuture<Prepared> {
+            self.requested_efforts.lock().unwrap().push(effort.clone());
+            let prepared = self.prepare(session);
+            Box::pin(async move {
+                let mut prepared = prepared.await?;
+                prepared.verified_effort = effort;
+                Ok(prepared)
+            })
+        }
         fn verify_completion(&self, _: String) -> BrowserFuture<()> {
             let changed = matches!(self.mode, Mode::ChangedScope);
             Box::pin(async move {
@@ -570,6 +595,27 @@ mod tests {
     }
     fn input() -> TurnInput {
         TurnInput { request_id:"request-1".into(), session:SessionKey { installation:"i".into(),native_session:"s".into(),account_scope:"a".into(),workspace_scope:"w".into(),route:"webbridge/test".into(),epoch:0 }, bytes:json!({"model":"webbridge/test","input":"synthetic task","tools":[{"type":"function","name":"read_file","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}}]}).to_string().into_bytes() }
+    }
+
+    #[tokio::test]
+    async fn native_reasoning_choice_reaches_browser_preparation_for_every_turn() {
+        for effort in ["low", "medium", "high", "xhigh", "max"] {
+            let browser = MockBrowser::new(Mode::Final);
+            let coordinator = Coordinator::new(Ledger::in_memory(), browser.clone());
+            let mut request = input();
+            let mut payload: serde_json::Value = serde_json::from_slice(&request.bytes).unwrap();
+            payload["reasoning"] = json!({"effort":effort});
+            request.bytes = serde_json::to_vec(&payload).unwrap();
+            coordinator
+                .execute(request, CancellationToken::new())
+                .await
+                .unwrap();
+            assert_eq!(
+                *browser.requested_efforts.lock().unwrap(),
+                vec![Some(effort.into())]
+            );
+            assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
+        }
     }
 
     #[tokio::test]

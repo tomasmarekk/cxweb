@@ -8,19 +8,83 @@ Manual login and managed reuse of the saved session are user-confirmed. Scoped
 background text generation and native read/apply_patch cycles now pass through
 both actual native backends. The actual CLI picker passed isolated synthetic and
 authenticated browser round trips, including its structured auxiliary request.
-Actual App picker, broader native feature coexistence, coding/model
-qualification and release gates remain incomplete. The setup activation path is
+Broader native feature coexistence, coding/model qualification and release gates
+remain incomplete. The setup activation path is
 implemented and production routing is installed on this machine. Verification of
 the installed catalogs and authenticated text requests passed both native builds.
 The real installed CLI /model picker displays the owned row. A fresh signed App
-instance also displays the saved owned selection in its composer. Its full picker,
-native/web switching and GUI request still need verification. Both native backends
+instance displays the owned family and all five reasoning choices. Its full picker
+and native/web switching passed, as did a GUI text round trip. Both native backends
 pass web/native/web text generation in one process through the installed runtime.
 Scheduled browser recovery now passes after removing an MSIX data-path ambiguity.
 Current live state: user sign-in is confirmed, the managed login window is closed,
 and installed background recovery has verified the saved account and model in
 English. The complete installed CLI and App-backend read/patch/final scenarios
-now pass; actual GUI picker verification remains open.
+now pass. A fixed message sent from the actual GUI also passed with the owned
+model and effort corroborated by the native turn context.
+
+## Reasoning family publication (2026-09-20)
+
+- An installed route can now expose multiple independently qualified reasoning
+  choices under one model family. The native request's explicit effort selects
+  its exact observed browser position; unsupported efforts fail before opening a
+  target. The selected identity is rechecked immediately before Send. Legacy
+  single-effort receipts remain readable.
+- The live English Latest slider exposed Instant, Medium, High, Extra High and
+  Pro at positions 0 through 4. The published native keys are `low`, `medium`,
+  `high`, `xhigh` and `max`. The reviewed App filters `none` out of its picker:
+  real UI inspection showed only four choices with the first implementation.
+  Low is therefore an explicit Instant alias, and Max selects Pro; the catalog
+  description explains both mappings. Legacy Instant receipts and requests using
+  `none` still select the same observed Instant identity. The web label is Pro
+  on this account; the adapter also accepts 6 PRO. Labels are never inferred from
+  slider positions, and native client code/preferences are not patched.
+- `runtime-qualify-reasoning --installation <id>` owns an exclusive web admission
+  lease and runs fixed text plus typed function/custom-tool diagnostics for each
+  additional choice. It never retries generation automatically. Explicit
+  disconnect cancels and drains it; unconfirmed cleanup prevents new web work.
+  Native forwarding remains available. A compare-and-store journal extension
+  precedes catalog publication and preserves the account, default route, native
+  configuration and existing completed-response replay cache.
+- All eight added browser checks passed at 14:24:22 UTC; the existing Extra High
+  route retains its prior text and actual native read/patch evidence. The running
+  installation now publishes all five choices. Evidence is in
+  `integration-tests/compatibility/browser-latest-reasoning.json`. This is basic
+  live protocol evidence, not full G2 coding qualification.
+- An earlier batch completed six checks and failed the account guard before the
+  first Pro Send. New Temporary Chat readiness waits for a visible profile entry
+  point as well as the composer, allowing responsive duplicate entry points;
+  identity verification remains separate. Scope failures now expose fixed causes
+  instead of retaining a previous successful diagnostic. The initial failing
+  subcheck was not recorded, so the successful later batch is not proof of that
+  first failure's precise cause.
+- Both actual native executables accepted an isolated synthetic five-choice
+  catalog and passed text/cancellation tests. A live installed CLI run then
+  completed all five efforts, but its overall result failed because the native
+  config hash changed while an independent verification App was starting.
+  The later CLI run with the published Low alias passed all five actual browser
+  turns at 14:40:21 UTC with configuration and executable hashes unchanged.
+  Its complete report is `cli-0.155.1.installed-reasoning.json`. The App backend
+  passed the same five Low-alias turns at 14:42:18 UTC, also with unchanged
+  configuration and executable hashes; see
+  `app-backend-0.155.0-alpha.9.2.installed-reasoning.json`.
+- Computer Use verified all five positions in the actual signed App
+  26.915.4065.0. Its visible labels are Light, Medium, High, Extra High and Max;
+  accessibility calls the middle two Standard and Extended. These are the native
+  client's presentation of low/medium/high/xhigh/max. The complete model menu
+  includes ChatGPT Web alongside native models and retains it after selecting
+  GPT-6 Astra. Switching back to the web family and restoring Extra High passed.
+  A fixed no-tools message was sent once from the existing GUI test task and
+  rendered the expected answer at 14:47:43 UTC. The native turn context records
+  the owned model ID and `xhigh`; its response has the runtime's owned response
+  ID and no tool calls. Background health returned to idle with verified scope.
+  See `app-26.915.4065.0.installed-picker.json`. This live check used the existing
+  native home, not the isolated synthetic home. The original running App retains
+  its older catalog until a full restart.
+- Validation so far: Rust workspace 277 passed / 15 ignored, browser DOM 35
+  passed, desktop/approval tests 62 passed; Clippy, formatting, diff checks and
+  explicit Windows CLI/daemon release builds passed. The real GUI mouse path now
+  opens the picker after refreshing its window/screenshot selection.
 
 ## Saved-session hydration and installed tool verification (2026-09-20)
 

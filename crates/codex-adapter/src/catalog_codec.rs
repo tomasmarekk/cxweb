@@ -98,12 +98,25 @@ impl CatalogCodec {
         // An unknown browser token capacity is not the native model's capacity.
         // No fabricated context, compaction hash, upgrade, native instructions,
         // service tier, multi-agent policy or image capability is copied.
+        let levels = route.reasoning_levels()?;
         let label = format!("ChatGPT Web · {}", route.observed_label);
+        let mut description = format!("{label}. Hosted search unavailable");
+        if levels
+            .iter()
+            .any(|level| level.effort == "low" && level.description == "Instant")
+        {
+            description.push_str(". Low selects Instant (shown as Light in App)");
+        }
+        if let Some(pro) = levels.iter().find(|level| {
+            level.effort == "max" && matches!(level.description.as_str(), "Pro" | "6 PRO")
+        }) {
+            description.push_str(&format!(". Max selects {}", pro.description));
+        }
         Ok(json!({
             "slug":route.id,"display_name":label,
-            "description":format!("{label}. Hosted search unavailable"),
+            "description":description,
             "default_reasoning_level":route.effort,
-            "supported_reasoning_levels":[{"effort":route.effort,"description":route.observed_label}],
+            "supported_reasoning_levels":levels,
             "shell_type":if route.coding {"unified_exec"} else {"disabled"},
             "apply_patch_tool_type":if route.coding {Some("freeform")} else {None},
             "visibility":"list","supported_in_api":true,"priority":1000,
@@ -119,14 +132,57 @@ impl CatalogCodec {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReasoningLevel {
+    pub effort: String,
+    pub description: String,
+}
+
 #[derive(Clone)]
 pub struct CatalogRoute {
     pub id: String,
     pub observed_label: String,
-    /// A route fixes an observed family/effort pair; the picker must not offer
-    /// effort values that would silently select a different browser route.
+    /// The default observed effort. Additional qualified choices must resolve
+    /// within the same browser model family without a silent model fallback.
     pub effort: String,
+    /// Empty preserves the original single-effort route. Every additional level
+    /// must be backed by an independently verified browser selection.
+    pub reasoning: Vec<ReasoningLevel>,
     pub coding: bool,
+}
+
+impl CatalogRoute {
+    pub fn reasoning_levels(&self) -> Result<Vec<ReasoningLevel>, &'static str> {
+        let levels = if self.reasoning.is_empty() {
+            vec![ReasoningLevel {
+                effort: self.effort.clone(),
+                description: self.observed_label.clone(),
+            }]
+        } else {
+            self.reasoning.clone()
+        };
+        let mut efforts = std::collections::BTreeSet::new();
+        if levels.len() > 7
+            || levels.iter().any(|level| {
+                !matches!(
+                    level.effort.as_str(),
+                    "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
+                ) || !efforts.insert(&level.effort)
+                    || level.description.is_empty()
+                    || level.description.len() > 160
+                    || level.description.trim() != level.description
+                    || !level
+                        .description
+                        .chars()
+                        .all(|c| c.is_ascii_graphic() || c == ' ' || c == '·')
+            })
+            || !efforts.contains(&self.effort)
+        {
+            return Err("E_CATALOG_OBSERVATION");
+        }
+        Ok(levels)
+    }
 }
 
 #[cfg(test)]
@@ -138,6 +194,7 @@ mod tests {
             id: "webbridge/observed-xhigh".into(),
             observed_label: "Observed model · Extra High".into(),
             effort: "xhigh".into(),
+            reasoning: vec![],
             coding: false,
         }
     }
@@ -234,6 +291,56 @@ mod tests {
             let coding = codec.encode(&route).unwrap();
             assert_eq!(coding["shell_type"], "unified_exec");
             assert_eq!(coding["apply_patch_tool_type"], "freeform");
+        }
+    }
+
+    #[test]
+    fn family_catalog_exposes_all_qualified_levels_without_inventing_choices() {
+        let mut route = route();
+        route.observed_label = "Latest".into();
+        route.reasoning = [
+            ("low", "Instant"),
+            ("medium", "Medium"),
+            ("high", "High"),
+            ("xhigh", "Extra High"),
+            ("max", "6 PRO"),
+        ]
+        .into_iter()
+        .map(|(effort, description)| ReasoningLevel {
+            effort: effort.into(),
+            description: description.into(),
+        })
+        .collect();
+        for codec in [CatalogCodec::Cli01551, CatalogCodec::App01550Alpha92] {
+            let encoded = codec.encode(&route).unwrap();
+            assert_eq!(encoded["display_name"], "ChatGPT Web · Latest");
+            assert_eq!(encoded["default_reasoning_level"], "xhigh");
+            assert!(
+                encoded["description"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Low selects Instant")
+            );
+            assert!(
+                encoded["description"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Max selects 6 PRO")
+            );
+            assert_eq!(
+                encoded["supported_reasoning_levels"],
+                serde_json::to_value(&route.reasoning).unwrap()
+            );
+            for mutation in 0..4 {
+                let mut invalid = route.clone();
+                match mutation {
+                    0 => invalid.reasoning.push(invalid.reasoning[0].clone()),
+                    1 => invalid.reasoning.retain(|level| level.effort != "xhigh"),
+                    2 => invalid.reasoning[0].effort = "invented".into(),
+                    _ => invalid.reasoning[0].description = "Injected\nrow".into(),
+                }
+                assert!(codec.encode(&invalid).is_err());
+            }
         }
     }
 

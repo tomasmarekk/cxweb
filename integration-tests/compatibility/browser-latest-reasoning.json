@@ -1,0 +1,83 @@
+{
+  "schema": "cxweb.reasoning-qualification.v1",
+  "observedAt": "2026-09-20T14:24:22.853Z",
+  "synthetic": false,
+  "route": "webbridge/402f0b19d5610fcbee25b681",
+  "observedLabels": [
+    "Latest · Instant",
+    "Latest · Medium",
+    "Latest · High",
+    "Latest · Extra High",
+    "Latest · Pro"
+  ],
+  "levels": [
+    {
+      "label": "Latest · Instant",
+      "effort": "none",
+      "position": 0
+    },
+    {
+      "label": "Latest · Medium",
+      "effort": "medium",
+      "position": 1
+    },
+    {
+      "label": "Latest · High",
+      "effort": "high",
+      "position": 2
+    },
+    {
+      "label": "Latest · Extra High",
+      "effort": "xhigh",
+      "position": 3
+    },
+    {
+      "label": "Latest · Pro",
+      "effort": "max",
+      "position": 4
+    }
+  ],
+  "completedChecks": [
+    [
+      "text",
+      "Latest · Instant"
+    ],
+    [
+      "tools",
+      "Latest · Instant"
+    ],
+    [
+      "text",
+      "Latest · Medium"
+    ],
+    [
+      "tools",
+      "Latest · Medium"
+    ],
+    [
+      "text",
+      "Latest · High"
+    ],
+    [
+      "tools",
+      "Latest · High"
+    ],
+    [
+      "text",
+      "Latest · Pro"
+    ],
+    [
+      "tools",
+      "Latest · Pro"
+    ]
+  ],
+  "defaultEvidence": [
+    "cli-0.155.1.installed-tools.json",
+    "app-backend-0.155.0-alpha.9.2.installed-tools.json"
+  ],
+  "accountVerifiedBeforeAndAfter": true,
+  "ownedTemporaryTargetsClosed": true,
+  "visibleLoginWindowRequired": false,
+  "published": true,
+  "fullCodingQualification": false
+}

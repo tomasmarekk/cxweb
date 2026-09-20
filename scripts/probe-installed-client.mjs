@@ -2,6 +2,7 @@
 // Uses its existing subscription. --text consumes web allowance; --coexistence
 // also exercises a native subscription model between two independent web turns.
 // --tools runs one exact native read/patch exercise in a disposable workspace.
+// --reasoning verifies all five qualified choices through actual native turns.
 // No auth files, routing overrides, model catalogs or client binaries are changed.
 import { spawn, execFileSync } from 'node:child_process';
 import { readFile, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
@@ -13,7 +14,7 @@ import { approveFixtureRead, approveFixturePatch, completedFixtureRead, fixtureR
 
 const [client, home, model, option] = process.argv.slice(2);
 assert.ok(client && home && model?.startsWith('webbridge/') && isAbsolute(client) && isAbsolute(home));
-assert.ok(process.argv.length <= 6 && (!option || ['--text', '--coexistence', '--tools'].includes(option)));
+assert.ok(process.argv.length <= 6 && (!option || ['--text', '--coexistence', '--tools', '--reasoning'].includes(option)));
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const builds = new Map([
   ['eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316', '0.155.1'],
@@ -89,7 +90,7 @@ const evidence = { schema: 'cxweb.installed-client.v1', startedAt: new Date().to
 async function verifyText(selectedModel, effort) {
   const check = { model: selectedModel.id, effort, route: selectedModel.id.startsWith('webbridge/') ? 'web' : 'native', result: 'started' };
   (evidence.textChecks ??= []).push(check);
-  console.log(JSON.stringify({ phase: 'text', route: check.route, model: check.model }));
+  console.log(JSON.stringify({ phase: 'text', route: check.route, model: check.model, effort }));
   const expected = `CXWEB_INSTALLED_${randomBytes(8).toString('hex')}`;
   const started = (await rpc('thread/start', { cwd, model: selectedModel.id, ephemeral: true, approvalPolicy: 'untrusted', sandbox: 'read-only' }));
   assert.equal(started.model, selectedModel.id, 'E_SELECTED_MODEL');
@@ -177,9 +178,18 @@ try {
   assert.ok(selectedModel, 'E_OWNED_MODEL_MISSING');
   assert.ok(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(selectedModel.defaultReasoningEffort), 'E_MODEL_EFFORT');
   evidence.selectedEffort = selectedModel.defaultReasoningEffort;
+  evidence.reasoningChoices = selectedModel.supportedReasoningEfforts;
   assert.ok(models.some(row => !row.id.startsWith('webbridge/')), 'E_NATIVE_MODELS_MISSING');
   evidence.ownedAndNativeCatalog = true;
-  if (option === '--tools') {
+  if (option === '--reasoning') {
+    const pro = selectedModel.supportedReasoningEfforts.find(row => row.reasoningEffort === 'max')?.description;
+    assert.ok(['Pro', '6 PRO'].includes(pro), 'E_REASONING_PRO_LABEL');
+    const expected = [['low', 'Instant'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'Extra High'], ['max', pro]];
+    assert.deepEqual(selectedModel.supportedReasoningEfforts.map(row => [row.reasoningEffort, row.description]), expected, 'E_REASONING_CATALOG');
+    evidence.text = 'started';
+    for (const [effort] of expected) await verifyText(selectedModel, effort);
+    evidence.text = 'passed';
+  } else if (option === '--tools') {
     await verifyTools(selectedModel);
   } else if (option) {
     evidence.text = 'started';

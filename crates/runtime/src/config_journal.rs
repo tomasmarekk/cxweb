@@ -433,6 +433,28 @@ impl ConfigJournal {
         Ok(Some(receipt))
     }
 
+    /// Compare-and-store only an extension of the current applied web receipt.
+    /// Native configuration and the installed default route are unchanged.
+    pub(crate) fn extend_web(
+        &mut self,
+        expected: &crate::web_recovery::Receipt,
+        next: &crate::web_recovery::Receipt,
+    ) -> io::Result<()> {
+        let current = self.web_recovery()?.ok_or_else(invalid)?;
+        if serde_json::to_value(&current).map_err(|_| invalid())?
+            != serde_json::to_value(expected).map_err(|_| invalid())?
+        {
+            return Err(invalid());
+        }
+        current.validate_extension(next).map_err(io::Error::other)?;
+        let (published, _) = self.catalog_receipt()?;
+        next.validate(&self.record.id, &published)
+            .map_err(io::Error::other)?;
+        let mut record = self.record.clone();
+        record.web = Some(serde_json::to_value(next).map_err(|_| invalid())?);
+        self.store(record)
+    }
+
     pub(crate) fn catalog_receipt(&self) -> io::Result<(Vec<String>, Vec<String>)> {
         let receipt = self
             .record
@@ -797,6 +819,54 @@ mod tests {
             .unwrap();
         assert!(journal.web_recovery().unwrap().is_none());
         assert!(!f.target.exists());
+    }
+
+    #[test]
+    fn extending_reasoning_is_applied_only_and_compares_existing_receipt_without_changing_config() {
+        let f = Fixture::new();
+        let mut journal = ConfigJournal::prepare(&f.state, &f.target, 12345, CAP).unwrap();
+        journal
+            .record_catalog(
+                vec!["webbridge/fixture".into()],
+                vec!["native-fixture".into()],
+            )
+            .unwrap();
+        let mut raw = serde_json::to_value(crate::web_recovery::Receipt::fixture(
+            journal.installation_id(),
+        ))
+        .unwrap();
+        raw["binding"]["routes"][0]["identity"] = serde_json::json!(
+            serde_json::json!(["reasoning-slider-v2", "Latest", 1, 5, 4]).to_string()
+        );
+        raw["binding"]["routes"][0]["label"] = serde_json::json!("Latest · Extra High");
+        raw["binding"]["routes"][0]["effort"] = serde_json::json!("xhigh");
+        let previous = serde_json::from_value::<crate::web_recovery::Receipt>(raw.clone()).unwrap();
+        raw["binding"]["routes"][0]["reasoning"] = serde_json::json!([{
+            "identity":serde_json::json!(["reasoning-slider-v2", "Latest", 1, 5, 2]).to_string(),
+            "label":"Latest · Medium", "effort":"medium", "protocol_evidence":"d".repeat(64)
+        }]);
+        let next = serde_json::from_value::<crate::web_recovery::Receipt>(raw.clone()).unwrap();
+        journal.record_web(previous.clone()).unwrap();
+        assert!(journal.extend_web(&previous, &next).is_err());
+        journal.apply().unwrap();
+        let config = std::fs::read(&f.target).unwrap();
+        journal.extend_web(&previous, &next).unwrap();
+        assert_eq!(
+            serde_json::to_value(journal.web_recovery().unwrap().unwrap()).unwrap(),
+            raw
+        );
+        assert_eq!(std::fs::read(&f.target).unwrap(), config);
+        assert!(journal.extend_web(&previous, &next).is_err());
+        raw["binding"]["account"] = serde_json::json!("e".repeat(64));
+        let other = serde_json::from_value(raw).unwrap();
+        assert!(journal.extend_web(&next, &other).is_err());
+        assert_eq!(std::fs::read(&f.target).unwrap(), config);
+        drop(journal);
+        let journal = ConfigJournal::reopen(&f.state, &f.target).unwrap();
+        assert_eq!(
+            serde_json::to_value(journal.web_recovery().unwrap().unwrap()).unwrap(),
+            serde_json::to_value(next).unwrap()
+        );
     }
     #[test]
     fn prepared_is_durable_before_config_and_cannot_resume_without_preflight() {

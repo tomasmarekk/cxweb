@@ -287,13 +287,8 @@ async fn activate(
         if crate::native_preflight::fingerprint(&executable).await? != source_hash {
             return Err("E_ACTIVATION_INSTALL");
         }
-        use cxweb_codex_adapter::catalog_codec::{CatalogCodec, CatalogRoute};
-        let route = CatalogRoute {
-            id: session.route.id.clone(),
-            observed_label: session.route.label.clone(),
-            effort: session.route.effort.clone().ok_or("E_ACTIVATION_CATALOG")?,
-            coding: true,
-        };
+        use cxweb_codex_adapter::catalog_codec::CatalogCodec;
+        let route = session.route.catalog(true)?;
         // Both reviewed wire formats are served from the same selected home.
         // GUI names and launcher filenames do not determine catalog support.
         let codecs = [CatalogCodec::Cli01551, CatalogCodec::App01550Alpha92]

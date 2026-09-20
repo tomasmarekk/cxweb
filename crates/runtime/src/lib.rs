@@ -47,6 +47,8 @@ mod probe_ws;
 #[cfg(windows)]
 mod qualification;
 #[cfg(windows)]
+mod reasoning_qualification;
+#[cfg(windows)]
 pub mod remote_control;
 mod request_body;
 pub mod scheduler;
