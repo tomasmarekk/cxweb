@@ -1,0 +1,80 @@
+{
+  "schema": "cxweb.installed-client.v1",
+  "startedAt": "2026-09-20T20:37:49.583Z",
+  "build": "0.155.0-alpha.9.2",
+  "executableSha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+  "synthetic": false,
+  "configurationOverride": false,
+  "actualGuiPicker": "not observed",
+  "text": "passed",
+  "installedLoopbackRoute": true,
+  "subscriptionAuthentication": true,
+  "models": [
+    {
+      "id": "gpt-6-astra",
+      "name": "GPT-6-Astra"
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "name": "GPT-5.6-Sol"
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "name": "GPT-5.6-Terra"
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "name": "GPT-5.6-Luna"
+    },
+    {
+      "id": "gpt-daybreak-blue-latest",
+      "name": "Daybreak Blue"
+    },
+    {
+      "id": "gpt-5.5",
+      "name": "GPT-5.5"
+    },
+    {
+      "id": "webbridge/402f0b19d5610fcbee25b681",
+      "name": "ChatGPT Web · Latest"
+    }
+  ],
+  "selectedEffort": "xhigh",
+  "reasoningChoices": [
+    {
+      "reasoningEffort": "low",
+      "description": "Instant"
+    },
+    {
+      "reasoningEffort": "medium",
+      "description": "Medium"
+    },
+    {
+      "reasoningEffort": "high",
+      "description": "High"
+    },
+    {
+      "reasoningEffort": "xhigh",
+      "description": "Extra High"
+    },
+    {
+      "reasoningEffort": "max",
+      "description": "Pro"
+    }
+  ],
+  "ownedAndNativeCatalog": true,
+  "textChecks": [
+    {
+      "model": "webbridge/402f0b19d5610fcbee25b681",
+      "effort": "xhigh",
+      "route": "web",
+      "result": "passed",
+      "unicode": true,
+      "expectedUtf8Sha256": "238cb4b90d2137b364a7af60efd5f5be52ebb09683a8b51da6784b8224bfdda1"
+    }
+  ],
+  "result": "PASS",
+  "configUnchanged": true,
+  "executableUnchanged": true,
+  "observedAt": "2026-09-20T20:38:13.358Z"
+}

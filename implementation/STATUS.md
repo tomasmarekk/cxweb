@@ -23,6 +23,40 @@ English. The complete installed CLI and App-backend read/patch/final scenarios
 now pass. A fixed message sent from the actual GUI also passed with the owned
 model and effort corroborated by the native turn context.
 
+## Native follow-up and source fidelity investigation (2026-09-20)
+
+- Actual installed CLI 0.155.1 and App backend 0.155.0-alpha.9.2 passed exact
+  Unicode text checks on daemon
+  0724e0be9e3c53ecbf316be74b8840ca5718e6a74260a3cb7bd6bb5c8c5889ee
+  at 20:37:48 and 20:38:13 UTC. Reports include all five reasoning choices,
+  unchanged configs/executables and no fresh GUI claim. Saved-session recovery
+  and browser/auth/model checks work with the owned window hidden.
+- Four arithmetic account-live observations remain failures. The initial CLI
+  sum and inclusive-count attempts were refused before execution by an
+  overstrict test-helper environment check. Source for both exact native tags
+  reserves local for the host environment; that exact value now passes while
+  unknown environments and additional permissions remain refused. See sources
+  and the complete observation record in ARITHMETIC-REPAIRS.md.
+- The later CLI sum attempt and first App sum attempt actually read their files
+  and ran the failing tests. Both proposed patches were refused. The App's own
+  synthetic source proposal was retained locally and showed one indentation
+  space instead of the original two. Its target, identity and update shape were
+  correct. The CLI proposal was not captured, so its exact cause is unknown.
+  No acceptance criterion was loosened and no failed observation was replaced.
+- A controlled synthetic model drove both actual native clients through the
+  exact three-line arithmetic patch successfully, using isolated native homes
+  and no account access. The new probe-arithmetic-patch.mjs reproduces that
+  native approval shape. It also exposed native move_path spelling; repair
+  guards now refuse non-null move_path and movePath. All 16 Node fixture and
+  approval tests pass, including explicit local-environment and move refusal.
+- Next investigation: distinguish model-generated whitespace changes from
+  rendered DOM projection before selecting a source extraction change. Current
+  answer observation reads innerText. The captured native diff alone does not
+  prove the model's original bytes. Do not fix transport text by guessing spaces
+  or relax exact fixture checks to turn these failed runs into passes. The bulk
+  protocol experiment is stopped after its preserved case-015 failure; no new
+  cohort or account generation is currently running.
+
 ## Interior Unicode rendering and arithmetic fixtures (2026-09-20)
 
 - The protocol-unicode-xhigh-sep20 cohort stopped at case-015 at 20:16:23 UTC:
