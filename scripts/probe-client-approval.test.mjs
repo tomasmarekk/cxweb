@@ -107,3 +107,35 @@ test('shell additions, changed targets, foreign directories and network approval
     assert.equal(approveFixtureRead({ command: fixtureReadCommand, cwd, ...override }, cwd), false);
   }
 });
+
+test('fixture commands refuse extra permissions and non-default execution contexts', () => {
+  for (const [approve, command] of [[approveFixtureRead, fixtureReadCommand], [approveFixtureTest, fixtureTestCommand]]) {
+    for (const override of [
+      { additionalPermissions: {} },
+      { additionalPermissions: { network: { enabled: true } } },
+      { additionalPermissions: { fileSystem: { write: [resolve(cwd, '..')] } } },
+      { additionalPermissions: { fileSystem: { read: [resolve(cwd, '..')] } } },
+      { environmentId: 'foreign-environment' },
+      { environmentId: '' },
+      { approvalId: 'subcommand-or-stdin-approval' },
+      { approvalId: '' },
+      { availableDecisions: ['acceptForSession', 'decline'] },
+      { availableDecisions: [{ acceptWithExecpolicyAmendment: { execpolicy_amendment: ['pwsh'] } }] },
+      { availableDecisions: [] },
+      { availableDecisions: 'accept' },
+    ]) assert.equal(approve({ command, cwd, ...override }, cwd), false, JSON.stringify(override));
+  }
+});
+
+test('ordinary one-command acceptance remains valid with null scope and display metadata', () => {
+  for (const [approve, command] of [[approveFixtureRead, fixtureReadCommand], [approveFixtureTest, fixtureTestCommand]]) {
+    const params = { command, cwd, kind: 'command', additionalPermissions: null,
+      environmentId: null, approvalId: null, availableDecisions: null, networkApprovalContext: null };
+    assert.equal(approve(params, cwd), true);
+    assert.equal(approve({ ...params, availableDecisions: ['accept', 'decline', 'cancel'],
+      reason: 'Run the exact fixture command', commandActions: [], startedAtMs: 123,
+      proposedExecpolicyAmendment: ['pwsh'],
+      proposedNetworkPolicyAmendments: [{ action: 'allow', host: 'example.invalid' }],
+    }, cwd), true); // The caller sends only "accept", never a persistent amendment.
+  }
+});

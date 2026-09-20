@@ -23,6 +23,27 @@ English. The complete installed CLI and App-backend read/patch/final scenarios
 now pass. A fixed message sent from the actual GUI also passed with the owned
 model and effort corroborated by the native turn context.
 
+## Native fixture approval scope (2026-09-20)
+
+- Generated experimental app-server schemas directly from the reviewed CLI
+  0.155.1 and App backend 0.155.0-alpha.9.2 executables. Their command approval
+  parameter schemas are identical, SHA-256
+  c9728280b8f3204fd729d0fb3d1ca7bb05b1150de26b3653f7163e6a9bd941e7.
+- The installed-client test helper now refuses additional permission overlays,
+  non-default environments, subcommand/stdin approval IDs, and decision lists
+  that do not offer ordinary one-command acceptance. Exact command, directory,
+  network-context and shell checks remain required. Null/absent optional fields
+  and display metadata remain compatible with reviewed native schemas.
+- The fixture sends only accept or decline. Policy amendment proposals are not
+  themselves permission grants and never cause a persistent acceptance response.
+  This change affects test-client approval only; product approval remains owned
+  by Codex. The running account-live protocol cohort uses no fixture executor
+  and is unaffected.
+- The new regression failed before the guard change. All nine tests in
+  node --test scripts/probe-client-approval.test.mjs passed afterward; diff
+  validation passed. No account generation or fresh native tool execution was
+  performed to validate this helper-only change.
+
 ## Send readiness and Unicode transport recovery (2026-09-20)
 
 - The original protocol-xhigh-sep20 run reached three attempted cases: two exact

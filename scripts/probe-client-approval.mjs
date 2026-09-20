@@ -48,7 +48,15 @@ function approveCommand(params, cwd, hostShellExecutables, expected) {
   if (typeof params?.command !== 'string' || typeof params.cwd !== 'string'
       || resolve(params.cwd).toLowerCase() !== resolve(cwd).toLowerCase()
       || (params.kind != null && params.kind !== 'command')
-      || params.networkApprovalContext != null) return false;
+      || params.networkApprovalContext != null
+      || params.additionalPermissions != null
+      || params.environmentId != null
+      || params.approvalId != null
+      || (params.availableDecisions != null && (!Array.isArray(params.availableDecisions)
+        || !params.availableDecisions.includes('accept')))) return false;
+  // These fixtures admit only ordinary commands in the default environment,
+  // without a permission overlay or subcommand/stdin approval. The caller uses
+  // one-command "accept"; policy amendment proposals are never applied.
   if (params.command === expected) return true;
   const argv = words(params.command);
   if (!argv || argv.length < 3 || argv.at(-1) !== expected || argv.at(-2) !== '-Command') return false;
