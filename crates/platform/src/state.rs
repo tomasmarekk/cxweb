@@ -29,7 +29,7 @@ use windows_sys::Win32::{
         Threading::{GetCurrentProcess, OpenProcessToken},
     },
     UI::Shell::{
-        FOLDERID_LocalAppData, FOLDERID_ProgramFiles, FOLDERID_ProgramFilesX86,
+        FOLDERID_LocalAppData, FOLDERID_Profile, FOLDERID_ProgramFiles, FOLDERID_ProgramFilesX86,
         SHGetKnownFolderPath,
     },
 };
@@ -62,7 +62,9 @@ unsafe fn read_wide(pointer: *const u16) -> String {
     }
 }
 
-fn sid_for_process(process: windows_sys::Win32::Foundation::HANDLE) -> io::Result<String> {
+pub(crate) fn sid_for_process(
+    process: windows_sys::Win32::Foundation::HANDLE,
+) -> io::Result<String> {
     // SAFETY: API outputs are valid owned handles or allocated strings. Buffer is
     // aligned and sized using the API, and remains live while its SID is read.
     unsafe {
@@ -286,6 +288,26 @@ pub fn installed_browser() -> io::Result<PathBuf> {
     Err(io::Error::other("E_BROWSER_RUNTIME_MISSING"))
 }
 impl StatePaths {
+    /// Persistent executable and recovery journals use a private directory
+    /// directly below the OS-selected user profile. AppData may carry broader
+    /// sandbox/package grants; installation must not rewrite those system ACLs.
+    pub fn installations() -> io::Result<PathBuf> {
+        let mut location = null_mut();
+        // SAFETY: fixed known-folder ID; the successful string is copied before
+        // releasing the CoTaskMem allocation. No caller controls this path.
+        let root = unsafe {
+            if SHGetKnownFolderPath(&FOLDERID_Profile, 0, null_mut(), &mut location) < 0 {
+                return Err(io::Error::other("E_USER_PROFILE"));
+            }
+            let path = PathBuf::from(read_wide(location)).join(".cxweb-runtime");
+            CoTaskMemFree(location.cast());
+            path
+        };
+        protected_directory(&root)?;
+        let guard = crate::target_path::TargetPathGuard::capture(&root, true)?;
+        guard.capture_access()?;
+        Ok(root)
+    }
     pub fn open() -> io::Result<Self> {
         let mut location = null_mut();
         // SAFETY: fixed known-folder ID and CoTaskMem-owned output. No environment

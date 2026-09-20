@@ -96,14 +96,20 @@ pub struct PathAccessSnapshot(Vec<crate::config_access::AccessSnapshot>);
 
 impl TargetPathGuard {
     /// Read-only qualification of every held component's owner and DACL.
-    /// Public read/traverse and sibling-directory creation are allowed; public
-    /// mutation, deletion, ownership and DACL changes are not. No ACL is repaired.
+    /// Public read/traverse is allowed. Pinned, nonempty NTFS ancestors also
+    /// allow sibling creation and attribute writes; replacement, child deletion,
+    /// ownership and DACL changes are refused. No ACL is repaired.
     pub fn capture_access(&self) -> io::Result<PathAccessSnapshot> {
         self.verify_unchanged()?;
         self.entries
             .iter()
-            .map(|(_, file, _, directory)| {
-                crate::config_access::AccessSnapshot::capture_path(file, *directory)
+            .enumerate()
+            .map(|(index, (_, file, _, directory))| {
+                if index + 1 < self.entries.len() {
+                    crate::config_access::AccessSnapshot::capture_held_ancestor(file)
+                } else {
+                    crate::config_access::AccessSnapshot::capture_path(file, *directory)
+                }
             })
             .collect::<io::Result<Vec<_>>>()
             .map(PathAccessSnapshot)
@@ -156,6 +162,68 @@ impl TargetPathGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn held_ntfs_child_allows_sibling_creation_but_not_replacement_rights() {
+        let root = std::env::temp_dir().join(format!(
+            "cxweb-ancestor-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        crate::state::protected_directory(&root).unwrap();
+        let child = root.join("protected");
+        crate::state::protected_directory(&child).unwrap();
+        crate::atomic_file::tests::set_fixture_acl(
+            &root,
+            Some("(A;;FA;;;CURRENT_USER)(A;;FRFWFX;;;WD)"),
+        );
+        let parent_file = open(&root, true).unwrap();
+        let child_file = open(&child, true).unwrap();
+        let guard = TargetPathGuard {
+            entries: vec![
+                (
+                    root.clone(),
+                    parent_file,
+                    identity(&open(&root, true).unwrap(), true).unwrap(),
+                    true,
+                ),
+                (
+                    child.clone(),
+                    child_file,
+                    identity(&open(&child, true).unwrap(), true).unwrap(),
+                    true,
+                ),
+            ],
+        };
+        guard.capture_access().unwrap();
+        assert!(std::fs::rename(&child, root.join("replacement")).is_err());
+        for rights in ["0x40", "WD", "WO", "SD"] {
+            crate::atomic_file::tests::set_fixture_acl(
+                &root,
+                Some(&format!("(A;;FA;;;CURRENT_USER)(A;;{rights};;;WD)")),
+            );
+            assert!(
+                guard.capture_access().is_err(),
+                "replacement right {rights} must fail"
+            );
+        }
+        crate::atomic_file::tests::set_fixture_acl(&root, Some("(A;;FA;;;CURRENT_USER)"));
+        crate::atomic_file::tests::set_fixture_acl(
+            &child,
+            Some("(A;;FA;;;CURRENT_USER)(A;;FRFWFX;;;WD)"),
+        );
+        assert!(
+            guard.capture_access().is_err(),
+            "a leaf has no pinned child"
+        );
+        crate::atomic_file::tests::set_fixture_acl(&child, Some("(A;;FA;;;CURRENT_USER)"));
+        drop(guard);
+        std::fs::remove_dir(&child).unwrap();
+        std::fs::remove_dir(&root).unwrap();
+    }
 
     #[test]
     fn held_component_access_evidence_detects_a_changed_trusted_acl() {

@@ -221,9 +221,25 @@ mod tests {
         );
         headers.insert(
             "user-agent",
-            "codex_desktop/0.155.0-alpha.9.3".parse().unwrap(),
+            "Codex Desktop/0.155.0-alpha.9.3".parse().unwrap(),
         );
         assert!(select_codec(Some("client_version=0.155.0"), &headers).is_none());
+        use cxweb_codex_adapter::catalog_codec::CatalogCodec;
+        for (query, agent, codec) in [
+            (
+                "client_version=0.155.1",
+                "Codex Desktop/0.155.1 (Windows 11)",
+                CatalogCodec::Cli01551,
+            ),
+            (
+                "client_version=0.155.0",
+                "Codex Desktop/0.155.0-alpha.9.2 (Windows 11)",
+                CatalogCodec::App01550Alpha92,
+            ),
+        ] {
+            headers.insert("user-agent", agent.parse().unwrap());
+            assert_eq!(select_codec(Some(query), &headers), Some(codec));
+        }
     }
 
     fn snapshot(generation: u64) -> OwnedCatalog {

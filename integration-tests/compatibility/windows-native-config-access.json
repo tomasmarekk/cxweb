@@ -1,0 +1,42 @@
+{
+  "schema": "cxweb.native-config-access-evidence.v1",
+  "date": "2026-09-20",
+  "platform": "Windows",
+  "native_configuration": {
+    "existing_read_only_sandbox_grants_preserved": true,
+    "system_acl_changed": false,
+    "native_config_changed_by_preflight": false,
+    "native_auth_or_history_changed_by_cxweb": false,
+    "configuration_compatible": true,
+    "selected_target_access_verified": true,
+    "conflicts": [],
+    "native_models": ["gpt-5.5", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra", "gpt-daybreak-blue-latest"],
+    "clients": [
+      {"build": "0.155.1", "sha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316"},
+      {"build": "0.155.0-alpha.9.2", "sha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226"}
+    ]
+  },
+  "verification": {
+    "actual_loopback_process_owner": "passed",
+    "actual_separate_process_owner": "passed",
+    "mismatched_expected_user_sid": "rejected",
+    "actual_second_windows_account": "not run",
+    "native_reader_acl_preserved_after_replacement": "passed in disposable fixture",
+    "foreign_writer_and_replacement_rights": "rejected in disposable fixtures",
+    "private_journal_acl_policy": "unchanged",
+    "supervised_activation_and_removed_task_refusal": "passed with real Windows Task Scheduler and disposable configuration",
+    "authenticated_production_activation": "passed",
+    "actual_cli_and_app_backend_installed_catalog_and_text": "passed with real subscription and background ChatGPT session",
+    "actual_cli_picker": "owned route observed in unmodified /model picker",
+    "actual_app_picker": "running instance still has old catalog; full process restart not performed while other tasks are active",
+    "scheduled_executable_start": "passed",
+    "scheduled_browser_recovery": "failed with E_LOGIN_REQUIRED in least-privilege launch; same installation recovers in original elevated context",
+    "task_privileges_changed": false
+  },
+  "sources": [
+    "https://learn.microsoft.com/en-us/windows/win32/api/tcpmib/ns-tcpmib-mib_tcprow_owner_module",
+    "https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocesstimes",
+    "https://learn.microsoft.com/en-us/windows/win32/fileio/reparse-points",
+    "https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getvolumeinformationbyhandlew"
+  ]
+}

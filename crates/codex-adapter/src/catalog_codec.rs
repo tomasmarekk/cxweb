@@ -23,9 +23,12 @@ impl CatalogCodec {
         if user_agent.len() > 4096 || !user_agent.is_ascii() {
             return None;
         }
-        let product = user_agent.split_ascii_whitespace().next()?;
-        let (originator, version) = product.split_once('/')?;
-        if originator.is_empty() || originator.len() > 128 {
+        // The native desktop originator is "Codex Desktop" and legitimately
+        // includes a space. The slash, not the first whitespace, separates its
+        // name from the backend build; later UA tokens describe the OS/client.
+        let (originator, remainder) = user_agent.split_once('/')?;
+        let version = remainder.split_ascii_whitespace().next()?;
+        if originator.trim().is_empty() || originator.len() > 128 {
             return None;
         }
         match (query_version, version) {

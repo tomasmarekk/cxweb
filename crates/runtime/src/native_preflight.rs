@@ -176,7 +176,10 @@ pub async fn inspect(client: &Path, home: &Path, cwd: &Path) -> Result<Report, &
     // Qualification is read-only: unsafe/unsupported ancestor grants become a
     // fixed conflict, never an ACL repair or a blanket trust in sandbox groups.
     // The repository working directory is not an installation target.
-    let target_access = targets[..2]
+    // The reviewed executable is hashed while held against write/delete for
+    // its entire execution. Its parent ACL need not authorize persistent data
+    // storage. The selected native home is the persistent write target.
+    let target_access = targets[1..2]
         .iter()
         .map(TargetPathGuard::capture_access)
         .collect::<Result<Vec<_>, _>>();
@@ -190,7 +193,8 @@ pub async fn inspect(client: &Path, home: &Path, cwd: &Path) -> Result<Report, &
     // executed simply to ask them what version they claim to be.
     let hash = fingerprint(&client).await?;
     let (build, codec) = reviewed(&hash).ok_or("E_PREFLIGHT_CLIENT_UNQUALIFIED")?;
-    let original = Snapshot::capture(&home.join("config.toml")).map_err(config_capture_error)?;
+    let original =
+        Snapshot::capture_native_config(&home.join("config.toml")).map_err(config_capture_error)?;
     let text = std::str::from_utf8(original.original()).map_err(|_| "E_PREFLIGHT_CONFIG_PARSE")?;
     let file_report =
         cxweb_codex_adapter::config::inspect(text).map_err(|_| "E_PREFLIGHT_CONFIG_PARSE")?;
@@ -223,7 +227,7 @@ pub async fn inspect(client: &Path, home: &Path, cwd: &Path) -> Result<Report, &
         for layer in layers {
             if layer["name"]["type"] == "user" && layer["name"]["profile"].is_null() {
                 let file = layer["name"]["file"].as_str().ok_or("E_PREFLIGHT_SCHEMA")?;
-                let reported = Snapshot::capture(Path::new(file)).map_err(config_capture_error)?;
+                let reported = Snapshot::capture_native_config(Path::new(file)).map_err(config_capture_error)?;
                 if reported.path() != original.path() || reported.original() != original.original() {
                     return Err("E_PREFLIGHT_HOME_MISMATCH");
                 }
@@ -281,7 +285,7 @@ pub async fn inspect(client: &Path, home: &Path, cwd: &Path) -> Result<Report, &
         return Err("E_PREFLIGHT_EXECUTABLE_CHANGED");
     }
     let selected_target_access_verified = target_access.is_ok_and(|access| {
-        targets[..2]
+        targets[1..2]
             .iter()
             .zip(&access)
             .all(|(guard, access)| guard.verify_access(access).is_ok())

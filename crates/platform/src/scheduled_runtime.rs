@@ -171,7 +171,7 @@ impl TaskPlan {
         }
         let executable = local_path(executable, true)?;
         let journal = local_path(journal, false)?;
-        let config = crate::atomic_file::Snapshot::capture(config)?
+        let config = crate::atomic_file::Snapshot::capture_native_config(config)?
             .path()
             .to_owned();
         let config = config
@@ -424,6 +424,21 @@ mod tests {
             assert!(plan.xml().contains(required), "missing setting {required}");
         }
         assert!(!plan.xml().contains("<Password>"));
+        let config = directory.join("readable-config.toml");
+        std::fs::write(&config, b"# native configuration\n").unwrap();
+        crate::atomic_file::tests::set_fixture_acl(
+            &config,
+            Some("(A;;FA;;;CURRENT_USER)(A;;FRFX;;;WD)"),
+        );
+        assert!(crate::atomic_file::Snapshot::capture(&config).is_err());
+        assert!(TaskPlan::new(&"a".repeat(32), &executable, &directory, &config).is_ok());
+        crate::atomic_file::tests::set_fixture_acl(
+            &config,
+            Some("(A;;FA;;;CURRENT_USER)(A;;FW;;;WD)"),
+        );
+        assert!(TaskPlan::new(&"a".repeat(32), &executable, &directory, &config).is_err());
+        crate::atomic_file::tests::set_fixture_acl(&config, Some("(A;;FA;;;CURRENT_USER)"));
+        std::fs::remove_file(config).unwrap();
         assert!(
             TaskPlan::new(
                 "../foreign",

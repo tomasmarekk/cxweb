@@ -197,7 +197,7 @@ impl ConfigJournal {
         if journal.existed() {
             return Err(io::Error::other("E_INTEGRATION_EXISTS"));
         }
-        let prepared = Snapshot::capture(target)?;
+        let prepared = Snapshot::capture_native_config(target)?;
         if prepared.path() == journal.path() || prepared.original().len() > 512 * 1024 {
             return Err(invalid());
         }
@@ -241,7 +241,7 @@ impl ConfigJournal {
         let value =
             strict_json::parse(journal.original(), 2 * 1024 * 1024).map_err(|_| invalid())?;
         let record: Record = serde_json::from_value(value).map_err(|_| invalid())?;
-        let selected = Snapshot::capture(target)?;
+        let selected = Snapshot::capture_native_config(target)?;
         if !matches!(record.version, 1 | 2)
             || record.id.len() != 32
             || !record.id.bytes().all(|b| b.is_ascii_hexdigit())
@@ -425,7 +425,7 @@ impl ConfigJournal {
         if receipt.validate(&self.record.id, &published).is_err() {
             return Ok(None);
         }
-        let current = Snapshot::capture(&self.record.target)?;
+        let current = Snapshot::capture_native_config(&self.record.target)?;
         let text = std::str::from_utf8(current.original()).map_err(|_| invalid())?;
         if !plan_record(&self.record)?.0.can_resume(text) {
             return Ok(None);
@@ -461,7 +461,7 @@ impl ConfigJournal {
     }
 
     pub fn recovery(&self) -> io::Result<Recovery> {
-        let current = Snapshot::capture(&self.record.target)?;
+        let current = Snapshot::capture_native_config(&self.record.target)?;
         if let Some(undo) = &self.record.undo
             && matches_result(&current, undo.after.as_deref())
         {
@@ -556,7 +556,7 @@ impl ConfigJournal {
         native: &[String],
     ) -> io::Result<Snapshot> {
         self.journal.verify_unchanged()?;
-        let current = Snapshot::capture(&self.record.target)?;
+        let current = Snapshot::capture_native_config(&self.record.target)?;
         if current.original().len() > 512 * 1024 {
             return Err(invalid());
         }
@@ -587,7 +587,7 @@ impl ConfigJournal {
             _ => current.verify_unchanged()?,
         }
         if !matches_result(
-            &Snapshot::capture(&self.record.target)?,
+            &Snapshot::capture_native_config(&self.record.target)?,
             undo.after.as_deref(),
         ) {
             return Err(io::Error::other("E_CONFIG_POST_COMMIT_CHANGED"));
@@ -618,7 +618,7 @@ impl ConfigJournal {
 }
 
 fn invalidate_model_cache(home: &Path) -> io::Result<()> {
-    let cache = Snapshot::capture(&home.join("models_cache.json"))?;
+    let cache = Snapshot::capture_native_config(&home.join("models_cache.json"))?;
     if cache.existed() {
         cache.remove()?;
     }

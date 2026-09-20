@@ -17,6 +17,17 @@ use windows_sys::Win32::Storage::FileSystem::{
 
 const LIMIT: u64 = 2 * 1024 * 1024;
 
+fn file_access(
+    file: &File,
+    native_config: bool,
+) -> io::Result<crate::config_access::AccessSnapshot> {
+    if native_config {
+        crate::config_access::AccessSnapshot::capture_native(file, false)
+    } else {
+        crate::config_access::AccessSnapshot::capture(file, false)
+    }
+}
+
 #[derive(PartialEq)]
 struct Identity {
     volume: u32,
@@ -67,6 +78,7 @@ fn wide(path: &Path) -> io::Result<Vec<u16>> {
 }
 
 pub struct Snapshot {
+    native_config: bool,
     selected_path: PathBuf,
     path: PathBuf,
     identity: Option<Identity>,
@@ -80,6 +92,17 @@ impl Snapshot {
     /// points in every ancestor as well as reparse/hard-linked destination files.
     /// Caller must separately qualify the selected Codex home and its ownership.
     pub fn capture(path: &Path) -> io::Result<Self> {
+        Self::capture_policy(path, false)
+    }
+
+    /// Native Codex configuration/cache may be read by sandbox principals.
+    /// Existing readers are preserved; foreign writes/ownership changes remain
+    /// forbidden. Use only with a gateway that also verifies the Windows peer.
+    pub fn capture_native_config(path: &Path) -> io::Result<Self> {
+        Self::capture_policy(path, true)
+    }
+
+    fn capture_policy(path: &Path, native_config: bool) -> io::Result<Self> {
         let selected_path = path.to_path_buf();
         let selected_parent = path
             .parent()
@@ -94,13 +117,18 @@ impl Snapshot {
             return Err(io::Error::other("E_CONFIG_PATH"));
         }
         let path = parent.join(name);
-        let parent_access = crate::config_access::AccessSnapshot::directory(&parent)?;
+        let parent_access = if native_config {
+            crate::config_access::AccessSnapshot::native_directory(&parent)?
+        } else {
+            crate::config_access::AccessSnapshot::directory(&parent)?
+        };
         let snapshot = match open(&path) {
             Ok(mut file) => {
                 let identity = identity(&file)?;
-                let access = crate::config_access::AccessSnapshot::capture(&file, false)?;
+                let access = file_access(&file, native_config)?;
                 let bytes = read(&mut file)?;
                 Ok(Self {
+                    native_config,
                     selected_path,
                     path,
                     identity: Some(identity),
@@ -111,6 +139,7 @@ impl Snapshot {
                 })
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Self {
+                native_config,
                 selected_path,
                 path,
                 identity: None,
@@ -138,7 +167,7 @@ impl Snapshot {
             crate::target_path::TargetPathGuard::capture(self.selected_parent()?, true)?
                 .verify_access(access)?;
         }
-        let current = Self::capture(&self.selected_path)?;
+        let current = Self::capture_policy(&self.selected_path, self.native_config)?;
         if current.path != self.path
             || current.identity != self.identity
             || current.bytes != self.bytes
@@ -203,7 +232,7 @@ impl Snapshot {
             .open(&self.path)?;
         if &identity(&file)? != expected
             || read(&mut file)? != self.bytes
-            || Some(crate::config_access::AccessSnapshot::capture(&file, false)?) != self.access
+            || Some(file_access(&file, self.native_config)?) != self.access
         {
             return Err(io::Error::other("E_CONFIG_CHANGED"));
         }
@@ -274,9 +303,7 @@ impl Snapshot {
             (Some(expected), Ok(mut current)) => {
                 if &identity(&current)? != expected
                     || read(&mut current)? != self.bytes
-                    || Some(crate::config_access::AccessSnapshot::capture(
-                        &current, false,
-                    )?) != self.access
+                    || Some(file_access(&current, self.native_config)?) != self.access
                 {
                     return Err(io::Error::other("E_CONFIG_CHANGED"));
                 }
@@ -314,7 +341,7 @@ impl Snapshot {
         }
         let mut committed = open(&self.path)?;
         identity(&committed)?;
-        let committed_access = crate::config_access::AccessSnapshot::capture(&committed, false)?;
+        let committed_access = file_access(&committed, self.native_config)?;
         if self
             .access
             .as_ref()
@@ -333,6 +360,36 @@ impl Snapshot {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn native_config_preserves_readers_without_relaxing_private_files_or_allowing_writers() {
+        let fixture = Fixture::new();
+        let config = fixture.config();
+        std::fs::write(&config, b"original").unwrap();
+        set_fixture_acl(&fixture.0, Some("(A;;FA;;;CURRENT_USER)(A;;FRFX;;;WD)"));
+        set_fixture_acl(&config, Some("(A;;FA;;;CURRENT_USER)(A;;FRFX;;;WD)"));
+        assert!(Snapshot::capture(&config).is_err());
+        let before = Snapshot::capture_native_config(&config).unwrap();
+        let staged = before.stage(".cxweb-native-read.tmp", b"updated").unwrap();
+        before.commit(&staged, b"updated").unwrap();
+        let after = Snapshot::capture_native_config(&config).unwrap();
+        assert_eq!(after.original(), b"updated");
+        assert!(
+            !before
+                .access
+                .as_ref()
+                .unwrap()
+                .descriptor_differs(after.access.as_ref().unwrap())
+        );
+        assert!(Snapshot::capture(&config).is_err());
+        set_fixture_acl(&config, Some("(A;;FA;;;CURRENT_USER)(A;;FW;;;WD)"));
+        assert!(Snapshot::capture_native_config(&config).is_err());
+        assert!(after.remove().is_err());
+        set_fixture_acl(&config, Some("(A;;FA;;;CURRENT_USER)"));
+        set_fixture_acl(&fixture.0, Some("(A;;FA;;;CURRENT_USER)(A;;FW;;;WD)"));
+        assert!(Snapshot::capture_native_config(&config).is_err());
+        set_fixture_acl(&fixture.0, Some("(A;;FA;;;CURRENT_USER)"));
+    }
 
     pub(crate) fn set_fixture_acl(path: &Path, grants: Option<&str>) {
         use windows_sys::Win32::Security::{

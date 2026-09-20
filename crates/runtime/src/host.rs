@@ -20,6 +20,38 @@ use std::{
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
+/// All production HTTP and WebSocket traffic passes this boundary before HTTP
+/// parsing. Native configuration can be readable without granting another
+/// Windows user access to the saved ChatGPT session.
+struct UserListener(TcpListener);
+impl axum::serve::Listener for UserListener {
+    type Io = tokio::net::TcpStream;
+    type Addr = std::net::SocketAddr;
+    async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+        loop {
+            match self.0.accept().await {
+                Ok((stream, peer)) => {
+                    let Ok(local) = stream.local_addr() else {
+                        continue;
+                    };
+                    if tokio::task::spawn_blocking(move || {
+                        cxweb_platform::tcp_peer::verify(peer, local)
+                    })
+                    .await
+                    .is_ok_and(|result| result.is_ok())
+                    {
+                        return (stream, peer);
+                    }
+                }
+                Err(_) => tokio::time::sleep(Duration::from_millis(100)).await,
+            }
+        }
+    }
+    fn local_addr(&self) -> io::Result<Self::Addr> {
+        self.0.local_addr()
+    }
+}
+
 pub struct Host {
     listener: TcpListener,
     gateway: Gateway,
@@ -217,7 +249,7 @@ impl Host {
         };
         tokio::select! {
             () = recover => unreachable!("recovery remains owned by the host"),
-            result = axum::serve(listener, gateway.router()).into_future() => result,
+            result = axum::serve(UserListener(listener), gateway.router()).into_future() => result,
             () = control_loop => unreachable!("control admission loop never returns"),
         }
     }

@@ -25,7 +25,8 @@ use windows_sys::Win32::{
         FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_REPARSE_POINT,
         FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_EXECUTE,
         FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ,
-        FILE_SHARE_WRITE, FILE_TRAVERSE, GetFileInformationByHandle,
+        FILE_SHARE_WRITE, FILE_TRAVERSE, FILE_WRITE_ATTRIBUTES, FILE_WRITE_EA,
+        GetFileInformationByHandle,
     },
     System::Threading::{GetCurrentProcess, OpenProcessToken},
 };
@@ -71,25 +72,64 @@ impl AccessSnapshot {
         file_policy(&self.descriptor) != file_policy(&other.descriptor)
     }
     pub(crate) fn directory(path: &Path) -> io::Result<Self> {
+        Self::directory_policy(path, false)
+    }
+    pub(crate) fn native_directory(path: &Path) -> io::Result<Self> {
+        Self::directory_policy(path, true)
+    }
+    fn directory_policy(path: &Path, native: bool) -> io::Result<Self> {
         let file = OpenOptions::new()
             .read(true)
             .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
             .open(path)?;
-        Self::capture(&file, true)
+        Self::capture_policy(&file, true, false, native, false)
     }
 
     pub(crate) fn capture(file: &File, directory: bool) -> io::Result<Self> {
-        Self::capture_policy(file, directory, false)
+        Self::capture_policy(file, directory, false, false, false)
+    }
+
+    pub(crate) fn capture_native(file: &File, directory: bool) -> io::Result<Self> {
+        Self::capture_policy(file, directory, false, true, false)
     }
 
     /// Existing path components may be publicly readable. Unlike private
     /// configuration objects, they need no write access for the current user.
     pub(crate) fn capture_path(file: &File, directory: bool) -> io::Result<Self> {
-        Self::capture_policy(file, directory, true)
+        Self::capture_policy(file, directory, true, true, false)
     }
 
-    fn capture_policy(file: &File, directory: bool, path_policy: bool) -> io::Result<Self> {
+    /// Only for an ancestor whose next child is held against rename/deletion.
+    /// Sibling creation and directory attributes cannot replace that child.
+    /// NTFS refuses installing a reparse point on a nonempty directory.
+    pub(crate) fn capture_held_ancestor(file: &File) -> io::Result<Self> {
+        let mut filesystem = [0u16; 32];
+        // SAFETY: live file handle, optional outputs are null, the filesystem
+        // output buffer is writable and its capacity is supplied in WCHARs.
+        let ntfs = unsafe {
+            windows_sys::Win32::Storage::FileSystem::GetVolumeInformationByHandleW(
+                file.as_raw_handle(),
+                null_mut(),
+                0,
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                filesystem.as_mut_ptr(),
+                filesystem.len() as u32,
+            ) != 0
+                && filesystem[..5] == [b'N' as u16, b'T' as u16, b'F' as u16, b'S' as u16, 0]
+        };
+        Self::capture_policy(file, true, true, true, ntfs)
+    }
+
+    fn capture_policy(
+        file: &File,
+        directory: bool,
+        path_policy: bool,
+        readable: bool,
+        held_child: bool,
+    ) -> io::Result<Self> {
         let user = current_sid()?;
         // SAFETY: all descriptor/ACL/SID pointers below remain inside the live
         // allocation from GetSecurityInfo. GetAce offsets are checked before SID
@@ -169,10 +209,23 @@ impl AccessSnapshot {
                 // for sandbox accounts. Unknown ACE layouts fail above.
                 let safe_public = FILE_GENERIC_READ
                     | FILE_GENERIC_EXECUTE
-                    | if directory { FILE_ADD_SUBDIRECTORY } else { 0 };
+                    | if directory { FILE_ADD_SUBDIRECTORY } else { 0 }
+                    | if held_child {
+                        FILE_ADD_FILE | FILE_WRITE_ATTRIBUTES | FILE_WRITE_EA
+                    } else {
+                        0
+                    };
                 if header.AceType == 0
                     && !trusted(&trustee, &user, path_policy)
-                    && !(path_policy && (inherit_only || mask & !safe_public == 0))
+                    && !(path_policy && inherit_only)
+                    && !(readable
+                        && mask
+                            & !(if path_policy {
+                                safe_public
+                            } else {
+                                FILE_GENERIC_READ | FILE_GENERIC_EXECUTE
+                            })
+                            == 0)
                     && !(trustee == "S-1-3-0" && u32::from(header.AceFlags) & INHERIT_ONLY_ACE != 0)
                 {
                     return Err(io::Error::new(

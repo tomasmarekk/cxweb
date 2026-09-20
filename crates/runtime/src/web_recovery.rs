@@ -276,14 +276,18 @@ fn wait_for_login(
         if observation.verification_required {
             return Err("E_BROWSER_VERIFICATION_REQUIRED");
         }
-        if observation.login_action {
-            return Err("E_LOGIN_REQUIRED");
-        }
         if crate::control::authenticated_surface(&observation) {
             return Ok(observation);
         }
         if Instant::now() >= deadline {
-            return Err("E_BACKGROUND_NAVIGATION");
+            // ChatGPT can render the signed-out shell before restoring its
+            // saved session. Observe the same page until the startup deadline;
+            // never click login or open another page to make recovery succeed.
+            return Err(if observation.login_action {
+                "E_LOGIN_REQUIRED"
+            } else {
+                "E_BACKGROUND_NAVIGATION"
+            });
         }
         std::thread::sleep(
             Duration::from_millis(100).min(deadline.saturating_duration_since(Instant::now())),
@@ -597,7 +601,7 @@ mod tests {
     }
 
     #[test]
-    fn recovery_waits_for_navigation_but_never_retries_login_or_challenges() {
+    fn recovery_waits_for_session_hydration_without_interacting_with_login_or_challenges() {
         let loaded = LoginObservation {
             verification_required: false,
             document_ready: true,
@@ -628,6 +632,26 @@ mod tests {
         .unwrap();
         assert_eq!(calls, 2);
         assert_eq!(ready, loaded);
+        let mut signed_out_shell = loading.clone();
+        signed_out_shell.document_ready = true;
+        signed_out_shell.login_action = true;
+        let mut calls = 0;
+        assert_eq!(
+            wait_for_login(
+                || {
+                    calls += 1;
+                    Ok(if calls == 1 {
+                        signed_out_shell.clone()
+                    } else {
+                        loaded.clone()
+                    })
+                },
+                Duration::from_secs(1)
+            )
+            .unwrap(),
+            loaded
+        );
+        assert_eq!(calls, 2);
         assert_eq!(
             wait_for_login(|| Ok(loading.clone()), Duration::ZERO),
             Err("E_BACKGROUND_NAVIGATION")
@@ -646,7 +670,7 @@ mod tests {
                         calls += 1;
                         Ok(state.clone())
                     },
-                    Duration::from_secs(1)
+                    Duration::ZERO
                 ),
                 Err(code)
             );

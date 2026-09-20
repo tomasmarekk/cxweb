@@ -10,8 +10,11 @@ both actual native backends. The actual CLI picker passed isolated synthetic and
 authenticated browser round trips, including its structured auxiliary request.
 Actual App picker, native subscription coexistence, broader coding/model
 qualification and release gates remain incomplete. The setup activation path is
-now implemented, but this machine's native configuration permission policy still
-prevents activation. No production connection or actual App picker pass is claimed.
+implemented and production routing is installed on this machine. Verification of
+the installed catalogs and authenticated text requests passed both native builds.
+The real installed CLI /model picker displays the owned row. The running App
+still has its old catalog; a full restart and actual App picker pass remain open.
+Scheduled browser recovery also has a Windows launch-context issue described below.
 
 Earlier manual check: the user reports `ChatGPT: Session detected` and
 `Codex connection: Awaiting verification` after checking the desktop status.
@@ -21,6 +24,78 @@ Chat behavior or a successful generation. After restarting Codex App, its real
 picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
+
+## Windows native configuration and production activation (2026-09-20)
+
+- Native config and regenerable model-cache snapshots now allow existing foreign
+  read/execute grants, while rejecting foreign writes and replacement rights.
+  Private journals, staging and browser data retain their stricter policy.
+  Replacement preserves the native file's ACL; no user/system ACL was changed.
+- Production HTTP/WebSocket accepts verify the OS-observed peer process user
+  before HTTP parsing. Connection creation time and a second owner lookup guard
+  against PID reuse. Same-process and separate-process loopback tests passed;
+  a mismatched expected SID is rejected. No actual second-account test was run.
+- Pinned, nonempty NTFS ancestors permit sibling creation and attribute writes,
+  but still reject deletion/replacement, ownership and DACL rights. Native
+  executable bytes remain reviewed, hashed and held against writes/deletion;
+  their parent is not treated as a persistent data-storage destination.
+- Persistent installs use a protected .cxweb-runtime directory under the Windows
+  user profile, avoiding the broad replacement grants on this machine's AppData
+  ancestors. Browser profile location and stored login were preserved. Legacy
+  installations remain discoverable without moving active journals or tasks.
+- Actual preflight passed both reviewed native backends with subscription auth,
+  all path/access checks and no conflicts. Production activation initially found
+  a remaining private-config check in TaskPlan; its native-config policy and a
+  real ACL regression fixture now cover the previously failing path.
+- Production connect-codex successfully registered supervision and applied the
+  selected home's route. The background browser passed live text and tool
+  protocol tests with English UI and 15 observed family/effort candidates. Only
+  the tested Latest / Extra High route is published by this installation.
+- The first installed CLI catalog check exposed an actual User-Agent parser bug:
+  Codex Desktop contains a space. Codec selection now splits at the slash and
+  still requires the exact reviewed full build and query version. Regression
+  tests cover both builds and refuse an adjacent, unreviewed alpha.
+- An automatic scheduled restart exposed early signed-out-shell handling.
+  Recovery now observes the same page until its bounded startup deadline before
+  declaring login required, without login clicks, extra tabs or submissions.
+  Session hydration, persistent logout, cancellation and immediate challenge
+  handling are covered by the updated recovery regression test.
+- Added scripts/probe-installed-client.mjs for the actual selected native home,
+  subscription, combined catalog and optional ephemeral text-only turn. It uses
+  no static catalog or routing/auth override, approves no tools, exports only
+  sanitized evidence, and verifies config/executable bytes remain unchanged.
+- Validation so far: workspace 260 passed / 13 ignored (including the peer child
+  helper exercised by its parent); desktop 58 passed; Clippy, formatting and diff
+  checks passed. Actual Task Scheduler activation/removal-refusal fixture passed.
+  Builds succeeded; installed catalog and restart evidence follows below.
+- Live production verification passed both native builds with their existing
+  subscription and actual selected home, combined native/owned model catalogs,
+  and exact responses through the saved background ChatGPT session. Tests had
+  initially inherited the native home's effort for another model and correctly
+  failed E_MODEL_FIDELITY before submission; they now select the owned model's
+  reported default xhigh effort per turn, without changing the user's defaults.
+  Evidence: cli-0.155.1.installed-live.json and
+  app-backend-0.155.0-alpha.9.2.installed-live.json.
+- The actual CLI 0.155.1 /model picker displayed the six native choices and the
+  owned route as choice 7. Exited without selecting a new default or generating
+  another turn. Its unrelated configured MCP startup warning was not repaired.
+- Computer Use verified the existing OpenAI.Codex package window is the Codex
+  workspace, despite its ChatGPT.exe/title metadata. Its currently running picker
+  still displays only native entries. The competitor's troubleshooting confirms
+  a full native process restart is required. Other user tasks are running in this
+  app, so they were not interrupted to force this test. No actual App picker pass
+  is inferred from the passing embedded-backend check.
+- Scheduled launch does start the installed executable. However, its least-
+  privilege context reports E_LOGIN_REQUIRED even after the hydration deadline.
+  The same installation/profile recovers and completes both real native requests
+  when started in this session's original (elevated) context. The exact cause
+  remains unproven; do not label the scheduled session-recovery test passed or
+  change task privileges to conceal it. Cookie data and native auth stores were
+  not read/exported. The healthy runtime currently runs in the original context;
+  the registered task remains least-privilege and enabled.
+- Next: make login/runtime launch context consistent without credential export
+  or an elevated scheduled task; then verify full App restart/picker and native
+  subscription response coexistence. Broader PRD/release gates remain open.
 
 ## Connect models to both native clients (2026-09-20)
 

@@ -23,3 +23,5 @@ pub mod secret;
 pub mod state;
 #[cfg(windows)]
 pub mod target_path;
+#[cfg(windows)]
+pub mod tcp_peer;
