@@ -56,7 +56,11 @@ impl WebProvider for Provider {
                 1,
             )
             .unwrap();
-            Response::new(Body::from(output.sse()))
+            let mut response = Response::new(Body::from(output.sse()));
+            response
+                .extensions_mut()
+                .insert(crate::web_provider::BrowserEvidence::Verified);
+            response
         })
     }
 }
@@ -142,6 +146,12 @@ impl Fixture {
         request.headers_mut().insert(
             "authorization",
             "Bearer PRIVATE_CREDENTIAL".parse().unwrap(),
+        );
+        request.headers_mut().insert(
+            "user-agent",
+            "Codex Desktop/0.155.0-alpha.9.2 (PRIVATE_HOST)"
+                .parse()
+                .unwrap(),
         );
         tokio_tungstenite::connect_async(request).await.unwrap().0
     }
@@ -238,6 +248,8 @@ async fn one_socket_preserves_native_bytes_and_dispatches_owned_warmup_and_conti
         .unwrap();
     let first = terminal(&mut socket).await;
     assert_eq!(fixture.provider.calls.load(Ordering::SeqCst), 0);
+    #[cfg(windows)]
+    assert!(fixture.gateway.health().clients.app.is_none());
     let mut request = frame("one");
     request["previous_response_id"] = first["response"]["id"].clone();
     request["input"] = json!([{"type":"message","role":"user","content":[{"type":"input_text","text":"fixture"}]}]);
@@ -246,6 +258,17 @@ async fn one_socket_preserves_native_bytes_and_dispatches_owned_warmup_and_conti
         .await
         .unwrap();
     let first = terminal(&mut socket).await;
+    #[cfg(windows)]
+    assert!(
+        fixture
+            .gateway
+            .health()
+            .clients
+            .app
+            .as_ref()
+            .unwrap()
+            .succeeded
+    );
     request["previous_response_id"] = first["response"]["id"].clone();
     request["client_metadata"] = frame("two")["client_metadata"].clone();
     socket

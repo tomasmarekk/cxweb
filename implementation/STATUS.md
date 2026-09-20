@@ -23,6 +23,33 @@ English. The complete installed CLI and App-backend read/patch/final scenarios
 now pass. A fixed message sent from the actual GUI also passed with the owned
 model and effort corroborated by the native turn context.
 
+## Installed client request evidence (2026-09-20)
+
+- Completed web requests now update the App and CLI health dimensions separately
+  for the two reviewed native builds. HTTP and WebSocket use the same evidence
+  path. Only the build classification, result and timestamp are retained; raw
+  User-Agent headers and native authentication never enter browser work.
+- A successful status requires the provider's in-process browser verification
+  marker and a successful response. Catalog reads, warmups, unknown or duplicate
+  build headers, plain HTTP 200 responses and cancelled work do not qualify it.
+  Failures remain distinct from success. Disconnect clears the active claims;
+  daemon restart starts with unknown client status until another actual request.
+- The desktop labels this evidence `Request verified` and explains that picker
+  verification is separate. It does not promote native upstream/config health or
+  overall connection readiness on the strength of a web response alone.
+- After updating the idle installed daemon, saved-session recovery restored all
+  five English choices. Actual CLI 0.155.1 completed a background request at
+  15:11:39 UTC: only CLI became healthy and App remained unknown. Actual App
+  backend 0.155.0-alpha.9.2 completed its request at 15:12:20 UTC: App then became
+  healthy and the CLI observation remained unchanged. Both probes preserved
+  native configuration and executable hashes. See `*.installed-health.json` in
+  `integration-tests/compatibility`. Computer Use confirmed both `Request
+  verified` rows in the rebuilt desktop; no visible browser window was needed.
+- Validation: `cargo test --workspace --locked --quiet` passed 280 tests, with
+  15 opt-in tests ignored; `node --test apps/desktop/tests/*.test.mjs` passed all
+  64 tests. Clippy with warnings denied, formatting, diff checks and explicit
+  Windows release builds of CLI, daemon and desktop passed.
+
 ## Reasoning family publication (2026-09-20)
 
 - The desktop's installed view now reads the actually published family through
@@ -40,8 +67,8 @@ model and effort corroborated by the native turn context.
 - Actual desktop inspection confirmed Instant, Medium, High, Extra High and Pro
   with the Low/Light and Max aliases explained, and no redundant test button.
   The installed daemon recovered all five choices in the background. The current
-  health tracker still leaves App/CLI verification unknown; these live test
-  reports are not yet reflected automatically in its component state.
+  health tracker at that stage still left App/CLI verification unknown; automatic
+  current-runtime request evidence is implemented in the follow-up above.
 - Desktop follow-up checks: Rust workspace 278 passed / 15 ignored; all 63
   desktop tests passed, including five new installed-flow cases. Clippy with
   warnings denied, formatting, diff checks, and Windows release builds passed.

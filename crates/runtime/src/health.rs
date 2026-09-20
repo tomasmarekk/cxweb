@@ -221,6 +221,34 @@ impl Tracker {
                 }
             }
         }
+        for (observed, dimension) in [
+            (&gateway.clients.cli, &mut health.components.codex_cli),
+            (&gateway.clients.app, &mut health.components.codex_app),
+        ] {
+            if gateway.accepting
+                && state == DisconnectState::Idle
+                && let Some(observed) = observed
+            {
+                *dimension = component(
+                    if observed.succeeded {
+                        State::Healthy
+                    } else {
+                        State::Degraded
+                    },
+                    if observed.succeeded {
+                        Evidence::RequestSuccess
+                    } else {
+                        Evidence::LocalProbe
+                    },
+                    observed.observed_at.clone(),
+                    if observed.succeeded {
+                        None
+                    } else {
+                        Some("E_CLIENT_WEB_REQUEST")
+                    },
+                );
+            }
+        }
         if !gateway.accepting {
             health.overall = Overall::Disconnected;
             health.suggested_action = Action::Connect;
@@ -282,7 +310,49 @@ mod tests {
             cleanup_failed: false,
             active_turns: 0,
             provider,
+            clients: Default::default(),
         }
+    }
+    #[test]
+    fn client_request_evidence_is_independent_and_does_not_certify_picker_or_upstream() {
+        let mut tracker = Tracker::default();
+        let mut source = gateway(ProviderHealth::Verified {
+            observed_at: Some("2026-09-20T00:00:00.000Z".into()),
+        });
+        source.clients.cli = Some(crate::gateway::ClientRequest {
+            succeeded: true,
+            observed_at: Some("2026-09-20T00:01:00.000Z".into()),
+        });
+        let first = tracker.snapshot(DisconnectState::Idle, source.clone());
+        assert_eq!(first.components.codex_cli.state, State::Healthy);
+        assert_eq!(
+            first.components.codex_cli.evidence,
+            Evidence::RequestSuccess
+        );
+        assert_eq!(first.components.codex_app.state, State::Unknown);
+        assert_eq!(first.components.native_upstream.state, State::Unknown);
+        assert_eq!(first.components.config.state, State::Unknown);
+        assert_eq!(first.overall, Overall::Preflight);
+        assert_eq!(
+            tracker.snapshot(DisconnectState::Idle, source.clone()),
+            first
+        );
+        source.clients.app = Some(crate::gateway::ClientRequest {
+            succeeded: false,
+            observed_at: Some("2026-09-20T00:02:00.000Z".into()),
+        });
+        let failed = tracker.snapshot(DisconnectState::Idle, source.clone());
+        assert!(failed.revision > first.revision);
+        assert_eq!(failed.components.codex_cli, first.components.codex_cli);
+        assert_eq!(failed.components.codex_app.state, State::Degraded);
+        assert_eq!(
+            failed.components.codex_app.code.as_deref(),
+            Some("E_CLIENT_WEB_REQUEST")
+        );
+        source.accepting = false;
+        let disconnected = tracker.snapshot(DisconnectState::PendingRestart, source);
+        assert_eq!(disconnected.components.codex_cli.state, State::Unknown);
+        assert_eq!(disconnected.components.codex_app.state, State::Unknown);
     }
     #[test]
     fn revisions_follow_observed_changes_and_browser_proof_never_certifies_clients() {

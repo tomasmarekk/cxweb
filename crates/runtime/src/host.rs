@@ -380,6 +380,7 @@ mod tests {
                 false,
                 false,
                 crate::gateway::WebTransport::Http,
+                None,
             )
             .await;
         let bytes = axum::body::to_bytes(response.into_body(), 4096)

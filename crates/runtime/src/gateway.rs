@@ -9,6 +9,7 @@ use axum::{
     routing::any,
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use cxweb_codex_adapter::catalog_codec::CatalogCodec;
 use cxweb_codex_adapter::strict_json;
 use serde_json::Value;
 use std::{
@@ -50,6 +51,28 @@ pub(crate) struct GatewayHealth {
     pub cleanup_failed: bool,
     pub active_turns: u64,
     pub provider: ProviderHealth,
+    pub clients: ClientActivity,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ClientActivity {
+    pub cli: Option<ClientRequest>,
+    pub app: Option<ClientRequest>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ClientRequest {
+    pub succeeded: bool,
+    pub observed_at: Option<String>,
+}
+
+pub(crate) fn client_codec(headers: &HeaderMap) -> Option<CatalogCodec> {
+    let mut values = headers.get_all("user-agent").iter();
+    let agent = values.next()?.to_str().ok()?;
+    if values.next().is_some() {
+        return None;
+    }
+    CatalogCodec::from_user_agent(agent)
 }
 
 pub trait WebProvider: Send + Sync {
@@ -90,6 +113,7 @@ pub struct Gateway {
     native: NativeTransport,
     web: Arc<dyn WebProvider>,
     admission: Arc<WebAdmission>,
+    clients: Arc<Mutex<ClientActivity>>,
 }
 
 struct WebAdmission {
@@ -208,18 +232,25 @@ impl Gateway {
     #[cfg(windows)]
     pub(crate) fn health(&self) -> GatewayHealth {
         let provider = self.web.health();
+        let clients = self
+            .clients
+            .lock()
+            .map(|value| value.clone())
+            .unwrap_or_default();
         match self.admission.state.lock() {
             Ok(state) => GatewayHealth {
                 accepting: state.accepting,
                 cleanup_failed: state.cleanup_failed,
                 active_turns: state.active_turns,
                 provider,
+                clients,
             },
             Err(_) => GatewayHealth {
                 accepting: false,
                 cleanup_failed: true,
                 active_turns: 0,
                 provider,
+                clients,
             },
         }
     }
@@ -255,6 +286,7 @@ impl Gateway {
         compact: bool,
         warmup: bool,
         transport: WebTransport,
+        client: Option<CatalogCodec>,
     ) -> Response {
         let Some(lease) = self.admission.acquire(!warmup) else {
             return crate::web_provider::web_failure("E_WEB_DISCONNECTED");
@@ -262,6 +294,7 @@ impl Gateway {
         let cancellation = self.admission.cancel.child_token();
         let _cancel_on_disconnect = cancellation.clone().drop_guard();
         let web = self.web.clone();
+        let clients = self.clients.clone();
         let worker = tokio::spawn(async move {
             let _lease = lease;
             if cancellation.is_cancelled() {
@@ -271,7 +304,7 @@ impl Gateway {
                 payload,
                 identity,
                 compact,
-                cancellation,
+                cancellation: cancellation.clone(),
                 transport,
             };
             if warmup {
@@ -280,7 +313,25 @@ impl Gateway {
                     Err(code) => crate::web_provider::web_failure(code),
                 };
             }
-            web.respond(request).await
+            let response = web.respond(request).await;
+            if !cancellation.is_cancelled()
+                && let Some(client) = client
+                && let Some(evidence) = response
+                    .extensions()
+                    .get::<crate::web_provider::BrowserEvidence>()
+                && let Ok(mut clients) = clients.lock()
+            {
+                let observed = Some(ClientRequest {
+                    succeeded: response.status().is_success()
+                        && matches!(evidence, crate::web_provider::BrowserEvidence::Verified),
+                    observed_at: cxweb_platform::clock::utc_timestamp(),
+                });
+                match client {
+                    CatalogCodec::Cli01551 => clients.cli = observed,
+                    CatalogCodec::App01550Alpha92 => clients.app = observed,
+                }
+            }
+            response
         });
         worker
             .await
@@ -292,6 +343,7 @@ impl Gateway {
             capability: URL_SAFE_NO_PAD.encode(rand::random::<[u8; 32]>()),
             native,
             web,
+            clients: Arc::default(),
             admission: Arc::new(WebAdmission {
                 state: Mutex::new(AdmissionState {
                     maintenance: false,
@@ -522,6 +574,7 @@ async fn handle(
             }
             // Drop bearer-bearing transport state before entering browser code.
             let identity = crate::web_provider::WebIdentity::from_headers(&headers);
+            let client = client_codec(&headers);
             drop(headers);
             return gateway
                 .dispatch_web(
@@ -530,6 +583,7 @@ async fn handle(
                     matches!(route, NativeRoute::Compact),
                     false,
                     WebTransport::Http,
+                    client,
                 )
                 .await;
         }
@@ -614,6 +668,86 @@ mod tests {
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn client_activity_requires_known_build_and_completed_browser_evidence() {
+        struct Observed;
+        impl WebProvider for Observed {
+            fn respond(&self, request: WebRequest) -> WebFuture {
+                Box::pin(async move {
+                    if request.payload["instructions"] == "failed" {
+                        return crate::web_provider::web_failure("E_QUALIFICATION_PROTOCOL");
+                    }
+                    if request.payload["instructions"] == "cancelled" {
+                        request.cancellation.cancel();
+                    }
+                    let mut response = "fixture".into_response();
+                    if request.payload["instructions"] != "plain" {
+                        response
+                            .extensions_mut()
+                            .insert(crate::web_provider::BrowserEvidence::Verified);
+                    }
+                    response
+                })
+            }
+        }
+        let gateway = Gateway::new(
+            12345,
+            NativeTransport::subscription().unwrap(),
+            Arc::new(Observed),
+        );
+        let send = |agent: &str, mode: &str, duplicate: bool| {
+            let mut request = Request::builder()
+                .method("POST")
+                .uri(format!("{}/responses", gateway.base_url()))
+                .header("host", "127.0.0.1:12345")
+                .header("user-agent", agent);
+            if duplicate {
+                request = request.header("user-agent", agent);
+            }
+            gateway.clone().router().oneshot(
+                request
+                    .body(Body::from(
+                        json!({"model":"webbridge/fixture","instructions":mode}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+        };
+        for (agent, mode, duplicate) in [
+            ("codex_cli_rs/0.155.2", "verified", false),
+            ("codex_cli_rs/0.155.1", "verified", true),
+            ("codex_cli_rs/0.155.1", "plain", false),
+            ("codex_cli_rs/0.155.1", "cancelled", false),
+        ] {
+            send(agent, mode, duplicate).await.unwrap();
+            assert_eq!(*gateway.clients.lock().unwrap(), ClientActivity::default());
+        }
+        send("codex_cli_rs/0.155.1 (PRIVATE_HOST)", "verified", false)
+            .await
+            .unwrap();
+        let passed = gateway.clients.lock().unwrap().clone();
+        assert!(passed.cli.as_ref().unwrap().succeeded);
+        assert!(passed.app.is_none());
+        send("Codex Desktop/0.155.0-alpha.9.2", "failed", false)
+            .await
+            .unwrap();
+        let failed = gateway.clients.lock().unwrap().clone();
+        assert_eq!(failed.cli, passed.cli);
+        assert!(!failed.app.as_ref().unwrap().succeeded);
+        send("Codex Desktop/0.155.0-alpha.9.2", "verified", false)
+            .await
+            .unwrap();
+        assert!(
+            gateway
+                .clients
+                .lock()
+                .unwrap()
+                .app
+                .as_ref()
+                .unwrap()
+                .succeeded
+        );
+    }
 
     struct Spy {
         calls: AtomicUsize,

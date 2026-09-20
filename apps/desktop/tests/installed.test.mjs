@@ -143,6 +143,17 @@ function transient(code = 'E_ALREADY_RUNNING') {
   return value;
 }
 
+test('a successful client request is labeled independently of full connection readiness', async () => {
+  const value = reasoningStatus(true);
+  value.health.components.codex_app = { state: 'healthy', evidence: 'request_success', observed_at: '2026-09-20T15:00:00.000Z', code: null };
+  const ui = panel(async command => command === 'installed_list' ? list() : value);
+  await flush();
+  assert.equal(ui.nodes.get('installed-app').textContent, 'Request verified');
+  assert.equal(ui.nodes.get('installed-cli').textContent, 'Unverified');
+  assert.equal(ui.nodes.get('installed-heading').textContent, 'Verifying connection');
+  assert.match(ui.nodes.get('installed-components').children.find(row => row.textContent.startsWith('Codex App:')).textContent, /picker verification is separate/);
+});
+
 test('background retry is explicit, instance-bound and single while status checks stay passive', async () => {
   let finish;
   const ui = panel(async command => command === 'installed_list' ? list() : command === 'installed_retry_web'

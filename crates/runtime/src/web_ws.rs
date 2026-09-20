@@ -13,6 +13,7 @@ const OUTPUT_LIMIT: usize = 32 * 1024 * 1024;
 
 pub(crate) struct Connection {
     gateway: Gateway,
+    client: Option<cxweb_codex_adapter::catalog_codec::CatalogCodec>,
     correlation: HeaderMap,
     last: Option<Completed>,
 }
@@ -45,6 +46,7 @@ impl Connection {
         }
         Self {
             gateway,
+            client: crate::gateway::client_codec(headers),
             correlation,
             last: None,
         }
@@ -156,6 +158,7 @@ impl Connection {
         prepared: Prepared,
     ) -> impl Future<Output = Result<Delivery, Value>> + Send + 'static {
         let gateway = self.gateway.clone();
+        let client = self.client;
         async move {
             let response = gateway
                 .dispatch_web(
@@ -164,6 +167,7 @@ impl Connection {
                     false,
                     prepared.warmup,
                     crate::gateway::WebTransport::WebSocket,
+                    client,
                 )
                 .await;
             let status = response.status();

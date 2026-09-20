@@ -20,6 +20,16 @@ impl CatalogCodec {
     /// reviewed codec merely by sharing its major/minor/patch query version.
     /// This is compatibility selection, not client authentication.
     pub fn select(query_version: &str, user_agent: &str) -> Option<Self> {
+        match (query_version, Self::from_user_agent(user_agent)?) {
+            ("0.155.1", Self::Cli01551) => Some(Self::Cli01551),
+            ("0.155.0", Self::App01550Alpha92) => Some(Self::App01550Alpha92),
+            _ => None,
+        }
+    }
+
+    /// Classify an observed transport build without retaining its User-Agent.
+    /// This is reported compatibility metadata, not process authentication.
+    pub fn from_user_agent(user_agent: &str) -> Option<Self> {
         if user_agent.len() > 4096 || !user_agent.is_ascii() {
             return None;
         }
@@ -31,11 +41,7 @@ impl CatalogCodec {
         if originator.trim().is_empty() || originator.len() > 128 {
             return None;
         }
-        match (query_version, version) {
-            ("0.155.1", "0.155.1") => Some(Self::Cli01551),
-            ("0.155.0", "0.155.0-alpha.9.2") => Some(Self::App01550Alpha92),
-            _ => None,
-        }
+        Self::for_build(version)
     }
 
     pub fn id(self) -> &'static str {

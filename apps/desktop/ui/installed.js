@@ -85,7 +85,9 @@ window.cxwebInstalled = (() => {
     node('installed-heading').textContent = words[0];
     node('installed-description').textContent = words[1];
     for (const [id, dimension] of [['chatgpt', 'web_auth'], ['app', 'codex_app'], ['cli', 'codex_cli']]) {
-      node(`installed-${id}`).textContent = stateText[health.components[dimension]?.state] || 'Unverified';
+      const component = health.components[dimension];
+      node(`installed-${id}`).textContent = component?.state === 'healthy' && component.evidence === 'request_success'
+        ? 'Request verified' : stateText[component?.state] || 'Unverified';
     }
     const details = node('installed-components'); details.replaceChildren();
     const labels = { runtime: 'Runtime', browser: 'Browser', web_auth: 'ChatGPT sign-in', web_models: 'Web models', native_upstream: 'Native Codex connection', codex_app: 'Codex App', codex_cli: 'Codex CLI', config: 'Configuration' };
@@ -93,6 +95,7 @@ window.cxwebInstalled = (() => {
       const component = health.components[key];
       const row = document.createElement('p');
       row.textContent = `${label}: ${stateText[component?.state] || 'Unverified'}${component?.observed_at ? `; observed ${component.observed_at}` : ''}${component?.code ? `; ${component.code}` : ''}`;
+      if (component?.evidence === 'request_success') row.textContent += '; successful web request from a reviewed client build; picker verification is separate';
       details.append(row);
     }
     const families = value.reasoning || [];

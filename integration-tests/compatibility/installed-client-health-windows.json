@@ -1,0 +1,35 @@
+{
+  "schema": "cxweb.installed-client-health.v1",
+  "observedAt": "2026-09-20T15:12:28.621Z",
+  "synthetic": false,
+  "procedure": "Restart the idle installed daemon, wait for saved-session recovery, run one installed text probe for CLI then App backend, inspect private health after each, and refresh the actual cxweb desktop using Computer Use.",
+  "cliReport": "cli-0.155.1.installed-health.json",
+  "appBackendReport": "app-backend-0.155.0-alpha.9.2.installed-health.json",
+  "startup": { "cli": "unknown", "app": "unknown", "browser": "healthy" },
+  "afterCli": {
+    "cli": "healthy",
+    "cliEvidence": "request_success",
+    "cliObservedAt": "2026-09-20T15:11:39.304Z",
+    "app": "unknown"
+  },
+  "afterApp": {
+    "cli": "healthy",
+    "cliObservedAt": "2026-09-20T15:11:39.304Z",
+    "app": "healthy",
+    "appEvidence": "request_success",
+    "appObservedAt": "2026-09-20T15:12:20.324Z",
+    "browser": "healthy",
+    "activeWebTurns": 0,
+    "nativeUpstream": "unknown",
+    "config": "unknown",
+    "overall": "preflight"
+  },
+  "desktop": {
+    "cliLabel": "Request verified",
+    "appLabel": "Request verified",
+    "reasoning": ["Instant", "Medium", "High", "Extra High", "Pro"],
+    "visibleBrowserRequired": false
+  },
+  "limitations": "Build metadata classifies requests; it does not authenticate the originating process or certify picker behavior. This check does not qualify all coding, native upstream or release requirements.",
+  "result": "PASS"
+}
