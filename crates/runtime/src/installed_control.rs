@@ -212,8 +212,19 @@ pub async fn qualify_reasoning(
     read(installation).await
 }
 
+pub async fn qualify_protocol(
+    installation: &str,
+    instance: String,
+    target: crate::protocol_qualification::Target,
+) -> Result<Snapshot, &'static str> {
+    selected(installation).await?;
+    mutate(installation, instance, Action::QualifyProtocol(target)).await?;
+    read(installation).await
+}
+
 #[derive(Clone)]
 enum Action {
+    QualifyProtocol(crate::protocol_qualification::Target),
     VerifyCompaction(Option<crate::native_probe::CheckpointTarget>),
     QualifyReasoning,
     Remove(bool),
@@ -232,6 +243,11 @@ async fn remove(
 async fn mutate(installation: &str, instance: String, action: Action) -> Result<(), &'static str> {
     let operation = format!("{:032x}", rand::random::<u128>());
     let command = match action.clone() {
+        Action::QualifyProtocol(target) => Command::QualifyProtocol {
+            instance: instance.clone(),
+            operation: operation.clone(),
+            target,
+        },
         Action::VerifyCompaction(target) => Command::VerifyCompaction {
             instance: instance.clone(),
             operation: operation.clone(),
@@ -266,7 +282,7 @@ async fn mutate(installation: &str, instance: String, action: Action) -> Result<
         + Duration::from_secs(
             if matches!(
                 action,
-                Action::QualifyReasoning | Action::VerifyCompaction(_)
+                Action::QualifyReasoning | Action::QualifyProtocol(_) | Action::VerifyCompaction(_)
             ) {
                 2700
             } else if matches!(action, Action::RetryWeb) {
@@ -293,7 +309,9 @@ async fn mutate(installation: &str, instance: String, action: Action) -> Result<
                 outcome: Outcome::Failed {},
                 ..
             }) => {
-                return Err(if matches!(action, Action::VerifyCompaction(_)) {
+                return Err(if matches!(action, Action::QualifyProtocol(_)) {
+                    "E_INSTALLED_QUALITY"
+                } else if matches!(action, Action::VerifyCompaction(_)) {
                     "E_INSTALLED_COMPACTION"
                 } else if matches!(action, Action::RetryWeb) {
                     "E_INSTALLED_RECOVERY"

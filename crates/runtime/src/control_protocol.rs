@@ -22,6 +22,9 @@ const EXCHANGE: Duration = Duration::from_secs(2);
 pub type Work = Pin<Box<dyn Future<Output = Result<DisconnectState, &'static str>> + Send>>;
 
 pub trait Lifecycle: Send + Sync + 'static {
+    fn qualify_protocol(&self, _target: crate::protocol_qualification::Target) -> Work {
+        Box::pin(async { Err("E_QUALITY_UNSUPPORTED") })
+    }
     fn verify_compaction(&self, _target: Option<crate::native_probe::CheckpointTarget>) -> Work {
         Box::pin(async { Err("E_COMPACTION_UNQUALIFIED") })
     }
@@ -86,6 +89,7 @@ impl LoginBackend for Control {
 }
 #[derive(Clone, PartialEq, Eq)]
 enum OperationKind {
+    QualifyProtocol(crate::protocol_qualification::Target),
     VerifyCompaction(Option<crate::native_probe::CheckpointTarget>),
     QualifyReasoning,
     Activate(crate::setup_owner::ActivationTarget),
@@ -96,6 +100,10 @@ enum OperationKind {
     NativeText(crate::setup_owner::NativeTarget),
 }
 impl Lifecycle for DisconnectController {
+    fn qualify_protocol(&self, target: crate::protocol_qualification::Target) -> Work {
+        let controller = self.clone();
+        Box::pin(async move { controller.qualify_protocol(target).await })
+    }
     fn verify_compaction(&self, target: Option<crate::native_probe::CheckpointTarget>) -> Work {
         let controller = self.clone();
         Box::pin(async move { controller.verify_compaction(target).await })
@@ -140,6 +148,11 @@ pub struct Request {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    QualifyProtocol {
+        instance: String,
+        operation: String,
+        target: crate::protocol_qualification::Target,
+    },
     VerifyCompaction {
         instance: String,
         operation: String,
@@ -420,6 +433,15 @@ impl Service {
         }
         let cancel_native = matches!(&request.command, Command::CancelNative { .. });
         let (instance, operation, start) = match request.command {
+            Command::QualifyProtocol {
+                instance,
+                operation,
+                target,
+            } => (
+                instance,
+                operation,
+                Some(OperationKind::QualifyProtocol(target)),
+            ),
             Command::ReasoningStatus {} => {
                 let Some(backend) = &self.backend else {
                     return error(ErrorCode::Unsupported);
@@ -571,6 +593,7 @@ impl Service {
                 | OperationKind::DisconnectWhenIdle
                 | OperationKind::RetryWeb
                 | OperationKind::QualifyReasoning
+                | OperationKind::QualifyProtocol(_)
                 | OperationKind::VerifyCompaction(_)
         ) && self.backend.is_none())
             || (matches!(
@@ -585,7 +608,9 @@ impl Service {
                 && !(kind == OperationKind::Disconnect
                     && matches!(
                         running,
-                        OperationKind::QualifyReasoning | OperationKind::VerifyCompaction(_)
+                        OperationKind::QualifyReasoning
+                            | OperationKind::QualifyProtocol(_)
+                            | OperationKind::VerifyCompaction(_)
                     ))
         }) {
             return error(ErrorCode::Busy);
@@ -620,6 +645,17 @@ impl Service {
             let work_kind = kind.clone();
             let worker = tokio::spawn(async move {
                 match work_kind {
+                    OperationKind::QualifyProtocol(target) => {
+                        match backend
+                            .expect("validated lifecycle backend")
+                            .qualify_protocol(target)
+                            .await
+                        {
+                            Ok(result) => Outcome::Completed { result },
+                            Err("E_WEB_ACTIVE") => Outcome::ActiveWork {},
+                            Err(_) => Outcome::Failed {},
+                        }
+                    }
                     OperationKind::VerifyCompaction(target) => {
                         match backend
                             .expect("validated lifecycle backend")
@@ -683,6 +719,7 @@ impl Service {
                             | OperationKind::DisconnectWhenIdle
                             | OperationKind::RetryWeb
                             | OperationKind::QualifyReasoning
+                            | OperationKind::QualifyProtocol(_)
                             | OperationKind::VerifyCompaction(_) => {
                                 unreachable!()
                             }
@@ -823,6 +860,7 @@ pub async fn exchange(installation: &str, request: &Request) -> io::Result<Reply
                 | Command::DisconnectWhenIdle { operation, .. }
                 | Command::RetryWeb { operation, .. }
                 | Command::QualifyReasoning { operation, .. }
+                | Command::QualifyProtocol { operation, .. }
                 | Command::VerifyCompaction { operation, .. }
                 | Command::Operation { operation, .. }
                 | Command::Browser { operation, .. }
@@ -929,6 +967,9 @@ mod tests {
         release: Arc<Semaphore>,
     }
     impl Lifecycle for Backend {
+        fn qualify_protocol(&self, _: crate::protocol_qualification::Target) -> Work {
+            self.retry_web()
+        }
         fn verify_compaction(
             &self,
             _target: Option<crate::native_probe::CheckpointTarget>,
@@ -984,6 +1025,91 @@ mod tests {
     fn dispatch(service: &Service, command: Command) -> Reply {
         service.handle(&serde_json::to_vec(&request(command)).unwrap())
     }
+    #[tokio::test]
+    async fn protocol_receipt_preserves_run_and_effort_and_deduplicates_lost_acknowledgements() {
+        let (service, backend) = fixture();
+        let target = crate::protocol_qualification::Target {
+            run: "frozen".into(),
+            effort: "xhigh".into(),
+        };
+        let command = |instance: String, operation: String, target| Command::QualifyProtocol {
+            instance,
+            operation,
+            target,
+        };
+        let operation = "a".repeat(32);
+        assert_eq!(
+            dispatch(
+                &service,
+                command("stale".into(), operation.clone(), target.clone())
+            ),
+            error(ErrorCode::Instance)
+        );
+        for _ in 0..2 {
+            assert!(matches!(
+                dispatch(
+                    &service,
+                    command(service.instance.clone(), operation.clone(), target.clone())
+                ),
+                Reply::Operation {
+                    outcome: Outcome::Running {},
+                    ..
+                }
+            ));
+        }
+        let mut changed = target.clone();
+        changed.effort = "high".into();
+        assert_eq!(
+            dispatch(
+                &service,
+                command(service.instance.clone(), operation.clone(), changed)
+            ),
+            error(ErrorCode::OperationConflict)
+        );
+        assert_eq!(
+            dispatch(
+                &service,
+                command(service.instance.clone(), "b".repeat(32), target.clone())
+            ),
+            error(ErrorCode::Busy)
+        );
+        assert!(matches!(
+            dispatch(
+                &service,
+                Command::Disconnect {
+                    instance: service.instance.clone(),
+                    operation: "c".repeat(32)
+                }
+            ),
+            Reply::Operation {
+                outcome: Outcome::Running {},
+                ..
+            }
+        ));
+        backend.release.add_permits(2);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if matches!(
+                    dispatch(
+                        &service,
+                        command(service.instance.clone(), operation.clone(), target.clone())
+                    ),
+                    Reply::Operation {
+                        outcome: Outcome::Completed { .. },
+                        ..
+                    }
+                ) && backend.calls.load(Ordering::SeqCst) == 2
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
+    }
+
     #[tokio::test]
     async fn compaction_verification_is_instance_bound_deduplicated_and_disconnectable() {
         let (service, backend) = fixture();

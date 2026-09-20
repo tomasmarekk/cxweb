@@ -572,6 +572,26 @@ pub(crate) struct RecoveryController {
     directory: PathBuf,
 }
 impl RecoveryController {
+    pub(crate) async fn qualify_protocol(
+        &self,
+        target: crate::protocol_qualification::Target,
+        cancel: CancellationToken,
+    ) -> Result<(), &'static str> {
+        self.pending.ready()?;
+        let (driver, _) = self
+            .pending
+            .1
+            .lock()
+            .map_err(|_| "E_WEB_RECOVERY_STATE")?
+            .clone()
+            .ok_or("E_WEB_RECOVERY_STATE")?;
+        driver.verify_idle().await?;
+        let result = driver
+            .qualify_protocol(self.directory.clone(), target, cancel)
+            .await;
+        driver.verify_idle().await?;
+        result
+    }
     pub(crate) async fn verify_compaction(
         &self,
         target: Option<crate::native_probe::CheckpointTarget>,

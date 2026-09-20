@@ -31,7 +31,7 @@ impl Report {
     }
 }
 
-fn check_scope(
+pub(crate) fn check_scope(
     browser: &mut ManagedBrowser,
     page: &ManagedPage,
     binding: &Binding,

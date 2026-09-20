@@ -23,6 +23,42 @@ English. The complete installed CLI and App-backend read/patch/final scenarios
 now pass. A fixed message sent from the actual GUI also passed with the owned
 model and effort corroborated by the native turn context.
 
+## Durable installed protocol experiment runner (2026-09-20)
+
+- Added runtime-qualify-protocol with an explicit run name and reasoning mode.
+  Each command attempts one next frozen case through the installed browser owner,
+  exact route/account checks and exclusive maintenance admission. It never
+  executes fixture tools or publishes a coding/checkpoint qualification gate.
+- Atomic private records persist the first attempt before preparation and the
+  submission marker before Send. An exclusive OS lock excludes other owners.
+  Interrupted work becomes a terminal failure after restart. Parameter changes,
+  duplicate outcomes and external journal edits cannot replace prior evidence.
+- Identity binds the frozen corpus, runtime executable, browser product/version,
+  hashed installation/account/workspace/epoch and exact observed route/effort.
+  The account plan remains unknown; native clients are not exercised by this
+  protocol-only runner and must retain their separate compatibility evidence.
+- Per-run spacing is 60 seconds after an outcome, or 900 seconds after a rate
+  limit/recovered interruption. Reinvocation during backoff adds no new attempt.
+  Reports separate protocol validity from task correctness and contain no prompt,
+  response, credential or raw account data.
+- Validation: 307 workspace tests passed, 18 opt-in tests ignored. Clippy with
+  warnings denied, formatting and diff checks passed. Six new behavioral tests
+  cover durable transitions, interrupted recovery, changed identity, preserved
+  external edits, rate-limit accounting and private-control deduplication.
+- Installed daemon updated while idle to
+  a5d9d7e9073d135d81a8a90f58e0f61b98e448fee18327a14318f054f9a794a6.
+  Run protocol-xhigh-sep20 has two first-attempt passes (case-001 and case-002),
+  with both protocol validity and exact text correctness verified. They completed
+  at 19:28:06 and 19:29:41 UTC. The cumulative report is
+  integration-tests/quality/protocol-xhigh-sep20.json. The whole 200-case run is
+  incomplete; no task/tool/client qualification follows from these two texts.
+- A repeated live command within the spacing interval failed without modifying
+  attempts.json or admitting another case. Read-only catalogs from installed
+  App backend 0.155.0-alpha.9.2 and CLI 0.155.1 both passed at 19:28 UTC with
+  all five reasoning choices, unchanged configs/executables, and no GUI claim.
+  Reports: app-backend-0.155.0-alpha.9.2.protocol-runner-catalog.json and
+  cli-0.155.1.protocol-runner-catalog.json in integration-tests/compatibility.
+
 ## Frozen protocol quality corpus and evaluator (2026-09-20)
 
 - Added 200 deterministic generation cases in ten equal categories, including
@@ -41,9 +77,9 @@ model and effort corroborated by the native turn context.
   Started/unfinished cases remain visible; failures stay in the denominator.
   Category counts and a 95% Wilson interval accompany complete observations.
   The 99% envelope screen cannot mark a release qualified.
-- The live 200-case experiment is NOT RUN. The tally is in memory; a durable
-  runner binding all relevant implementation/route identities is still required
-  before its output can count toward G2. See
+- At the time this corpus was frozen, the live 200-case experiment was NOT RUN.
+  The subsequent durable runner is described above; the whole experiment and
+  independent native-client gates remain required before a G2 claim. See
   integration-tests/quality/PROTOCOL-CORPUS.md. Synthetic unit responses are
   not included in any live quality denominator.
 - Validation: 301 workspace tests passed (18 opt-in tests ignored), Clippy with

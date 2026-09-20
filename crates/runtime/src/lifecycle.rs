@@ -52,6 +52,28 @@ fn supervision_error(error: std::io::Error) -> &'static str {
 }
 
 impl DisconnectController {
+    pub(crate) async fn qualify_protocol(
+        &self,
+        target: crate::protocol_qualification::Target,
+    ) -> Result<DisconnectState, &'static str> {
+        let controller = self.clone();
+        tokio::spawn(async move {
+            {
+                let _operation = controller.serial.lock().await;
+                if *controller.state.borrow() != DisconnectState::Idle {
+                    return Err("E_WEB_RECOVERY_STATE");
+                }
+            }
+            let recovery = controller.recovery.as_ref().ok_or("E_WEB_RECOVERY_STATE")?;
+            controller
+                .gateway
+                .maintain_web(|cancel| recovery.qualify_protocol(target, cancel))
+                .await?;
+            Ok(*controller.state.borrow())
+        })
+        .await
+        .map_err(|_| "E_QUALITY_WORKER")?
+    }
     pub(crate) async fn verify_compaction(
         &self,
         target: Option<crate::native_probe::CheckpointTarget>,

@@ -10,6 +10,15 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Run the next frozen protocol case once. Uses ChatGPT allowance; preserves all first attempts.
+    RuntimeQualifyProtocol {
+        #[arg(long)]
+        installation: String,
+        #[arg(long)]
+        run: String,
+        #[arg(long, value_parser = ["low", "medium", "high", "xhigh", "max"])]
+        effort: String,
+    },
     /// Verify a fixed checkpoint and continuation in the installed browser. Uses ChatGPT allowance.
     RuntimeVerifyCompaction {
         #[arg(long)]
@@ -144,6 +153,28 @@ enum BrowserAction {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match Args::parse().command {
+        Command::RuntimeQualifyProtocol {
+            installation,
+            run,
+            effort,
+        } => {
+            #[cfg(windows)]
+            {
+                let current = cxweb_runtime::installed_control::check(&installation).await?;
+                let result = cxweb_runtime::installed_control::qualify_protocol(
+                    &installation,
+                    current.instance,
+                    cxweb_runtime::protocol_qualification::Target { run, effort },
+                )
+                .await?;
+                print_json(&serde_json::to_value(result.health)?);
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = (installation, run, effort);
+                return Err("runtime qualification requires Windows".into());
+            }
+        }
         Command::RuntimeVerifyCompaction {
             installation,
             client,

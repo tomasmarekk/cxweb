@@ -1,7 +1,7 @@
 # Frozen protocol quality experiment
 
-This directory contains inputs and deterministic acceptance rules, not live
-model results. The 200-case account-live experiment is **NOT RUN**. The corpus
+This directory contains inputs, deterministic acceptance rules and separately
+identified live observations. The 200-case account-live experiment is **IN PROGRESS**. The corpus
 does not execute fixture tools and does not qualify the separate 20-task native
 coding suite.
 
@@ -56,12 +56,32 @@ all 200 cases; 198/200 meets that narrow threshold. It never marks a release
 qualified. Task correctness, route identity, unauthorized execution, actual
 client behavior and other release gates remain separate.
 
-The tally currently operates in memory. Before a live batch can count toward G2,
-its runner must persist starts before submission, retain every terminal outcome,
-recover interrupted attempts without resubmission, and bind the run to the
-corpus hash, exact runtime/browser/client builds, prompt/parser implementation,
-account plan category, observed route and reasoning mode. No live batch runner
-or durable result journal is provided by the exporter.
+The installed runtime now has a separate first-attempt journal and one-case
+runner. It binds the corpus, executable hash (including prompt/parser code),
+browser product/version, hashed account/workspace/installation/epoch, observed
+route identity/label and explicit reasoning mode. Changing that tuple requires a
+new run; results from different runs must not be silently pooled. The account
+plan is recorded as unknown, and no native client is exercised by this runner.
+Native App/CLI compatibility and plan-specific qualification remain separate
+evidence requirements before any G2 claim.
+
+The private run directory holds an exclusive Windows owner lock, an atomic
+attempts.json journal and a derived report.json. A start is committed before
+browser preparation, and submitting is committed before Send. Thus even failures
+before Send are conservatively included in the attempted denominator. On restart,
+unfinished work becomes Interrupted and cannot be submitted again. Existing
+files changed by another writer are refused without overwriting that change.
+
+Each command admits at most one next case. Within the run, at least 60 seconds
+must elapse after an outcome; a rate limit or recovered interruption imposes a
+900-second delay. Invoking during that delay sends nothing and adds no attempt.
+This is not a global service quota estimate or permission to evade limits by
+changing run names. A failed case stays failed. A completed command means its
+observation was recorded, not that its protocol or task expectation passed.
+
+Reports contain counts, booleans, fixed failure categories and identity hashes,
+never prompts, model output, credentials or raw account identifiers. The journal
+is authoritative if a crash occurs before its derivative report is refreshed.
 
 ## Reproduction
 
@@ -74,5 +94,35 @@ Check case validation, semantic failures and first-attempt accounting:
     cargo test --locked -p cxweb-codex-adapter quality_corpus
     cargo test --locked -p cxweb-codex-adapter --test quality_corpus_contract
 
+Check durable recovery and control operation deduplication:
+
+    cargo test --locked -p cxweb-runtime quality_journal
+    cargo test --locked -p cxweb-runtime protocol_receipt
+
+Explicitly run one next case against an installed, authenticated runtime:
+
+    cxweb runtime-qualify-protocol --installation <installation-id> --run <run-name> --effort xhigh
+
+The run name accepts lowercase ASCII letters, digits and hyphens (1-64 bytes).
+Reasoning accepts low, medium, high, xhigh or max, and must exist in the installed
+qualified route. The command uses the existing maintenance admission gate and
+checks browser cleanup before allowing ordinary web work to resume. An explicit
+disconnect can cancel maintenance; loss of the CLI waiter does not resubmit work.
+
 Unit tests deliberately construct valid and invalid synthetic responses. Their
 success counts must never be added to the account-live sample denominator.
+
+## Initial installed observations
+
+Run protocol-xhigh-sep20 started on 2026-09-20 using daemon
+a5d9d7e9073d135d81a8a90f58e0f61b98e448fee18327a14318f054f9a794a6,
+Chrome 153.0.8010.48 and the observed Extra High route. Its first case completed
+at 19:28:06 UTC with valid protocol and exact expected text. An immediate repeat
+during the spacing interval returned an error and left attempts.json byte-for-byte
+unchanged. The cumulative content-free report is archived separately; this small
+initial sample does not establish the 200-case threshold or any release gate.
+
+The actual installed App backend 0.155.0-alpha.9.2 and CLI 0.155.1 both returned
+the owned family with Instant, Medium, High, Extra High and Pro after this update.
+Those read-only checks preserved both configurations and executables. They did
+not observe the GUI picker again or generate a native-client text response.

@@ -47,7 +47,11 @@ pub mod native_probe;
 mod native_ws;
 mod probe_ws;
 #[cfg(windows)]
+pub mod protocol_qualification;
+#[cfg(windows)]
 mod qualification;
+#[cfg(windows)]
+pub mod quality_journal;
 #[cfg(windows)]
 mod reasoning_qualification;
 #[cfg(windows)]

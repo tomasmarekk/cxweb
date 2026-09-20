@@ -31,9 +31,9 @@ pub struct ReasoningVariant {
 }
 
 #[derive(Clone)]
-struct Selection {
-    identity: String,
-    label: String,
+pub(crate) struct Selection {
+    pub(crate) identity: String,
+    pub(crate) label: String,
     effort: Option<String>,
 }
 
@@ -51,7 +51,7 @@ pub(crate) fn observed_effort(label: &str) -> Result<&'static str, &'static str>
 }
 
 impl Route {
-    fn selection(&self, effort: Option<&str>) -> Result<Selection, &'static str> {
+    pub(crate) fn selection(&self, effort: Option<&str>) -> Result<Selection, &'static str> {
         let matches = |label: &str, recorded: Option<&str>| {
             effort == recorded
                 || observed_effort(label).ok().is_some_and(|canonical| {
@@ -299,6 +299,12 @@ pub(crate) fn temporary_chat_error(code: &str) -> &'static str {
 }
 
 enum Command {
+    QualifyProtocol(
+        std::path::PathBuf,
+        crate::protocol_qualification::Target,
+        tokio_util::sync::CancellationToken,
+        Reply<()>,
+    ),
     VerifyIdle(Reply<()>),
     QualifyReasoning(
         std::path::PathBuf,
@@ -331,6 +337,14 @@ pub struct ManagedDriver {
 }
 
 impl ManagedDriver {
+    pub(crate) fn qualify_protocol(
+        &self,
+        directory: std::path::PathBuf,
+        target: crate::protocol_qualification::Target,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> BrowserFuture<()> {
+        self.request(move |reply| Command::QualifyProtocol(directory, target, cancel, reply))
+    }
     pub(crate) fn verify_idle(&self) -> BrowserFuture<()> {
         let result = self.request(Command::VerifyIdle);
         Box::pin(async move { result.await.map_err(|_| "E_WEB_CLEANUP_UNCONFIRMED") })
@@ -388,6 +402,12 @@ impl ManagedDriver {
                 };
                 while let Some(command) = incoming.blocking_recv() {
                     match command {
+                        Command::QualifyProtocol(directory, target, cancel, reply) => {
+                            let result = if leases.is_empty() && orphaned.is_empty() {
+                                crate::protocol_qualification::run(&mut browser, &binding, &directory, &target, &cancel)
+                            } else { Err("E_BROWSER_BUSY") };
+                            let _ = reply.send(result);
+                        }
                         Command::QualifyReasoning(directory, cancel, reply) => {
                             let result = if leases.is_empty() && orphaned.is_empty() {
                                 crate::reasoning_qualification::qualify(&mut browser, &binding, &directory, &cancel)
