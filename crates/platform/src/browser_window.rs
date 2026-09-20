@@ -5,12 +5,25 @@ use windows_sys::Win32::{
     Foundation::{HWND, LPARAM, RECT},
     UI::WindowsAndMessaging::{
         EnumWindows, GWL_EXSTYLE, GetClassNameW, GetSystemMetrics, GetWindowLongPtrW,
-        GetWindowRect, GetWindowThreadProcessId, HWND_BOTTOM, IsWindowVisible, SM_CXVIRTUALSCREEN,
-        SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE, SWP_FRAMECHANGED,
-        SWP_NOACTIVATE, SWP_SHOWWINDOW, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-        WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+        GetWindowRect, GetWindowThreadProcessId, HWND_BOTTOM, IsWindowVisible, SM_CXSCREEN,
+        SM_CXVIRTUALSCREEN, SM_CYSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+        SW_HIDE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetWindowLongPtrW, SetWindowPos,
+        ShowWindow, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
     },
 };
+
+pub fn login_bounds() -> (i32, i32, i32, i32) {
+    // A background render window can become Chrome's saved window placement.
+    // Explicit login must instead start within the primary desktop.
+    // SAFETY: these metrics have no pointer parameters or ownership effects.
+    unsafe {
+        let screen_width = GetSystemMetrics(SM_CXSCREEN).max(320);
+        let screen_height = GetSystemMetrics(SM_CYSCREEN).max(240);
+        let width = (screen_width - 48).min(1280);
+        let height = (screen_height - 80).min(900);
+        ((screen_width - width) / 2, 24, width, height)
+    }
+}
 
 pub fn bounds() -> (i32, i32, i32, i32) {
     // SAFETY: these metrics have no pointer parameters or ownership effects.

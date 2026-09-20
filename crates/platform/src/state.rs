@@ -257,6 +257,21 @@ fn private_descriptor_matches(expected: &str, actual: &str) -> bool {
     expected == actual.replacen("D:PAI(", "D:P(", 1)
 }
 
+/// The installation index contains only protected child directories. Native
+/// sandbox setup can add read/traverse access to this ancestor. Permit that
+/// without editing its ACL; reject foreign writes and unprotected inheritance.
+/// Never use this policy for journals, staging, browser profiles or state.
+fn installation_container(path: &Path) -> io::Result<()> {
+    match protected_directory(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.to_string() == "E_STATE_PERMISSIONS" => {
+            crate::config_access::AccessSnapshot::protected_container(path)?;
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+}
+
 pub struct StatePaths {
     pub root: PathBuf,
     pub profile: PathBuf,
@@ -295,9 +310,9 @@ pub fn installed_browser() -> io::Result<PathBuf> {
     Err(io::Error::other("E_BROWSER_RUNTIME_MISSING"))
 }
 impl StatePaths {
-    /// Persistent executable and recovery journals use a private directory
-    /// directly below the OS-selected user profile. AppData may carry broader
-    /// sandbox/package grants; installation must not rewrite those system ACLs.
+    /// Persistent executables and journals use private child directories under
+    /// this protected index in the OS-selected user profile. AppData may carry
+    /// broader write grants; installation must not rewrite those system ACLs.
     pub fn installations() -> io::Result<PathBuf> {
         let mut location = null_mut();
         // SAFETY: fixed known-folder ID; the successful string is copied before
@@ -310,7 +325,7 @@ impl StatePaths {
             CoTaskMemFree(location.cast());
             path
         };
-        protected_directory(&root)?;
+        installation_container(&root)?;
         let guard = crate::target_path::TargetPathGuard::capture(&root, true)?;
         guard.capture_access()?;
         Ok(root)
@@ -408,6 +423,36 @@ mod tests {
         std::fs::create_dir(&foreign).unwrap();
         assert!(protected_directory(&foreign).is_err());
         std::fs::remove_dir(foreign).unwrap();
+    }
+    #[test]
+    fn readable_installation_index_keeps_state_private_and_refuses_foreign_writes() {
+        let root = path("readable-index");
+        installation_container(&root).unwrap();
+        let private = "(A;OICI;FA;;;SY)(A;OICI;FA;;;CURRENT_USER)";
+        crate::atomic_file::tests::set_fixture_acl(
+            &root,
+            Some(&format!("{private}(A;OICI;FRFX;;;WD)")),
+        );
+        installation_container(&root).unwrap();
+        assert!(protected_directory(&root).is_err());
+        let child = root.join("private-data");
+        protected_directory(&child).unwrap();
+        protected_directory(&child).unwrap();
+        for mask in ["FW", "WD", "WO", "SD", "DC", "FA"] {
+            crate::atomic_file::tests::set_fixture_acl(
+                &root,
+                Some(&format!("{private}(A;OICI;{mask};;;WD)")),
+            );
+            assert!(installation_container(&root).is_err(), "{mask}");
+            protected_directory(&child).unwrap();
+        }
+        crate::atomic_file::tests::set_fixture_acl(&root, Some(private));
+        std::fs::remove_dir(child).unwrap();
+        std::fs::remove_dir(root).unwrap();
+        let inherited = path("inherited-index");
+        std::fs::create_dir(&inherited).unwrap();
+        assert!(installation_container(&inherited).is_err());
+        std::fs::remove_dir(inherited).unwrap();
     }
     #[test]
     fn instance_lock_is_exclusive_and_releases_on_drop() {

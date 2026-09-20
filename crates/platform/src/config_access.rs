@@ -77,6 +77,16 @@ impl AccessSnapshot {
     pub(crate) fn native_directory(path: &Path) -> io::Result<Self> {
         Self::directory_policy(path, true)
     }
+    /// An installation index may be readable by native sandbox accounts. Its
+    /// descendants containing state still require their own private DACLs.
+    pub(crate) fn protected_container(path: &Path) -> io::Result<Self> {
+        let snapshot = Self::native_directory(path)?;
+        let user = current_sid()?;
+        if snapshot.owner != user || !snapshot.descriptor.starts_with(&format!("O:{user}D:P")) {
+            return Err(refused());
+        }
+        Ok(snapshot)
+    }
     fn directory_policy(path: &Path, native: bool) -> io::Result<Self> {
         let file = OpenOptions::new()
             .read(true)

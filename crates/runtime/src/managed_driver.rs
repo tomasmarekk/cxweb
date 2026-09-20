@@ -78,6 +78,28 @@ type ScopeVerifier = Box<
     dyn FnMut(&mut ManagedBrowser, &ManagedPage) -> Result<(String, String), &'static str> + Send,
 >;
 type Reply<T> = oneshot::Sender<Result<T, &'static str>>;
+
+// Browser errors can contain transport text. Export only reviewed fixed codes.
+pub(crate) fn temporary_chat_error(code: &str) -> &'static str {
+    match code {
+        "E_HIDDEN_TARGET" | "E_BROWSER_TEMPORARY_TARGET" => "E_BROWSER_TEMPORARY_TARGET",
+        "E_BACKGROUND_WINDOW" | "E_BROWSER_TEMPORARY_WINDOW" => "E_BROWSER_TEMPORARY_WINDOW",
+        "E_BACKGROUND_NAVIGATION" | "E_BROWSER_TEMPORARY_NAVIGATION" => {
+            "E_BROWSER_TEMPORARY_NAVIGATION"
+        }
+        "E_HIDDEN_ATTACH" | "E_BROWSER_TEMPORARY_ATTACH" => "E_BROWSER_TEMPORARY_ATTACH",
+        "E_HIDDEN_VIEWPORT" | "E_BROWSER_TEMPORARY_VIEWPORT" => "E_BROWSER_TEMPORARY_VIEWPORT",
+        "E_BROWSER_VERIFICATION_REQUIRED" => "E_BROWSER_VERIFICATION_REQUIRED",
+        "E_LOGIN_REQUIRED" => "E_LOGIN_REQUIRED",
+        "E_BROWSER_TEMPORARY_ROUTE" => "E_BROWSER_TEMPORARY_ROUTE",
+        "E_BROWSER_TEMPORARY_LOADING" => "E_BROWSER_TEMPORARY_LOADING",
+        "E_BROWSER_TEMPORARY_COMPOSER" => "E_BROWSER_TEMPORARY_COMPOSER",
+        "E_BROWSER_TEMPORARY_AMBIGUOUS" => "E_BROWSER_TEMPORARY_AMBIGUOUS",
+        "E_BROWSER_TEMPORARY_OBSERVATION" => "E_BROWSER_TEMPORARY_OBSERVATION",
+        _ => "E_TEMPORARY_CHAT",
+    }
+}
+
 enum Command {
     Prepare(SessionKey, Reply<Prepared>),
     Submit(String, String, String, Reply<()>),
@@ -180,7 +202,7 @@ impl ManagedDriver {
                                 }
                                 let page = browser
                                     .open_temporary_chat()
-                                    .map_err(|_| "E_TEMPORARY_CHAT")?;
+                                    .map_err(|error| temporary_chat_error(&error.to_string()))?;
                                 let prepared = (|| {
                                     check_scope(&mut browser, &page, &mut verify)?;
                                     let label = browser
@@ -453,6 +475,31 @@ impl BrowserDriver for ManagedDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn temporary_chat_errors_preserve_fixed_causes_only() {
+        assert_eq!(
+            temporary_chat_error("E_HIDDEN_TARGET"),
+            "E_BROWSER_TEMPORARY_TARGET"
+        );
+        assert_eq!(
+            temporary_chat_error("E_BACKGROUND_NAVIGATION"),
+            "E_BROWSER_TEMPORARY_NAVIGATION"
+        );
+        assert_eq!(
+            temporary_chat_error("E_BROWSER_TEMPORARY_LOADING"),
+            "E_BROWSER_TEMPORARY_LOADING"
+        );
+        assert_eq!(
+            temporary_chat_error("E_BROWSER_VERIFICATION_REQUIRED"),
+            "E_BROWSER_VERIFICATION_REQUIRED"
+        );
+        assert_eq!(temporary_chat_error("E_LOGIN_REQUIRED"), "E_LOGIN_REQUIRED");
+        assert_eq!(
+            temporary_chat_error("E_BROWSER_TEMPORARY_PRIVATE_DATA"),
+            "E_TEMPORARY_CHAT"
+        );
+    }
 
     #[test]
     fn output_shape_exports_only_fixed_structural_metadata() {

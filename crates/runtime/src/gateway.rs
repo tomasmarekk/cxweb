@@ -393,9 +393,26 @@ async fn handle(
     if matches!(route, NativeRoute::Models)
         && let Some(_lease) = gateway.admission.acquire(false)
         && let Some(codec) = crate::catalog_proxy::select_codec(uri.query(), &headers)
-        && let Some(catalog) = gateway.web.catalog(codec)
     {
-        return crate::catalog_proxy::forward(&gateway.native, uri.query(), headers, catalog).await;
+        if gateway.web.health() == ProviderHealth::Recovering {
+            // A successful native-only response would overwrite Codex's merged
+            // model cache for its full TTL. Recovery has no complete snapshot
+            // yet. Report temporary unavailability without modifying that cache.
+            // Native generation and unknown-client catalog passthrough continue.
+            let mut response = unavailable("E_WEB_RECOVERING");
+            *response.status_mut() = StatusCode::SERVICE_UNAVAILABLE;
+            response
+                .headers_mut()
+                .insert("cache-control", "no-store".parse().unwrap());
+            response
+                .headers_mut()
+                .insert("retry-after", "1".parse().unwrap());
+            return response;
+        }
+        if let Some(catalog) = gateway.web.catalog(codec) {
+            return crate::catalog_proxy::forward(&gateway.native, uri.query(), headers, catalog)
+                .await;
+        }
     }
     let inspected = if method == Method::POST {
         match crate::request_body::decode(&headers, bytes.clone()).await {
@@ -1021,6 +1038,140 @@ mod tests {
         started: Arc<Notify>,
         cancelled: Arc<Notify>,
         cleanup: Arc<tokio::sync::Semaphore>,
+    }
+    #[tokio::test]
+    async fn recovering_catalog_cannot_overwrite_a_complete_native_client_cache() {
+        struct RecoveringCatalog(AtomicUsize);
+        impl WebProvider for RecoveringCatalog {
+            fn respond(&self, _: WebRequest) -> WebFuture {
+                panic!("catalog and native requests must not generate in the browser");
+            }
+            fn health(&self) -> ProviderHealth {
+                match self.0.load(Ordering::SeqCst) {
+                    0 => ProviderHealth::Recovering,
+                    1 => ProviderHealth::Verified { observed_at: None },
+                    _ => ProviderHealth::Unavailable {
+                        code: "E_LOGIN_REQUIRED",
+                    },
+                }
+            }
+            fn catalog(
+                &self,
+                _: cxweb_codex_adapter::catalog_codec::CatalogCodec,
+            ) -> Option<crate::catalog_proxy::OwnedCatalog> {
+                (self.0.load(Ordering::SeqCst) == 1).then(|| crate::catalog_proxy::OwnedCatalog {
+                    codec: "test-codec".into(),
+                    web_scope: "fixture".into(),
+                    generation: 1,
+                    entries: vec![cxweb_codex_adapter::catalog::synthetic_model()],
+                })
+            }
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let native =
+            NativeTransport::new(format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, Router::new()
+                .route("/models", axum::routing::get(|| async { axum::Json(serde_json::json!({"models":[{"slug":"native","future_field":"preserved"}]})) }))
+                .route("/responses", axum::routing::post(|body: Bytes| async { body })))
+                .await.unwrap();
+        });
+        let provider = Arc::new(RecoveringCatalog(AtomicUsize::new(1)));
+        let gateway = Gateway::new(12345, native, provider.clone());
+        let request = |build: &str, etag: Option<&str>| {
+            let mut request = Request::builder()
+                .uri(format!(
+                    "{}/models?client_version={build}",
+                    gateway.base_url()
+                ))
+                .header("host", "127.0.0.1:12345")
+                .header("user-agent", format!("codex_cli_rs/{build} (Windows 11)"));
+            if let Some(etag) = etag {
+                request = request.header("if-none-match", etag);
+            }
+            request.body(Body::empty()).unwrap()
+        };
+        let response = gateway
+            .clone()
+            .router()
+            .oneshot(request("0.155.1", None))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let etag = response.headers()["etag"].to_str().unwrap().to_owned();
+        let cached = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&cached).unwrap()["models"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        provider.0.store(0, Ordering::SeqCst);
+        for validator in [None, Some(etag.as_str())] {
+            let response = gateway
+                .clone()
+                .router()
+                .oneshot(request("0.155.1", validator))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(response.headers()["cache-control"], "no-store");
+            assert_eq!(response.headers()["retry-after"], "1");
+            assert!(!response.headers().contains_key("etag"));
+        }
+        // Unknown versions retain native passthrough, and native generation is
+        // independent of browser recovery and does not wait for it.
+        let response = gateway
+            .clone()
+            .router()
+            .oneshot(request("unknown", None))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let native_body = r#"{"model":"native","input":"fixture"}"#;
+        let response = gateway
+            .clone()
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("{}/responses", gateway.base_url()))
+                    .header("host", "127.0.0.1:12345")
+                    .body(Body::from(native_body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.into_body().collect().await.unwrap().to_bytes(),
+            native_body
+        );
+        provider.0.store(1, Ordering::SeqCst);
+        let response = gateway
+            .clone()
+            .router()
+            .oneshot(request("0.155.1", Some(&etag)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+        provider.0.store(2, Ordering::SeqCst);
+        let response = gateway
+            .clone()
+            .router()
+            .oneshot(request("0.155.1", None))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            serde_json::from_slice::<Value>(
+                &response.into_body().collect().await.unwrap().to_bytes()
+            )
+            .unwrap(),
+            serde_json::json!({"models":[{"slug":"native","future_field":"preserved"}]})
+        );
+        server.abort();
     }
     #[tokio::test]
     async fn provider_panic_does_not_certify_successful_cleanup() {

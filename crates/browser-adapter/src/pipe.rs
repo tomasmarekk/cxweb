@@ -266,9 +266,10 @@ impl ManagedBrowser {
         }
         // Keep the managed browser alive when the user closes its last visible
         // login window. The empty target neither reads nor automates sign-in.
+        let (left, top, width, height) = BrowserProcess::login_bounds();
         let value = self.call(
             "Target.createTarget",
-            json!({"url":"https://chatgpt.com/", "newWindow":true}),
+            json!({"url":"https://chatgpt.com/", "newWindow":true, "left":left, "top":top, "width":width, "height":height, "windowState":"normal"}),
             None,
         )?;
         let target = value["targetId"]
@@ -1288,15 +1289,20 @@ impl ManagedBrowser {
         let page = self.open_hidden_page("https://chatgpt.com/?temporary-chat=true", false)?;
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
-            if self
-                .dom(&page, include_str!("dom/temporary_chat.js"), vec![])
-                .is_ok_and(|value| value == true)
-            {
-                return Ok(page);
-            }
+            let observation = self.dom(&page, include_str!("dom/temporary_chat.js"), vec![]);
+            let code = match observation.as_ref().ok().and_then(Value::as_str) {
+                Some("ready") => return Ok(page),
+                Some("verification") => "E_BROWSER_VERIFICATION_REQUIRED",
+                Some("login") => "E_LOGIN_REQUIRED",
+                Some("route") => "E_BROWSER_TEMPORARY_ROUTE",
+                Some("loading") => "E_BROWSER_TEMPORARY_LOADING",
+                Some("composer_missing") => "E_BROWSER_TEMPORARY_COMPOSER",
+                Some("ambiguous") => "E_BROWSER_TEMPORARY_AMBIGUOUS",
+                _ => "E_BROWSER_TEMPORARY_OBSERVATION",
+            };
             if Instant::now() >= deadline {
                 self.close_page(page)?;
-                return Err(io::Error::other("E_TEMPORARY_CHAT"));
+                return Err(io::Error::other(code));
             }
             std::thread::sleep(Duration::from_millis(200));
         }

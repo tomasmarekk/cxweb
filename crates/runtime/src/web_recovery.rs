@@ -203,7 +203,7 @@ impl Receipt {
             }
             if !browser
                 .verify_temporary_chat()
-                .map_err(|_| "E_TEMPORARY_CHAT")?
+                .map_err(|error| crate::managed_driver::temporary_chat_error(&error.to_string()))?
             {
                 return Err("E_TEMPORARY_CHAT");
             }

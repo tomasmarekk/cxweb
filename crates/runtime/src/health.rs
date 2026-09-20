@@ -29,6 +29,15 @@ fn component(
 /// Never pass arbitrary backend text through the control protocol. Codes below
 /// are fixed local observations and carry no paths, URLs, IDs or account data.
 fn failure(code: &str) -> (Overall, State, Action, &'static str) {
+    let preparation = crate::managed_driver::temporary_chat_error(code);
+    if preparation.starts_with("E_BROWSER_TEMPORARY_") {
+        return (
+            Overall::Unavailable,
+            State::Unavailable,
+            Action::Details,
+            preparation,
+        );
+    }
     match code {
         "E_LOGIN_REQUIRED" => (
             Overall::AuthRequired,
@@ -307,6 +316,14 @@ mod tests {
     }
     #[test]
     fn failures_are_sanitized_and_disconnect_states_override_cached_browser_health() {
+        assert_eq!(
+            failure("E_BROWSER_TEMPORARY_LOADING").3,
+            "E_BROWSER_TEMPORARY_LOADING"
+        );
+        assert_eq!(
+            failure("E_BROWSER_TEMPORARY_PRIVATE_CONTENT").3,
+            "E_WEB_UNAVAILABLE"
+        );
         for (code, overall, action) in [
             ("E_LOGIN_REQUIRED", Overall::AuthRequired, Action::OpenLogin),
             (

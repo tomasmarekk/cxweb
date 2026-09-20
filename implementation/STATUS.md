@@ -17,8 +17,54 @@ instance also displays the saved owned selection in its composer. Its full picke
 native/web switching and GUI request still need verification. Both native backends
 pass web/native/web text generation in one process through the installed runtime.
 Scheduled browser recovery now passes after removing an MSIX data-path ambiguity.
+Current live state: the most recent recovery and independent visible-surface
+check report `E_LOGIN_REQUIRED`. A managed login window is open; this build has
+not completed authenticated recovery or the installed tool scenario.
+
+## Recovery catalog and login readiness (2026-09-20)
+
+- Reviewed-client model requests during browser recovery now return HTTP 503,
+  `E_WEB_RECOVERING`, `Cache-Control: no-store` and `Retry-After: 1`. They no longer
+  return a successful native-only snapshot that can replace the client's merged
+  catalog for its five-minute cache TTL. No native cache file is edited. Native
+  generation, unknown-client catalogs, confirmed sign-out and disconnected
+  passthrough retain their previous behavior. A gateway regression verifies
+  conditional requests, successful augmentation after recovery and unchanged
+  native response bytes/metadata. Exact-client refresh timing and GUI behavior
+  still need live verification; a 503 is not claimed to refresh the GUI itself.
+- Login detection requires visible composer, profile and login controls. Hidden
+  markup cannot establish or invalidate authentication. Tests cover a hidden
+  login link followed by a visible one and a hidden authenticated surface. The
+  live login requirement persisted after this fix, so it is not counted as the
+  cause of the current sign-in failure.
+- Explicit login windows now request primary-screen bounds instead of accepting
+  the browser profile's previous placement. The window was discovered through
+  Computer Use, but screenshot verification was stopped because the tool could
+  not determine the browser URL sufficiently to enforce policy. Visual placement
+  and the actual page are not verified. No automated login was attempted.
+- Preparation diagnostics retain fixed causes through startup and native turns;
+  health reports preserve reviewed preparation codes and sanitize unknown text.
+- Validation: workspace 267 passed / 14 ignored; browser DOM 33 passed; Clippy,
+  formatting and diff checks passed. The latest catalog change is not yet in the
+  running installation. The live login owner is preserved while the user signs in.
 
 ## Installed tool string rendering and remaining preparation failure (2026-09-20)
+
+- A subsequent scheduled restart exposed an existing read/execute grant for the
+  native `CodexSandboxUsers` group on the installation index. Exact-private
+  validation incorrectly rejected that ancestor. Only this protected,
+  current-user-owned index now permits readers through the reviewed path policy;
+  foreign writes, deletion, ownership/ACL changes and inherited protection are
+  still rejected. Every state/profile/journal child retains its private policy.
+  No host ACL was changed. An actual NTFS fixture covers read grants, forbidden
+  write masks and unchanged child privacy. Scheduled recovery passed this check
+  and subsequently reported `E_LOGIN_REQUIRED`; authenticated recovery has not
+  passed this build yet.
+- Temporary Chat preparation now distinguishes fixed structural failure states
+  and preserves target/window/navigation/attachment failures. Diagnostics contain
+  no page text, URLs or account identifiers. URL and unique visible composer
+  requirements remain unchanged. Workspace checks: 266 passed / 14 ignored;
+  browser DOM tests: 32 passed; Clippy and release builds passed.
 
 - Added an installed `--tools` exercise alongside the existing text/coexistence
   probe. It uses the real native home, subscription and gateway, creates a fresh

@@ -56,6 +56,10 @@ impl BrowserProcess {
         crate::browser_window::bounds()
     }
 
+    pub fn login_bounds() -> (i32, i32, i32, i32) {
+        crate::browser_window::login_bounds()
+    }
+
     pub fn park_windows(&self) -> io::Result<(usize, bool, bool)> {
         // SAFETY: this owns a live process handle; a zero timeout never blocks.
         if unsafe { WaitForSingleObject(self._process.as_raw_handle(), 0) } != WAIT_TIMEOUT {
