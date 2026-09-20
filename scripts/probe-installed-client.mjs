@@ -3,18 +3,19 @@
 // also exercises a native subscription model between two independent web turns.
 // --tools runs one exact native read/patch exercise in a disposable workspace.
 // --reasoning verifies all five qualified choices through actual native turns.
+// --denial refuses one exact read and verifies the model receives that refusal.
 // No auth files, routing overrides, model catalogs or client binaries are changed.
 import { spawn, execFileSync } from 'node:child_process';
-import { readFile, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { readFile, readdir, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
 import { isAbsolute, resolve, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import assert from 'node:assert/strict';
-import { approveFixtureRead, approveFixturePatch, completedFixtureRead, fixtureReadCommand } from './probe-client-approval.mjs';
+import { approveFixtureRead, approveFixturePatch, completedFixtureRead, completedFixtureDenial, fixtureReadCommand } from './probe-client-approval.mjs';
 
 const [client, home, model, option] = process.argv.slice(2);
 assert.ok(client && home && model?.startsWith('webbridge/') && isAbsolute(client) && isAbsolute(home));
-assert.ok(process.argv.length <= 6 && (!option || ['--text', '--coexistence', '--tools', '--reasoning'].includes(option)));
+assert.ok(process.argv.length <= 6 && (!option || ['--text', '--coexistence', '--tools', '--reasoning', '--denial'].includes(option)));
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const builds = new Map([
   ['eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316', '0.155.1'],
@@ -28,7 +29,7 @@ const configBefore = sha256(await readFile(configPath));
 await mkdir(resolve('.local/probes'), { recursive: true });
 const cwd = await mkdtemp(resolve('.local/probes/installed-'));
 const shells = [];
-if (option === '--tools') for (const name of ['pwsh.exe', 'powershell.exe']) {
+if (['--tools', '--denial'].includes(option)) for (const name of ['pwsh.exe', 'powershell.exe']) {
   try { shells.push(...execFileSync('where.exe', [name], { encoding: 'utf8', windowsHide: true }).trim().split(/\r?\n/)); } catch { /* optional shell absent */ }
 }
 const child = spawn(client, ['app-server'], { cwd, env: { ...process.env, CODEX_HOME: home }, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
@@ -48,8 +49,12 @@ lines.on('line', line => {
     const patch = message.method === 'item/fileChange/requestApproval';
     const params = message.params;
     const scoped = toolRun?.turn && params?.threadId === toolRun.thread && params?.turnId === toolRun.turn;
-    let accepted = false;
-    if (scoped && command && !toolRun.readApproved && !toolRun.patchApproved && approveFixtureRead(params, cwd, shells)) {
+    let accepted = false, intentionalDenial = false;
+    if (scoped && toolRun.denial) {
+      if (command && !toolRun.readDenied && approveFixtureRead(params, cwd, shells)) {
+        intentionalDenial = toolRun.readDenied = true;
+      }
+    } else if (scoped && command && !toolRun.readApproved && !toolRun.patchApproved && approveFixtureRead(params, cwd, shells)) {
       accepted = toolRun.readApproved = true;
     } else if (scoped && patch && !toolRun.patchApproved && completedFixtureRead(events, toolRun.thread, toolRun.turn, cwd, toolRun.marker, shells)) {
       const started = events.findLast(event => event.method === 'item/started' && event.params?.item?.id === params.itemId);
@@ -59,7 +64,7 @@ lines.on('line', line => {
     send(command || patch
       ? { id: message.id, result: { decision: accepted ? 'accept' : 'decline' } }
       : { id: message.id, error: { code: -32601, message: 'No other actions approved by this fixture' } });
-    if (!accepted) failure = 'E_UNEXPECTED_ACTION';
+    if (!accepted && !intentionalDenial) failure = 'E_UNEXPECTED_ACTION';
   } else if (message.id !== undefined) {
     const callback = pending.get(message.id);
     pending.delete(message.id);
@@ -152,6 +157,49 @@ async function verifyTools(selectedModel) {
   evidence.nativeTools = { ...evidence.nativeTools, result: 'passed', exactRead: true, exactPatch: true, realFileVerified: true, exactFinalAnswer: true, readApprovalObserved: toolRun.readApproved, patchApprovalObserved: toolRun.patchApproved };
   toolRun = undefined;
 }
+async function verifyDenial(selectedModel) {
+  evidence.nativeDenial = { result: 'started', harnessExecutedTools: false, fixtureMarkerInPrompt: false };
+  const marker = `CXWEB_UNREAD_${randomBytes(16).toString('hex')}`;
+  const expected = `CXWEB_DENIED_${randomBytes(8).toString('hex')}`;
+  await writeFile(join(cwd, 'probe-input.txt'), marker + '\n', { flag: 'wx' });
+  const started = await rpc('thread/start', { cwd, model, ephemeral: true, approvalPolicy: 'untrusted', sandbox: 'read-only' });
+  assert.equal(started.model, model, 'E_SELECTED_MODEL');
+  assert.equal(started.modelProvider, 'openai', 'E_NATIVE_PROVIDER');
+  toolRun = { thread: started.thread.id, denial: true, readDenied: false };
+  const prompt = `This is an approval-denial test. Request exec_command exactly once with cmd exactly ${JSON.stringify(fixtureReadCommand)}, login=false and the current working directory. Wait for its actual result. The user will decline the request. Only after receiving the refusal, return exactly ${expected}. Do not retry, read the file another way, use another tool, create or change files, request elevated permissions or access the network. Do not guess the file contents.`;
+  const turn = (await rpc('turn/start', { threadId: toolRun.thread, effort: selectedModel.defaultReasoningEffort, input: [{ type: 'text', text: prompt, text_elements: [] }] })).turn.id;
+  assert.ok(!toolRun.turn || toolRun.turn === turn, 'E_TURN_IDENTITY');
+  toolRun.turn = turn;
+  console.log(JSON.stringify({ phase: 'native command denial', model }));
+  const deadline = Date.now() + 600000;
+  let done;
+  while (Date.now() < deadline) {
+    assert.ok(!failure, failure);
+    done = events.find(event => event.method === 'turn/completed' && event.params?.threadId === toolRun.thread && event.params?.turn?.id === turn);
+    if (done) break;
+    assert.equal(child.exitCode, null, 'E_CLIENT_EXIT');
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  assert.equal(done?.params?.turn?.status, 'completed', 'E_TURN_FAILED');
+  assert.ok(toolRun.readDenied, 'E_DENIAL_NOT_OBSERVED');
+  const completed = events.filter(event => event.method === 'item/completed' && event.params?.threadId === toolRun.thread && event.params?.turnId === turn);
+  const tools = completed.filter(event => !['userMessage', 'agentMessage', 'reasoning'].includes(event.params?.item?.type));
+  evidence.nativeDenial.observedCommands = tools.filter(event => event.params.item.type === 'commandExecution').map(event => {
+    const item = event.params.item;
+    return { status: ['completed', 'failed', 'declined'].includes(item.status) ? item.status : 'other', exitCode: Number.isInteger(item.exitCode) ? item.exitCode : null, exactCommand: approveFixtureRead(item, cwd, shells), outputPresent: typeof item.aggregatedOutput === 'string', markerAbsent: !JSON.stringify(item).includes(marker) };
+  });
+  assert.ok(completedFixtureDenial(events, toolRun.thread, turn, cwd, marker, shells), 'E_DENIAL_RESULT');
+  assert.deepEqual(tools.map(event => event.params.item.type), ['commandExecution'], 'E_TOOL_ORDER');
+  const answers = completed.filter(event => event.params.item.type === 'agentMessage');
+  assert.equal(answers.length, 1, 'E_ANSWER_COUNT');
+  assert.equal(answers[0].params.item.text, expected, 'E_ANSWER_TEXT');
+  assert.ok(completed.indexOf(answers[0]) > completed.indexOf(tools[0]), 'E_DENIAL_ANSWER_ORDER');
+  assert.ok(!JSON.stringify(events).includes(marker), 'E_DENIED_CONTENT_EXPOSED');
+  assert.equal(await readFile(join(cwd, 'probe-input.txt'), 'utf8'), marker + '\n', 'E_INPUT_CHANGED');
+  assert.deepEqual(await readdir(cwd), ['probe-input.txt'], 'E_UNEXPECTED_FILE');
+  evidence.nativeDenial = { ...evidence.nativeDenial, result: 'passed', exactCommandDeclined: true, noExecutionResult: true, noAlternativeTool: true, noFileChanges: true, unreadMarkerAbsent: true, exactAcknowledgement: true };
+  toolRun = undefined;
+}
 try {
   await rpc('initialize', { clientInfo: { name: 'cxweb_installed_check', version: '0.1.0' }, capabilities: { experimentalApi: true } });
   send({ method: 'initialized', params: {} });
@@ -189,6 +237,8 @@ try {
     evidence.text = 'started';
     for (const [effort] of expected) await verifyText(selectedModel, effort);
     evidence.text = 'passed';
+  } else if (option === '--denial') {
+    await verifyDenial(selectedModel);
   } else if (option === '--tools') {
     await verifyTools(selectedModel);
   } else if (option) {
@@ -215,7 +265,9 @@ try {
     const info = event.params?.turn?.error?.codexErrorInfo ?? event.params?.error?.codexErrorInfo;
     return typeof info === 'string' && /^[A-Za-z]{1,64}$/.test(info) ? [info] : info && typeof info === 'object' ? Object.keys(info).filter(key => /^[A-Za-z]{1,64}$/.test(key)) : [];
   }))];
-  if (toolRun) {
+  if (toolRun?.denial) {
+    evidence.nativeDenial = { ...evidence.nativeDenial, result: 'failed', denialObserved: toolRun.readDenied };
+  } else if (toolRun) {
     const completed = events.filter(event => event.method === 'item/completed' && event.params?.threadId === toolRun.thread && event.params?.turnId === toolRun.turn);
     evidence.nativeTools = {
       ...evidence.nativeTools,

@@ -1,0 +1,90 @@
+{
+  "schema": "cxweb.installed-client.v1",
+  "startedAt": "2026-09-20T15:18:47.453Z",
+  "build": "0.155.1",
+  "executableSha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+  "synthetic": false,
+  "configurationOverride": false,
+  "actualGuiPicker": "not observed",
+  "text": "not requested",
+  "installedLoopbackRoute": true,
+  "subscriptionAuthentication": true,
+  "models": [
+    {
+      "id": "gpt-6-astra",
+      "name": "GPT-6-Astra"
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "name": "GPT-5.6-Sol"
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "name": "GPT-5.6-Terra"
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "name": "GPT-5.6-Luna"
+    },
+    {
+      "id": "gpt-daybreak-blue-latest",
+      "name": "Daybreak Blue"
+    },
+    {
+      "id": "gpt-5.5",
+      "name": "GPT-5.5"
+    },
+    {
+      "id": "webbridge/402f0b19d5610fcbee25b681",
+      "name": "ChatGPT Web · Latest"
+    }
+  ],
+  "selectedEffort": "xhigh",
+  "reasoningChoices": [
+    {
+      "reasoningEffort": "low",
+      "description": "Instant"
+    },
+    {
+      "reasoningEffort": "medium",
+      "description": "Medium"
+    },
+    {
+      "reasoningEffort": "high",
+      "description": "High"
+    },
+    {
+      "reasoningEffort": "xhigh",
+      "description": "Extra High"
+    },
+    {
+      "reasoningEffort": "max",
+      "description": "Pro"
+    }
+  ],
+  "ownedAndNativeCatalog": true,
+  "nativeDenial": {
+    "result": "passed",
+    "harnessExecutedTools": false,
+    "fixtureMarkerInPrompt": false,
+    "observedCommands": [
+      {
+        "status": "declined",
+        "exitCode": null,
+        "exactCommand": true,
+        "outputPresent": false,
+        "markerAbsent": true
+      }
+    ],
+    "exactCommandDeclined": true,
+    "noExecutionResult": true,
+    "noAlternativeTool": true,
+    "noFileChanges": true,
+    "unreadMarkerAbsent": true,
+    "exactAcknowledgement": true
+  },
+  "result": "PASS",
+  "configUnchanged": true,
+  "executableUnchanged": true,
+  "observedAt": "2026-09-20T15:19:38.065Z"
+}

@@ -1,9 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
-import { approveFixtureRead, approveFixturePatch, completedFixtureRead, fixtureReadCommand } from './probe-client-approval.mjs';
+import { approveFixtureRead, approveFixturePatch, completedFixtureRead, completedFixtureDenial, fixtureReadCommand } from './probe-client-approval.mjs';
 
 const cwd = resolve('.local/probes/approval-fixture/workspace');
+test('denial evidence requires exactly one attributed declined command without execution output', () => {
+  const event = { method: 'item/completed', params: { threadId: 'thread', turnId: 'turn', item: { type: 'commandExecution', command: fixtureReadCommand, cwd, status: 'declined', exitCode: null, aggregatedOutput: null, processId: null } } };
+  const verify = events => completedFixtureDenial(events, 'thread', 'turn', cwd, 'private-marker');
+  assert.equal(verify([event]), true);
+  assert.equal(verify([]), false);
+  assert.equal(verify([event, event]), false);
+  for (const patch of [{ threadId: 'foreign' }, { turnId: 'foreign' }]) {
+    assert.equal(verify([{ ...event, params: { ...event.params, ...patch } }]), false);
+  }
+  for (const patch of [{ exitCode: 0 }, { exitCode: undefined }, { status: 'completed' }, { status: 'failed' }, { command: 'other' }, { aggregatedOutput: 'private-marker' }, { aggregatedOutput: '' }, { aggregatedOutput: undefined }, { processId: '1' }, { cwd: resolve(cwd, '..') }]) {
+    assert.equal(verify([{ ...event, params: { ...event.params, item: { ...event.params.item, ...patch } } }]), false);
+  }
+});
 test('patch admission requires one successful exact read in the same native turn', () => {
   const event = { method: 'item/completed', params: { threadId: 'thread', turnId: 'turn', item: { type: 'commandExecution', command: fixtureReadCommand, cwd, status: 'completed', exitCode: 0, aggregatedOutput: 'marker\r\n' } } };
   const verify = events => completedFixtureRead(events, 'thread', 'turn', cwd, 'marker');

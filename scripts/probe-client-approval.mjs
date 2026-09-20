@@ -75,3 +75,16 @@ export function completedFixtureRead(events, threadId, turnId, cwd, marker, shel
   return item.status === 'completed' && item.exitCode === 0
     && approveFixtureRead(item, cwd, shells) && item.aggregatedOutput?.trim() === marker;
 }
+
+export function completedFixtureDenial(events, threadId, turnId, cwd, marker, shells = []) {
+  const commands = events.filter(event => event.method === 'item/completed'
+    && event.params?.threadId === threadId && event.params?.turnId === turnId
+    && event.params?.item?.type === 'commandExecution');
+  if (commands.length !== 1) return false;
+  const item = commands[0].params.item;
+  // Reviewed app-server builds emit null output/exit code for a declined item.
+  // A refusal is not a command process result and must not contain file output.
+  return item.status === 'declined' && item.exitCode === null && item.processId == null
+    && approveFixtureRead(item, cwd, shells)
+    && item.aggregatedOutput === null && !JSON.stringify(item).includes(marker);
+}
