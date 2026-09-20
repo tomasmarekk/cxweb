@@ -19,6 +19,16 @@ pub struct GenerationSession {
 }
 
 impl GenerationSession {
+    /// Explicit recovery of an idle test session. Installed hosts and request
+    /// cleanup retain a consumer lease and therefore prevent this operation.
+    pub(crate) async fn retire_idle(&self) -> Result<(), &'static str> {
+        let _consumer = ConsumerLease::acquire(self.consumer.clone())?;
+        if self.driver.is_closed() {
+            return Ok(());
+        }
+        self.driver.retire_idle().await
+    }
+
     /// A diagnostic and an installed gateway must not run separate coordinators
     /// against the same browser at once. The lease follows requests, not the UI.
     pub(crate) fn claim(&self) -> Result<ConsumerLease, &'static str> {
@@ -302,66 +312,89 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires installed Chrome; transfers a fresh profile without account access"]
     async fn generation_receipt_keeps_profile_owned_until_driver_shutdown() {
-        use cxweb_platform::state::{StatePaths, installed_browser, protected_directory};
-        let root =
-            std::env::temp_dir().join(format!("cxweb-handoff-{:032x}", rand::random::<u128>()));
-        protected_directory(&root).unwrap();
-        let paths = StatePaths {
-            root: root.clone(),
-            profile: root.join("profile"),
-            state: root.join("state"),
-        };
-        protected_directory(&paths.profile).unwrap();
-        protected_directory(&paths.state).unwrap();
-        let ownership = paths.lock().unwrap();
-        let browser =
-            ManagedBrowser::launch(&installed_browser().unwrap(), &paths.profile, false).unwrap();
-        let route = Route {
-            id: "webbridge/fixture".into(),
-            identity: "fixture".into(),
-            label: "Fixture · High".into(),
-            effort: Some("high".into()),
-        };
-        let prepared = PreparedHandoff {
-            binding: Binding {
-                installation: "fixture-installation".into(),
-                account: "fixture-account".into(),
-                workspace: "fixture-workspace".into(),
-                epoch: 0,
-                routes: vec![route.clone()],
-            },
-            route,
-            evidence: "a".repeat(64),
-        };
-        let receipt = std::sync::Arc::new(prepared.start(browser, ownership).unwrap());
-        assert!(paths.lock().is_err());
-        let replay = receipt
-            .replay("fixture-installation", "webbridge/fixture")
-            .unwrap();
-        assert!(std::sync::Arc::ptr_eq(&receipt, &replay));
-        drop(replay);
-        assert!(matches!(
-            receipt.replay("another-installation", "webbridge/fixture"),
-            Err("E_BROWSER_IN_USE")
-        ));
-        assert!(matches!(
-            receipt.replay("fixture-installation", "webbridge/another"),
-            Err("E_BROWSER_IN_USE")
-        ));
-        assert_eq!(receipt.scope().account, "fixture-account");
-        // The runtime receipt retains the owner after a requesting UI drops it.
-        let runtime_receipt = receipt.clone();
-        drop(receipt);
-        assert!(!runtime_receipt.driver.is_closed());
-        assert!(runtime_receipt.driver.diagnostic().await.is_ok());
-        assert!(paths.lock().is_err());
-        // A host driver handle likewise outlives the login control receipt.
-        let driver = runtime_receipt.driver.clone();
-        drop(runtime_receipt);
-        assert!(paths.lock().is_err());
-        driver.shutdown().await.unwrap();
-        assert!(driver.is_closed());
-        drop(paths.lock().unwrap());
+        for retire in [false, true] {
+            use cxweb_platform::state::{StatePaths, installed_browser, protected_directory};
+            let root =
+                std::env::temp_dir().join(format!("cxweb-handoff-{:032x}", rand::random::<u128>()));
+            protected_directory(&root).unwrap();
+            let paths = StatePaths {
+                root: root.clone(),
+                profile: root.join("profile"),
+                state: root.join("state"),
+            };
+            protected_directory(&paths.profile).unwrap();
+            protected_directory(&paths.state).unwrap();
+            let retained = paths.profile.join("cxweb-retention-fixture");
+            std::fs::write(&retained, "retained").unwrap();
+            let ownership = paths.lock().unwrap();
+            let browser =
+                ManagedBrowser::launch(&installed_browser().unwrap(), &paths.profile, false)
+                    .unwrap();
+            let route = Route {
+                id: "webbridge/fixture".into(),
+                identity: "fixture".into(),
+                label: "Fixture · High".into(),
+                effort: Some("high".into()),
+            };
+            let prepared = PreparedHandoff {
+                binding: Binding {
+                    installation: "fixture-installation".into(),
+                    account: "fixture-account".into(),
+                    workspace: "fixture-workspace".into(),
+                    epoch: 0,
+                    routes: vec![route.clone()],
+                },
+                route,
+                evidence: "a".repeat(64),
+            };
+            let receipt = std::sync::Arc::new(prepared.start(browser, ownership).unwrap());
+            assert!(paths.lock().is_err());
+            let replay = receipt
+                .replay("fixture-installation", "webbridge/fixture")
+                .unwrap();
+            assert!(std::sync::Arc::ptr_eq(&receipt, &replay));
+            drop(replay);
+            assert!(matches!(
+                receipt.replay("another-installation", "webbridge/fixture"),
+                Err("E_BROWSER_IN_USE")
+            ));
+            assert!(matches!(
+                receipt.replay("fixture-installation", "webbridge/another"),
+                Err("E_BROWSER_IN_USE")
+            ));
+            assert_eq!(receipt.scope().account, "fixture-account");
+            // The runtime receipt retains the owner after a requesting UI drops it.
+            let runtime_receipt = receipt.clone();
+            drop(receipt);
+            assert!(!runtime_receipt.driver.is_closed());
+            assert!(runtime_receipt.driver.diagnostic().await.is_ok());
+            assert!(paths.lock().is_err());
+            // A host driver handle likewise outlives the login control receipt.
+            let consumer = runtime_receipt.claim().unwrap();
+            assert_eq!(runtime_receipt.retire_idle().await, Err("E_BROWSER_IN_USE"));
+            assert!(!runtime_receipt.driver.is_closed());
+            assert!(paths.lock().is_err());
+            drop(consumer);
+            let retire_receipt = runtime_receipt.clone();
+            let driver = runtime_receipt.driver.clone();
+            drop(runtime_receipt);
+            assert!(paths.lock().is_err());
+            if retire {
+                retire_receipt.retire_idle().await.unwrap();
+                // Retirement is idempotent and cannot resurrect a closed session.
+                retire_receipt.retire_idle().await.unwrap();
+                assert!(matches!(
+                    retire_receipt.replay("fixture-installation", "webbridge/fixture"),
+                    Err("E_BROWSER_CLOSED")
+                ));
+            } else {
+                drop(retire_receipt);
+                driver.shutdown().await.unwrap();
+            }
+            assert!(driver.is_closed());
+            drop(paths.lock().unwrap());
+            assert_eq!(std::fs::read_to_string(retained).unwrap(), "retained");
+        }
     }
 
     #[tokio::test]

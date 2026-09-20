@@ -20,7 +20,7 @@ function panel(respond) {
   const timers = new Map();
   const document = {
     hidden: false,
-    addEventListener() {},
+    addEventListener(event, action) { this[event] = action; },
     createElement: element,
     getElementById(id) {
       if (!nodes.has(id)) nodes.set(id, element());
@@ -320,7 +320,7 @@ test('all UI command names are registered and allowed only for the main local wi
   assert.equal(capability.remote, undefined);
   const rust = await readFile(new URL('../src-tauri/src/main.rs', import.meta.url), 'utf8');
   const build = await readFile(new URL('../src-tauri/build.rs', import.meta.url), 'utf8');
-  for (const command of ['connect', 'status', 'qualify', 'qualify_text', 'qualify_tools', 'background', 'native_discover', 'native_preflight']) {
+  for (const command of ['connect', 'status', 'qualify', 'qualify_text', 'qualify_tools', 'background', 'native_discover', 'native_preflight', 'native_text', 'native_cancel', 'reset_test']) {
     assert.ok(capability.permissions.includes(`allow-${command.replaceAll('_', '-')}`));
     assert.ok(build.includes(`"${command}"`));
     assert.match(rust, new RegExp(`async fn ${command}\\(`));
@@ -625,6 +625,68 @@ test('a transient cached status failure recovers without resubmitting the native
   await tickNative(ui);
   assert.equal(ui.nodes.get('error').hidden, true);
   assert.equal(ui.nodes.get('native-text').disabled, false);
+  assert.equal(ui.timers.size, 0);
+  assert.ok(ui.requests.every(r => r.refresh === false));
+});
+
+
+test('resetting an idle test session is explicit and does not start a new browser or test', async () => {
+  let finish;
+  const ui = panel(async command => command === 'reset_test'
+    ? new Promise(resolve => { finish = resolve; })
+    : {...runningNative, native_operation:null});
+  await flush();
+  assert.equal(ui.nodes.get('reset-test').hidden, false);
+  assert.equal(ui.nodes.get('reset-test').disabled, false);
+  assert.deepEqual(ui.calls, ['status']);
+  const action = ui.nodes.get('reset-test').click();
+  await ui.nodes.get('reset-test').click();
+  await ui.nodes.get('native-text').click();
+  assert.deepEqual(ui.calls, ['status', 'reset_test']);
+  finish({phase:'disconnected'}); await action;
+  assert.equal(ui.nodes.get('reset-test').hidden, true);
+  assert.equal(ui.nodes.get('heading').textContent, 'Sign in to ChatGPT');
+  assert.equal(ui.timers.size, 0);
+  assert.deepEqual(ui.calls, ['status', 'reset_test']);
+});
+
+test('busy tests prevent reset and refused reset preserves the existing session', async () => {
+  const running = panel(async () => runningNative);
+  await flush();
+  assert.equal(running.nodes.get('reset-test').disabled, true);
+  await running.nodes.get('reset-test').click();
+  assert.deepEqual(running.calls, ['status']);
+  const ui = panel(async command => {
+    if (command === 'reset_test') throw 'E_BROWSER_OTHER_PAGES';
+    return {...runningNative, native_operation:null};
+  });
+  await flush();
+  await ui.nodes.get('reset-test').click();
+  assert.deepEqual(ui.calls, ['status', 'reset_test', 'status']);
+  assert.equal(ui.requests.at(-1).refresh, false);
+  assert.equal(ui.nodes.get('heading').textContent, 'Background session ready');
+  assert.match(ui.nodes.get('error').textContent, /left open/);
+  assert.equal(ui.nodes.get('reset-test').disabled, false);
+});
+
+
+test('a hidden control window suspends status polling and resumes without browser work', async () => {
+  let state = runningNative;
+  const ui = panel(async command => {
+    assert.equal(command, 'status');
+    return state;
+  });
+  await flush();
+  assert.equal(ui.timers.size, 1);
+  ui.document.hidden = true;
+  ui.document.visibilitychange();
+  assert.equal(ui.timers.size, 0);
+  assert.deepEqual(ui.calls, ['status']);
+  state = {...runningNative, native_operation:null, native_text_error:'E_NATIVE_PROBE_CANCELLED'};
+  ui.document.hidden = false;
+  ui.document.visibilitychange();
+  await tickNative(ui);
+  assert.equal(ui.nodes.get('native-cancel').hidden, true);
   assert.equal(ui.timers.size, 0);
   assert.ok(ui.requests.every(r => r.refresh === false));
 });

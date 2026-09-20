@@ -241,7 +241,7 @@ mod qualification_tests {
         let (commands, mut incoming) = mpsc::channel(8);
         let control = Control { commands };
         let mut tasks = Vec::new();
-        for action in 0..5 {
+        for action in 0..6 {
             let control = control.clone();
             tasks.push(tokio::spawn(async move {
                 match action {
@@ -249,12 +249,13 @@ mod qualification_tests {
                     1 => control.connect().await,
                     2 => control.status().await,
                     3 => control.qualify().await,
-                    _ => control.qualify_tools().await,
+                    4 => control.qualify_tools().await,
+                    _ => control.reset_test().await,
                 }
             }));
         }
         let mut pending = Vec::new();
-        for _ in 0..5 {
+        for _ in 0..6 {
             pending.push(incoming.recv().await.unwrap());
         }
         tokio::time::advance(std::time::Duration::from_secs(400)).await;
@@ -265,7 +266,8 @@ mod qualification_tests {
             | WorkerCommand::Connect(reply)
             | WorkerCommand::Status(reply)
             | WorkerCommand::Qualify(reply)
-            | WorkerCommand::QualifyTurn(_, reply)) = command
+            | WorkerCommand::QualifyTurn(_, reply)
+            | WorkerCommand::ResetTest(reply)) = command
             else {
                 panic!("unexpected handoff")
             };
@@ -361,6 +363,7 @@ mod qualification_tests {
 }
 enum WorkerCommand {
     Snapshot(Reply),
+    ResetTest(Reply),
     TakeGeneration {
         installation: String,
         route: String,
@@ -400,6 +403,30 @@ impl Control {
                 let mut observed_scope: Option<BrowserScope> = None;
                 while let Some(command) = incoming.blocking_recv() {
                     let command = match command {
+                        WorkerCommand::ResetTest(reply) => {
+                            // Once admitted, finish retirement even if the UI closes.
+                            if let Some(session) = generation.as_ref() {
+                                if let Err(code) = runtime.block_on(session.retire_idle()) {
+                                    let _ = reply.send(Err(code));
+                                    continue;
+                                }
+                                generation = None;
+                                status = ControlStatus::default();
+                                observed_routes.clear();
+                                observed_scope = None;
+                            }
+                            if instance_lock.is_none() {
+                                match paths.lock() {
+                                    Ok(lock) => instance_lock = Some(lock),
+                                    Err(_) => {
+                                        let _ = reply.send(Err("E_ALREADY_RUNNING"));
+                                        continue;
+                                    }
+                                }
+                            }
+                            let _ = reply.send(Ok(status.clone()));
+                            continue;
+                        }
                         WorkerCommand::Snapshot(reply) => {
                             let _ = reply.send(Ok(status.clone()));
                             continue;
@@ -470,7 +497,9 @@ impl Control {
                         command => command,
                     };
                     let (connect, background, qualify, qualification_kind, reply) = match command {
-                        WorkerCommand::Snapshot(_) | WorkerCommand::TakeGeneration { .. } => {
+                        WorkerCommand::Snapshot(_)
+                        | WorkerCommand::ResetTest(_)
+                        | WorkerCommand::TakeGeneration { .. } => {
                             unreachable!("handled above")
                         }
                         WorkerCommand::Connect(reply) => (true, false, false, None, reply),
@@ -1135,6 +1164,13 @@ impl Control {
     }
     pub async fn connect(&self) -> Result<ControlStatus, &'static str> {
         self.request(true).await
+    }
+    pub(crate) async fn reset_test(&self) -> Result<ControlStatus, &'static str> {
+        let (reply, receive) = oneshot::channel();
+        self.commands
+            .try_send(WorkerCommand::ResetTest(reply))
+            .map_err(|_| "E_CONTROL_BUSY")?;
+        receive.await.map_err(|_| "E_CONTROL_CLOSED")?
     }
     /// Internal daemon handoff, not a desktop IPC operation or activation grant.
     /// The selected route must pass protocol qualification in background mode.

@@ -1,0 +1,40 @@
+{
+  "schema": "cxweb.idle-native-test-recovery.v1",
+  "date": "2026-09-20",
+  "result": "PASS automated protocol/UI tests and fresh-profile Chrome retirement; authenticated UI NOT RUN",
+  "verification": {
+    "workspace": {
+      "passed": 213,
+      "ignored": 9
+    },
+    "frontend": {
+      "passed": 38
+    },
+    "clippy": "PASS",
+    "format": "PASS",
+    "release_builds": [
+      "CLI",
+      "daemon",
+      "desktop"
+    ],
+    "opt_in_browser_test": "generation_receipt_keeps_profile_owned_until_driver_shutdown"
+  },
+  "checks": {
+    "explicit_reset_uses_private_pipe": true,
+    "refused_reset_preserves_qualification": true,
+    "accepted_reset_waits_for_worker": true,
+    "consumer_lease_refuses_retirement": true,
+    "retirement_releases_actual_profile_lock": true,
+    "retirement_preserves_profile_data": true,
+    "closed_receipt_cannot_be_replayed_as_live": true,
+    "hidden_ui_suspends_polling": true,
+    "ui_does_not_automatically_connect_or_send_after_reset": true
+  },
+  "limits": [
+    "Browser test used fresh unsigned-in profiles and did not read or control the existing login surface.",
+    "Retained profile data was demonstrated with a synthetic sentinel, not a live authenticated cookie.",
+    "Additional-tab checks reuse the browser adapter replacement guard; the new end-to-end desktop action remains visually unverified.",
+    "The original manual-login process remains alive and retains the saved browser profile.",
+    "Actual Codex App picker, native subscription coexistence and production activation remain unverified."
+  ]
+}

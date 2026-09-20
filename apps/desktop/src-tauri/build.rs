@@ -11,6 +11,7 @@ fn main() {
             "native_preflight",
             "native_text",
             "native_cancel",
+            "reset_test",
         ]),
     ))
     .expect("Tauri build configuration");

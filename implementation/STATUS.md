@@ -21,6 +21,42 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Idle native test recovery (2026-09-20)
+
+- Added an explicit Reset client test session action through the scoped desktop
+  command and receipt-based private control protocol. It releases an idle
+  generation owner, reacquires the profile lock for login control, clears the
+  prepared test target/results, and returns to disconnected without opening a
+  browser or sending another test. Reset before handoff drops only the unused
+  preparation, preserving the login controller's existing browser state.
+- Retirement holds the exclusive generation consumer lease. Running probes,
+  request cleanup and installed hosts holding that lease prevent reset. The
+  driver also refuses live/orphaned page leases and checks the browser target
+  inventory before closing. Unknown inventory or additional tabs preserve the
+  owner. A refused reset keeps the cached qualification and returns a fixed
+  error; operation replay never repeats the reset. Lost ownership or failure to
+  reacquire the profile instead invalidates the previous qualification.
+- The accepted worker operation waits for actual browser exit and profile lock
+  release. Stored sign-in data is not deleted. Test reset is not a substitute for
+  disconnecting an installed route or signing out. Production activation remains
+  disabled and no installed routing is modified by this action.
+- Hidden desktop windows stop their cached native-test status polling. Showing
+  the window resumes a cached read, without re-observing ChatGPT or resubmitting
+  a model request. Scoped command-registration tests now also check native text,
+  cancellation and reset permissions.
+- Verification: cargo test --workspace --locked --quiet passed (213 tests,
+  9 ignored); node --test apps/desktop/tests/app.test.mjs passed (38 tests).
+  Clippy with warnings denied, formatting, diff checks and release CLI/daemon/
+  desktop builds passed. The opt-in generation receipt test passed with actual
+  Chrome on fresh unsigned-in profiles, covering ordinary shutdown, idle reset,
+  consumer refusal, profile lock release, retained profile data and idempotent
+  retirement. It did not access the user's existing browser surface.
+- Live limits: the previous manual-login process was revalidated as running and
+  still owns the saved profile. The new reset action has not been visually tested
+  against authenticated ChatGPT. Actual App picker, native coexistence, broader
+  coding qualification and production activation remain open.
+- Evidence: integration-tests/compatibility/idle-native-test-recovery-windows.json.
+
 ## Native test cancellation and reopened controls (2026-09-20)
 
 - Cached runtime status now identifies the active native test and whether its

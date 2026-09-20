@@ -125,6 +125,9 @@ impl RemoteControl {
     pub async fn background(&self) -> Result<ControlStatus, &'static str> {
         self.perform(LoginAction::Background).await
     }
+    pub async fn reset_test(&self) -> Result<ControlStatus, &'static str> {
+        self.perform(LoginAction::ResetTest).await
+    }
     pub async fn status(&self, refresh: bool) -> Result<ControlStatus, &'static str> {
         if refresh {
             return self.perform(LoginAction::Refresh).await;
@@ -259,12 +262,16 @@ mod tests {
     struct Browser {
         connects: AtomicUsize,
         refreshes: AtomicUsize,
+        resets: AtomicUsize,
         started: Notify,
         finish: Arc<Semaphore>,
     }
     impl LoginBackend for Browser {
         fn request(&self, action: LoginAction) -> LoginWork {
             match action {
+                LoginAction::ResetTest => {
+                    self.resets.fetch_add(1, Ordering::SeqCst);
+                }
                 LoginAction::Connect => {
                     self.connects.fetch_add(1, Ordering::SeqCst);
                 }
@@ -285,6 +292,7 @@ mod tests {
                 Ok(ControlStatus {
                     background_session: action == LoginAction::Background,
                     phase: match action {
+                        LoginAction::ResetTest => "disconnected",
                         LoginAction::Connect => "authenticating",
                         LoginAction::Refresh | LoginAction::Background => "awaiting_qualification",
                         LoginAction::Qualify => "candidates_observed",
@@ -315,6 +323,7 @@ mod tests {
         let browser = Arc::new(Browser {
             connects: AtomicUsize::new(0),
             refreshes: AtomicUsize::new(0),
+            resets: AtomicUsize::new(0),
             started: Notify::new(),
             finish: Arc::new(Semaphore::new(0)),
         });
@@ -361,6 +370,19 @@ mod tests {
         assert_eq!(client(&channel).status(false).await.unwrap(), status);
         assert_eq!(browser.connects.load(Ordering::SeqCst), 0);
         assert_eq!(browser.refreshes.load(Ordering::SeqCst), 1);
+        stop.cancel();
+        task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn reset_test_uses_private_control_without_login_or_refresh() {
+        let (channel, browser, stop, task) = fixture();
+        browser.finish.add_permits(1);
+        let status = client(&channel).reset_test().await.unwrap();
+        assert_eq!(status.phase, "disconnected");
+        assert_eq!(browser.resets.load(Ordering::SeqCst), 1);
+        assert_eq!(browser.connects.load(Ordering::SeqCst), 0);
+        assert_eq!(browser.refreshes.load(Ordering::SeqCst), 0);
         stop.cancel();
         task.await.unwrap().unwrap();
     }

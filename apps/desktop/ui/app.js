@@ -9,6 +9,7 @@ let preflightPending = false;
 let targetRevision = 0;
 let nativeRoute = null;
 let nativeReady = false;
+let resetReady = false;
 let nativeOperation = null;
 let nativeWaiting = false;
 let nativeCancelling = false;
@@ -16,10 +17,11 @@ let nativeTimer = null;
 let nativePolling = false;
 let nativePollEpoch = 0;
 function scheduleNativeStatus(delay = 500) {
-  if (nativePolling || nativeTimer !== null || (!nativeWaiting && !nativeOperation)) return;
+  if (document.hidden || nativePolling || nativeTimer !== null || (!nativeWaiting && !nativeOperation)) return;
   const epoch = nativePollEpoch;
   nativeTimer = setTimeout(async () => {
     nativeTimer = null;
+    if (document.hidden) return;
     nativePolling = true;
     let nextDelay = 500;
     try {
@@ -35,10 +37,16 @@ function scheduleNativeStatus(delay = 500) {
     }
   }, delay);
 }
+document.addEventListener('visibilitychange', () => {
+  nativePollEpoch += 1;
+  if (nativeTimer !== null) { clearTimeout(nativeTimer); nativeTimer = null; }
+  if (!document.hidden) scheduleNativeStatus(0);
+});
 const nativeControls = ['native-choice', 'native-client', 'native-home', 'native-cwd', 'native-preflight', 'native-discover'];
 function updateNativeButton() {
   const running = nativeWaiting || Boolean(nativeOperation);
   $('native-text').disabled = pending || running || preflightPending || discoveryPending || !nativeReady;
+  $('reset-test').disabled = pending || running || preflightPending || discoveryPending || !resetReady;
   $('native-cancel').hidden = !running;
   $('native-cancel').disabled = !nativeOperation || nativeCancelling || nativeOperation.cancellation_requested === true;
   if (running) {
@@ -50,6 +58,9 @@ function updateNativeButton() {
 function renderNative(status) {
   nativeOperation = status.native_operation || null;
   nativeRoute = status.tool_qualified_model || null;
+  resetReady = ['tool_protocol_qualified', 'generation_ready'].includes(status.phase);
+  $('reset-test').hidden = !resetReady;
+  $('reset-test-help').hidden = !resetReady;
   nativeReady = status.background_session === true && Boolean(nativeRoute) && ['tool_protocol_qualified', 'generation_ready'].includes(status.phase);
   const result = $('native-text-result');
   const report = status.phase === 'generation_ready' ? status.native_text_report : null;
@@ -217,7 +228,7 @@ function render(status) {
     $('chatgpt').textContent = 'Unverified'; $('connect').textContent = 'Check status';
   }
 }
-const actionButtons = ['connect', 'test-text', 'test-tools', 'background', 'native-text'];
+const actionButtons = ['connect', 'test-text', 'test-tools', 'background', 'native-text', 'reset-test'];
 async function runAction(command, params = {}) {
   if (pending || (nativeOperation && command !== 'status')) return;
   pending = true;
@@ -424,5 +435,9 @@ $('native-cancel').addEventListener('click', async () => {
     if (epoch === nativePollEpoch) render(status);
   } catch (error) { showError(error); }
   finally { nativeCancelling = false; updateNativeButton(); scheduleNativeStatus(); }
+});
+$('reset-test').addEventListener('click', async () => {
+  if (pending || nativeOperation || preflightPending || discoveryPending || !resetReady) return;
+  await runAction('reset_test');
 });
 if (invoke) check(false, false); else showError('E_DESKTOP_IPC');

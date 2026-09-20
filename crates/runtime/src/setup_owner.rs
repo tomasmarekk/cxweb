@@ -64,11 +64,12 @@ impl LoginBackend for SetupOwner {
             if status.phase != "generation_ready" {
                 state.report = None;
                 state.error = None;
-                if state
-                    .prepared
-                    .as_ref()
-                    .and_then(|p| p.session.as_ref())
-                    .is_some_and(|s| s.driver.is_closed())
+                if action == LoginAction::ResetTest
+                    || state
+                        .prepared
+                        .as_ref()
+                        .and_then(|p| p.session.as_ref())
+                        .is_some_and(|s| s.driver.is_closed())
                 {
                     state.prepared = None;
                 }

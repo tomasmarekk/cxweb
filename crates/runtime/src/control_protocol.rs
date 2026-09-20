@@ -28,6 +28,7 @@ pub trait Lifecycle: Send + Sync + 'static {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LoginAction {
+    ResetTest,
     Background,
     Connect,
     Refresh,
@@ -51,6 +52,7 @@ impl LoginBackend for Control {
         let control = self.clone();
         Box::pin(async move {
             match action {
+                LoginAction::ResetTest => control.reset_test().await,
                 LoginAction::Background => control.background().await,
                 LoginAction::Connect => control.connect().await,
                 LoginAction::Refresh => control.status().await,
@@ -144,6 +146,7 @@ pub enum Outcome {
 
 pub(crate) fn login_error(code: &str) -> &'static str {
     match code {
+        "E_ALREADY_RUNNING" => "E_ALREADY_RUNNING",
         "E_BROWSER_START" => "E_BROWSER_START",
         "E_BROWSER_LOGIN" => "E_BROWSER_LOGIN",
         "E_BROWSER_PIPE" => "E_BROWSER_PIPE",
@@ -425,6 +428,8 @@ impl Service {
                     },
                     action @ (OperationKind::Login(_) | OperationKind::NativeText(_)) => {
                         let backend = login.expect("validated login backend");
+                        let reset_test =
+                            matches!(&action, OperationKind::Login(LoginAction::ResetTest));
                         let result = match action {
                             OperationKind::Login(action) => backend.request(action),
                             OperationKind::NativeText(target) => {
@@ -442,6 +447,21 @@ impl Service {
                                 }
                             }
                             Err(code) => {
+                                if reset_test
+                                    && matches!(
+                                        code,
+                                        "E_BROWSER_IN_USE"
+                                            | "E_BROWSER_BUSY"
+                                            | "E_BROWSER_OTHER_PAGES"
+                                            | "E_BROWSER_RELEASE"
+                                    )
+                                {
+                                    // A refused retirement retains the original owner
+                                    // and its qualification. No new test was sent.
+                                    return Outcome::LoginFailed {
+                                        code: login_error(code).to_owned(),
+                                    };
+                                }
                                 let mut cached = status.lock().expect("login status lock poisoned");
                                 cached.native_text_report = None;
                                 cached.native_text_error = None;
@@ -697,6 +717,78 @@ mod tests {
         assert!(
             matches!(dispatch(&service, Command::BrowserStatus {}), Reply::BrowserStatus {status, ..} if status.phase == "generation_ready" && status.native_text_error.as_deref() == Some("E_NATIVE_PROBE_TEXT"))
         );
+    }
+
+    #[tokio::test]
+    async fn reset_refusals_preserve_live_owners_but_invalidate_lost_owners() {
+        struct Refusing(AtomicUsize, &'static str);
+        impl LoginBackend for Refusing {
+            fn request(&self, action: LoginAction) -> LoginWork {
+                assert_eq!(action, LoginAction::ResetTest);
+                self.0.fetch_add(1, Ordering::SeqCst);
+                let code = self.1;
+                Box::pin(async move { Err(code) })
+            }
+        }
+        for (error_code, preserved) in [
+            ("E_BROWSER_OTHER_PAGES", true),
+            ("E_BROWSER_IN_USE", true),
+            ("E_ALREADY_RUNNING", false),
+            ("E_CONTROL_CLOSED", false),
+        ] {
+            let backend = Arc::new(Refusing(AtomicUsize::new(0), error_code));
+            let service = Service::login(backend.clone());
+            let initial = ControlStatus {
+                phase: "generation_ready".into(),
+                background_session: true,
+                tool_qualified_model: Some("webbridge/fixture".into()),
+                qualification_evidence: Some("a".repeat(64)),
+                ..Default::default()
+            };
+            *service.login_status.lock().unwrap() = initial.clone();
+            let command = || Command::Browser {
+                instance: service.instance.clone(),
+                operation: "a".repeat(32),
+                action: LoginAction::ResetTest,
+            };
+            assert!(matches!(
+                dispatch(&service, command()),
+                Reply::Operation {
+                    outcome: Outcome::Running {},
+                    ..
+                }
+            ));
+            let terminal = tokio::time::timeout(Duration::from_secs(2), async {
+                loop {
+                    let reply = dispatch(&service, command());
+                    if !matches!(
+                        reply,
+                        Reply::Operation {
+                            outcome: Outcome::Running {},
+                            ..
+                        }
+                    ) {
+                        break reply;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            assert!(
+                matches!(&terminal, Reply::Operation {outcome: Outcome::LoginFailed {code}, ..} if code == error_code)
+            );
+            assert_eq!(dispatch(&service, command()), terminal);
+            assert_eq!(backend.0.load(Ordering::SeqCst), 1);
+            let status = service.login_status.lock().unwrap();
+            if preserved {
+                assert_eq!(*status, initial);
+            } else {
+                assert_eq!(status.phase, "awaiting_qualification");
+                assert!(status.tool_qualified_model.is_none());
+                assert!(status.qualification_evidence.is_none());
+            }
+        }
     }
 
     #[tokio::test]

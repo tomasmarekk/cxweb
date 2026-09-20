@@ -41,6 +41,17 @@ mod desktop {
     }
 
     #[tauri::command]
+    async fn reset_test(state: tauri::State<'_, AppState>) -> Result<ControlStatus, String> {
+        state
+            .control
+            .as_ref()
+            .map_err(|e| e.to_string())?
+            .reset_test()
+            .await
+            .map_err(str::to_owned)
+    }
+
+    #[tauri::command]
     async fn native_text(
         state: tauri::State<'_, AppState>,
         client: std::path::PathBuf,
@@ -160,7 +171,8 @@ mod desktop {
                 native_discover,
                 native_preflight,
                 native_text,
-                native_cancel
+                native_cancel,
+                reset_test
             ])
             .run(tauri::generate_context!())
             .expect("cxweb desktop runtime");

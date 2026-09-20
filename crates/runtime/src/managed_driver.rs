@@ -83,6 +83,7 @@ enum Command {
     Stop(String, Reply<bool>),
     Release(String, Reply<()>),
     Shutdown(Reply<()>),
+    RetireIdle(Reply<()>),
     Diagnostic(Reply<serde_json::Value>),
 }
 struct Lease {
@@ -138,6 +139,23 @@ impl ManagedDriver {
                 };
                 while let Some(command) = incoming.blocking_recv() {
                     match command {
+                        Command::RetireIdle(reply) => {
+                            if !leases.is_empty() || !orphaned.is_empty() {
+                                let _ = reply.send(Err("E_BROWSER_BUSY"));
+                                continue;
+                            }
+                            if let Err(error) = browser.close_for_replacement(None) {
+                                let code = match error.to_string().as_str() {
+                                    "E_BROWSER_OTHER_PAGES" => "E_BROWSER_OTHER_PAGES",
+                                    "E_BROWSER_BUSY" => "E_BROWSER_BUSY",
+                                    _ => "E_BROWSER_RELEASE",
+                                };
+                                let _ = reply.send(Err(code));
+                                continue;
+                            }
+                            shutdown_reply = Some(reply);
+                            break;
+                        }
                         Command::Diagnostic(reply) => {
                             let _ = reply.send(Ok(serde_json::json!({"attribution":browser.attribution_diagnostic(), "scope":browser.scope_diagnostic(), "model":browser.model_diagnostic(), "output_shape":output_shape})));
                         }
@@ -331,6 +349,12 @@ impl ManagedDriver {
     /// release of the dedicated profile lock, not merely a dropped UI handle.
     pub fn shutdown(&self) -> BrowserFuture<()> {
         self.request(Command::Shutdown)
+    }
+
+    /// Retire an unused diagnostic owner without closing other tabs or leases.
+    /// The generation owner must hold its exclusive consumer lease throughout.
+    pub(crate) fn retire_idle(&self) -> BrowserFuture<()> {
+        self.request(Command::RetireIdle)
     }
 
     pub fn diagnostic(&self) -> BrowserFuture<serde_json::Value> {
