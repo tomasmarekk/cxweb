@@ -1,5 +1,5 @@
-//! Read-only validation of a selected configuration object and its parent.
-//! Administrators and SYSTEM are trusted OS principals; other grants fail closed.
+//! Read-only owner/DACL validation for private configuration and selected paths.
+//! Path policy permits public readers; private configuration remains restricted.
 use crate::state::{LocalAllocation, current_sid, descriptor_text};
 use std::{
     fs::{File, OpenOptions},
@@ -17,11 +17,11 @@ use windows_sys::Win32::{
         AccessCheck,
         Authorization::{ConvertSidToStringSidW, GetSecurityInfo, SE_FILE_OBJECT},
         DACL_SECURITY_INFORMATION, DuplicateToken, GENERIC_MAPPING, GROUP_SECURITY_INFORMATION,
-        GetAce, INHERIT_ONLY_ACE, IsValidAcl, IsValidSid, OWNER_SECURITY_INFORMATION, PSID,
-        SecurityImpersonation, TOKEN_DUPLICATE, TOKEN_QUERY,
+        GetAce, INHERIT_ONLY_ACE, IsValidAcl, IsValidSid, MapGenericMask,
+        OWNER_SECURITY_INFORMATION, PSID, SecurityImpersonation, TOKEN_DUPLICATE, TOKEN_QUERY,
     },
     Storage::FileSystem::{
-        BY_HANDLE_FILE_INFORMATION, DELETE, FILE_ADD_FILE, FILE_ALL_ACCESS,
+        BY_HANDLE_FILE_INFORMATION, DELETE, FILE_ADD_FILE, FILE_ADD_SUBDIRECTORY, FILE_ALL_ACCESS,
         FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_REPARSE_POINT,
         FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_EXECUTE,
         FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ,
@@ -80,6 +80,16 @@ impl AccessSnapshot {
     }
 
     pub(crate) fn capture(file: &File, directory: bool) -> io::Result<Self> {
+        Self::capture_policy(file, directory, false)
+    }
+
+    /// Existing path components may be publicly readable. Unlike private
+    /// configuration objects, they need no write access for the current user.
+    pub(crate) fn capture_path(file: &File, directory: bool) -> io::Result<Self> {
+        Self::capture_policy(file, directory, true)
+    }
+
+    fn capture_policy(file: &File, directory: bool, path_policy: bool) -> io::Result<Self> {
         let user = current_sid()?;
         // SAFETY: all descriptor/ACL/SID pointers below remain inside the live
         // allocation from GetSecurityInfo. GetAce offsets are checked before SID
@@ -94,7 +104,7 @@ impl AccessSnapshot {
                 || (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0) != directory
                 || (!directory
                     && (info.nNumberOfLinks != 1
-                        || info.dwFileAttributes & FILE_ATTRIBUTE_READONLY != 0))
+                        || (!path_policy && info.dwFileAttributes & FILE_ATTRIBUTE_READONLY != 0)))
             {
                 return Err(io::Error::new(
                     io::ErrorKind::PermissionDenied,
@@ -122,7 +132,7 @@ impl AccessSnapshot {
             // Elevated Windows tools can create an Administrators-owned file
             // inside a user-owned directory. AccessCheck still requires the
             // current (possibly filtered) token to have all needed rights.
-            if owner != user && owner != "S-1-5-18" && owner != "S-1-5-32-544" {
+            if !trusted(&owner, &user, path_policy) {
                 return Err(io::Error::new(
                     io::ErrorKind::PermissionDenied,
                     "E_CONFIG_OWNER",
@@ -151,10 +161,18 @@ impl AccessSnapshot {
                     return Err(refused());
                 }
                 let trustee = sid_text(ace.cast::<u8>().add(8).cast())?;
+                let mut mask = u32::from_le_bytes(bytes[4..8].try_into().expect("ACE mask"));
+                MapGenericMask(&mut mask, &mapping());
+                let inherit_only = u32::from(header.AceFlags) & INHERIT_ONLY_ACE != 0;
+                // A deny ACE never authorizes an otherwise unsafe allow ACE.
+                // Do not infer arbitrary group membership or grant exceptions
+                // for sandbox accounts. Unknown ACE layouts fail above.
+                let safe_public = FILE_GENERIC_READ
+                    | FILE_GENERIC_EXECUTE
+                    | if directory { FILE_ADD_SUBDIRECTORY } else { 0 };
                 if header.AceType == 0
-                    && trustee != user
-                    && trustee != "S-1-5-18"
-                    && trustee != "S-1-5-32-544"
+                    && !trusted(&trustee, &user, path_policy)
+                    && !(path_policy && (inherit_only || mask & !safe_public == 0))
                     && !(trustee == "S-1-3-0" && u32::from(header.AceFlags) & INHERIT_ONLY_ACE != 0)
                 {
                     return Err(io::Error::new(
@@ -178,13 +196,10 @@ impl AccessSnapshot {
                 return Err(io::Error::last_os_error());
             }
             let token = OwnedHandle::from_raw_handle(token);
-            let mapping = GENERIC_MAPPING {
-                GenericRead: FILE_GENERIC_READ,
-                GenericWrite: FILE_GENERIC_WRITE,
-                GenericExecute: FILE_GENERIC_EXECUTE,
-                GenericAll: FILE_ALL_ACCESS,
-            };
-            let wanted = if directory {
+            let mapping = mapping();
+            let wanted = if path_policy {
+                FILE_GENERIC_READ
+            } else if directory {
                 // Staging needs child creation/traversal, never parent deletion.
                 FILE_GENERIC_READ | FILE_ADD_FILE | FILE_TRAVERSE
             } else {
@@ -226,6 +241,22 @@ impl AccessSnapshot {
     }
 }
 
+fn mapping() -> GENERIC_MAPPING {
+    GENERIC_MAPPING {
+        GenericRead: FILE_GENERIC_READ,
+        GenericWrite: FILE_GENERIC_WRITE,
+        GenericExecute: FILE_GENERIC_EXECUTE,
+        GenericAll: FILE_ALL_ACCESS,
+    }
+}
+
+fn trusted(sid: &str, user: &str, path_policy: bool) -> bool {
+    sid == user || matches!(sid, "S-1-5-18" | "S-1-5-32-544")
+        // The Windows Modules Installer owns system ancestors. This exact
+        // service SID is trusted only for path components, never config files.
+        || (path_policy && sid == "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464")
+}
+
 // Only for post-replacement comparison of non-directory files. Windows may add
 // DACL auto-inherited bookkeeping and strip child-propagation flags from file
 // ACEs. A file has no children; IO still changes effective access and must stay.
@@ -257,6 +288,27 @@ fn file_policy(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::file_policy;
+
+    #[test]
+    fn system_ancestor_trust_does_not_expand_private_configuration_trust() {
+        let user = "S-1-5-21-1-2-3-1000";
+        for principal in [user, "S-1-5-18", "S-1-5-32-544"] {
+            assert!(super::trusted(principal, user, false));
+            assert!(super::trusted(principal, user, true));
+        }
+        let installer = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
+        assert!(super::trusted(installer, user, true));
+        assert!(!super::trusted(installer, user, false));
+        for principal in [
+            "S-1-5-21-1-2-3-1001",
+            "S-1-5-32-545",
+            "S-1-1-0",
+            "S-1-5-80-1",
+            "S-1-15-3-1",
+        ] {
+            assert!(!super::trusted(principal, user, true));
+        }
+    }
 
     #[test]
     fn replacement_normalization_preserves_effective_access_and_protection() {

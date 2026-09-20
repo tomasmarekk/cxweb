@@ -382,6 +382,7 @@ $('native-preflight-form').addEventListener('submit', async event => {
     results.append(details);
     const list = document.createElement('ul');
     const descriptions = {
+      target_permissions:'The executable or Codex home has unsupported owner or access permissions in its path. Activation requires a qualified location. No permissions were changed.',
       subscription_auth_required:'This integration requires native Codex subscription sign-in.',
       environment_auth:'An environment variable overrides native authentication.',
       environment_route:'An environment variable overrides native routing.',

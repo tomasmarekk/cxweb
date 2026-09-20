@@ -299,10 +299,10 @@ impl Snapshot {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    fn set_fixture_acl(path: &Path, grants: Option<&str>) {
+    pub(crate) fn set_fixture_acl(path: &Path, grants: Option<&str>) {
         use windows_sys::Win32::Security::{
             Authorization::{
                 ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
@@ -487,6 +487,89 @@ mod tests {
         drop(guard);
         std::fs::rename(&ancestor, fixture.0.join("renamed")).unwrap();
         assert!(snapshot.verify_unchanged().is_err());
+    }
+
+    #[test]
+    fn path_permissions_allow_readers_but_refuse_foreign_mutation() {
+        fn inspect(
+            path: &Path,
+            directory: bool,
+        ) -> io::Result<crate::config_access::AccessSnapshot> {
+            let file = OpenOptions::new()
+                .read(true)
+                .custom_flags(
+                    windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS
+                        | FILE_FLAG_OPEN_REPARSE_POINT,
+                )
+                .open(path)?;
+            crate::config_access::AccessSnapshot::capture_path(&file, directory)
+        }
+        let fixture = Fixture::new();
+        std::fs::write(fixture.config(), b"unchanged").unwrap();
+        for directory in [false, true] {
+            let path = if directory {
+                &fixture.0
+            } else {
+                &fixture.config()
+            };
+            for grant in ["FR", "GRGX", "0x1200a9"] {
+                set_fixture_acl(
+                    path,
+                    Some(&format!("(A;;FA;;;CURRENT_USER)(A;;{grant};;;WD)")),
+                );
+                assert!(inspect(path, directory).is_ok(), "{directory} {grant}");
+            }
+            for grant in [
+                "FW", "GW", "GA", "SD", "WD", "WO", "0x40", "0x100", "0x10", "0x2",
+            ] {
+                set_fixture_acl(
+                    path,
+                    Some(&format!("(A;;FA;;;CURRENT_USER)(A;;{grant};;;WD)")),
+                );
+                assert!(inspect(path, directory).is_err(), "{directory} {grant}");
+            }
+            // A deny does not make a broad foreign allow qualify, and a NULL
+            // DACL must never be confused with an empty restricted DACL.
+            set_fixture_acl(path, Some("(D;;GW;;;WD)(A;;FA;;;CURRENT_USER)(A;;GA;;;WD)"));
+            assert!(inspect(path, directory).is_err());
+            set_fixture_acl(path, None);
+            assert!(inspect(path, directory).is_err());
+            set_fixture_acl(path, Some(PRIVATE_ACL));
+        }
+        // Existing ancestors may allow creation of sibling directories. This
+        // same bit means append-data on files and must not qualify there.
+        for directory in [false, true] {
+            let path = if directory {
+                &fixture.0
+            } else {
+                &fixture.config()
+            };
+            set_fixture_acl(path, Some("(A;;FA;;;CURRENT_USER)(A;;0x4;;;WD)"));
+            assert_eq!(inspect(path, directory).is_ok(), directory);
+            set_fixture_acl(path, Some(PRIVATE_ACL));
+        }
+        assert_eq!(std::fs::read(fixture.config()).unwrap(), b"unchanged");
+    }
+
+    #[test]
+    fn path_permissions_use_effective_aces_and_preserve_descriptor_changes() {
+        fn inspect(path: &Path) -> crate::config_access::AccessSnapshot {
+            let file = OpenOptions::new()
+                .read(true)
+                .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
+                .open(path)
+                .unwrap();
+            crate::config_access::AccessSnapshot::capture_path(&file, true).unwrap()
+        }
+        let fixture = Fixture::new();
+        set_fixture_acl(&fixture.0, Some("(A;;FA;;;CURRENT_USER)(A;OICIIO;GA;;;WD)"));
+        let before = inspect(&fixture.0);
+        assert!(before == inspect(&fixture.0));
+        set_fixture_acl(&fixture.0, Some("(A;;FA;;;CURRENT_USER)(A;;FR;;;WD)"));
+        assert!(before != inspect(&fixture.0));
+        // The private-config policy stays stricter even though this directory
+        // can be a readable ancestor of a separately protected target.
+        assert!(Snapshot::capture(&fixture.config()).is_err());
     }
 
     #[test]

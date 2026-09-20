@@ -21,6 +21,44 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Selected target owner and ancestor access qualification (2026-09-20)
+
+- Read-only preflight now captures and rechecks owner/DACL evidence for every
+  component of the selected executable and Codex home. Evidence stays in memory;
+  reports expose only selected_target_access_verified and a fixed
+  target_permissions conflict. Unsupported or changed permissions make the
+  assessment incompatible. Repository cwd identity remains checked separately.
+- Path policy allows public read/execute and directory creation, but refuses
+  foreign file writes/appends, reparse-capable file creation/write attributes,
+  deletion, child deletion, ownership and DACL changes. Generic masks are mapped
+  before evaluation; inherit-only grants are evaluated on their descendants.
+  Unknown ACE layouts and NULL DACLs fail closed. Broad allows are not qualified
+  on the assumption that a deny or current group membership neutralizes them.
+- Current user, SYSTEM and Administrators remain trusted. The exact Windows
+  Modules Installer service SID is additionally accepted for system path
+  components; it is not accepted for private configuration ownership/grants.
+  The SID was checked against the local Windows account resolver. No sandbox
+  account or broad group is automatically trusted, and no user ACL is modified.
+- New tests cover effective/inherit-only and generic rights, directory-create
+  versus file-append semantics, NULL DACL, dangerous masks, changed trusted ACLs,
+  unchanged private-config restrictions and the desktop conflict explanation.
+  All 245 workspace tests passed / 11 opt-in ignored, all 51 desktop UI tests
+  passed, and Clippy, formatting, diff checks and release builds passed.
+- Actual CLI 0.155.1 and cached App backend 0.155.0-alpha.9.2 preflight passed in
+  an existing isolated signed-out fixture: both reported the host's unsupported
+  target ancestor permissions, zero model requests, unchanged configuration and
+  no activation eligibility. Existing fixture routing conflicts were retained.
+  Evidence: integration-tests/compatibility/native-ancestor-access-windows.json.
+  An initial command to create/ACL/clean a new fixture was rejected by automatic
+  policy before execution; using the existing fixture required no ACL changes.
+- This is preflight evidence, not a future activation permission receipt. Binding
+  qualification to the eventual activation transaction and deployment layout,
+  actual App picker/native coexistence, browser qualification and release gates
+  remain open. No production activation or authenticated browser test ran here.
+- Sources: [Windows rights and inheritance](https://learn.microsoft.com/en-us/windows/win32/fileio/file-security-and-access-rights),
+  [file/directory rights](https://learn.microsoft.com/en-us/windows/win32/fileio/file-access-rights-constants),
+  [reparse-point access requirements](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fsa/4aeefef8-92c3-4abc-af7a-a610caf8a165).
+
 ## Configuration ancestor identity during mutations (2026-09-20)
 
 - Configuration snapshots now inspect every component of the original selected

@@ -427,6 +427,20 @@ test('compatible selected configuration never claims active integration or picke
   assert.equal(results.children.length, 0);
 });
 
+test('unqualified target permissions are actionable without exporting account IDs or changing ACLs', async () => {
+  const report = preflightReport(true);
+  report.selected_target_access_verified = false;
+  report.assessment.configuration_compatible = false;
+  report.assessment.conflicts = ['target_permissions'];
+  const ui = panel(async command => command === 'native_preflight' ? report : { phase: 'text_qualified' });
+  await flush(); fillTarget(ui); await submitTarget(ui);
+  const results = ui.nodes.get('native-preflight-result');
+  assert.match(results.children[0].textContent, /requirements to resolve.*Integration is not active/);
+  assert.match(results.children[2].children[0].textContent, /unsupported owner or access permissions/);
+  assert.match(results.children[2].children[0].textContent, /No permissions were changed/);
+  assert.deepEqual(ui.calls, ['status', 'native_preflight']);
+});
+
 test('pending preflight rejects duplicate submits and suppresses a result for an edited target', async () => {
   let finish;
   const ui = panel(async command => command === 'native_preflight'

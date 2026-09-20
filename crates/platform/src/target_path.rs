@@ -1,6 +1,7 @@
 //! Existing local target paths, inspected before canonicalization.
 //! This guards object identity during preflight and individual configuration
-//! operations, not ancestor ACLs. Reparse points are never qualified.
+//! operations. Access qualification is explicit and separate from identity.
+//! Reparse points are never qualified.
 use std::{
     fs::{File, OpenOptions},
     io,
@@ -12,7 +13,7 @@ use windows_sys::Win32::Storage::FileSystem::{
     BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
     FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
     FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE,
-    GetFileInformationByHandle,
+    GetFileInformationByHandle, READ_CONTROL,
 };
 
 fn invalid() -> io::Error {
@@ -75,7 +76,7 @@ fn open(path: &Path, directory: bool) -> io::Result<File> {
         .access_mode(if directory {
             // Attribute-only opens do not establish the sharing restriction.
             // Request directory read access without enumerating its contents.
-            FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES
+            FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | READ_CONTROL
         } else {
             FILE_GENERIC_READ
         })
@@ -90,7 +91,36 @@ pub struct TargetPathGuard {
     entries: Vec<(PathBuf, File, Identity, bool)>,
 }
 
+/// Opaque, in-memory owner/DACL evidence. No account IDs or ACLs are exported.
+pub struct PathAccessSnapshot(Vec<crate::config_access::AccessSnapshot>);
+
 impl TargetPathGuard {
+    /// Read-only qualification of every held component's owner and DACL.
+    /// Public read/traverse and sibling-directory creation are allowed; public
+    /// mutation, deletion, ownership and DACL changes are not. No ACL is repaired.
+    pub fn capture_access(&self) -> io::Result<PathAccessSnapshot> {
+        self.verify_unchanged()?;
+        self.entries
+            .iter()
+            .map(|(_, file, _, directory)| {
+                crate::config_access::AccessSnapshot::capture_path(file, *directory)
+            })
+            .collect::<io::Result<Vec<_>>>()
+            .map(PathAccessSnapshot)
+    }
+
+    /// A previously acceptable descriptor must remain byte-for-byte equivalent
+    /// as represented by Windows, including owner, inheritance and ACE order.
+    pub fn verify_access(&self, expected: &PathAccessSnapshot) -> io::Result<()> {
+        if self.capture_access()?.0 != expected.0 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "E_TARGET_ACCESS_CHANGED",
+            ));
+        }
+        Ok(())
+    }
+
     /// Accepts existing drive-absolute paths only. Open each component without
     /// following its reparse point before inspecting any descendant. Handles
     /// stay owned until this guard is dropped; no privileges or ACLs are changed.
@@ -126,6 +156,47 @@ impl TargetPathGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn held_component_access_evidence_detects_a_changed_trusted_acl() {
+        let root = std::env::temp_dir().join(format!(
+            "cxweb-access-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        crate::state::protected_directory(&root).unwrap();
+        let file = open(&root, true).unwrap();
+        let id = identity(&file, true).unwrap();
+        // Exercise the real descriptor/held-handle comparison on the owned
+        // component, independent of the host's potentially unsafe ancestors.
+        let guard = TargetPathGuard {
+            entries: vec![(root.clone(), file, id, true)],
+        };
+        let access = guard.capture_access().unwrap();
+        guard.verify_access(&access).unwrap();
+        crate::atomic_file::tests::set_fixture_acl(
+            &root,
+            Some("(A;;FA;;;CURRENT_USER)(A;;FR;;;SY)"),
+        );
+        assert_eq!(
+            guard.verify_access(&access).unwrap_err().to_string(),
+            "E_TARGET_ACCESS_CHANGED"
+        );
+        let changed = guard.capture_access().unwrap();
+        guard.verify_access(&changed).unwrap();
+        crate::atomic_file::tests::set_fixture_acl(
+            &root,
+            Some("(A;;FA;;;CURRENT_USER)(A;;FW;;;WD)"),
+        );
+        assert!(guard.capture_access().is_err());
+        assert!(guard.verify_access(&changed).is_err());
+        crate::atomic_file::tests::set_fixture_acl(&root, Some("(A;;FA;;;CURRENT_USER)"));
+        drop(guard);
+        std::fs::remove_dir(root).unwrap();
+    }
 
     #[test]
     fn rejects_ambiguous_and_non_local_names_before_opening() {

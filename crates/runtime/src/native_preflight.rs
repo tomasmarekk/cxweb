@@ -25,6 +25,7 @@ pub struct Report {
     pub assessment: Assessment,
     pub user_config_unchanged: bool,
     pub selected_config_and_parent_access_verified: bool,
+    pub selected_target_access_verified: bool,
     pub target_path_identity_verified: bool,
     pub executable_unchanged: bool,
     pub model_requests: u32,
@@ -170,6 +171,13 @@ pub async fn inspect(client: &Path, home: &Path, cwd: &Path) -> Result<Report, &
         .into_iter()
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| "E_PREFLIGHT_TARGET_IDENTITY")?;
+    // Qualification is read-only: unsafe/unsupported ancestor grants become a
+    // fixed conflict, never an ACL repair or a blanket trust in sandbox groups.
+    // The repository working directory is not an installation target.
+    let target_access = targets[..2]
+        .iter()
+        .map(TargetPathGuard::capture_access)
+        .collect::<Result<Vec<_>, _>>();
     let client = client.canonicalize().map_err(|_| "E_PREFLIGHT_TARGET")?;
     let home = home.canonicalize().map_err(|_| "E_PREFLIGHT_TARGET")?;
     let cwd = cwd.canonicalize().map_err(|_| "E_PREFLIGHT_TARGET")?;
@@ -257,19 +265,32 @@ pub async fn inspect(client: &Path, home: &Path, cwd: &Path) -> Result<Report, &
     if fingerprint(&client).await? != hash {
         return Err("E_PREFLIGHT_EXECUTABLE_CHANGED");
     }
+    let selected_target_access_verified = target_access.is_ok_and(|access| {
+        targets[..2]
+            .iter()
+            .zip(&access)
+            .all(|(guard, access)| guard.verify_access(access).is_ok())
+    });
+    let mut assessment = result?;
+    if !selected_target_access_verified {
+        assessment.configuration_compatible = false;
+        assessment.conflicts.push("target_permissions");
+        assessment.conflicts.sort_unstable();
+    }
     Ok(Report {
         client_build: build,
         catalog_codec: codec.id(),
         executable_sha256: hash,
-        assessment: result?,
+        assessment,
         user_config_unchanged: true,
         selected_config_and_parent_access_verified: true,
+        selected_target_access_verified,
         target_path_identity_verified: true,
         executable_unchanged: true,
         model_requests: 0,
         activation_eligible: false,
         remaining_checks: vec![
-            "ancestor permissions and client target qualification",
+            "client target qualification",
             "actual client picker and native coexistence",
             "browser route and coding qualification",
         ],
