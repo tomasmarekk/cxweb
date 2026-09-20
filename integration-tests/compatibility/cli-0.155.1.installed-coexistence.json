@@ -1,0 +1,68 @@
+{
+  "schema": "cxweb.installed-client.v1",
+  "build": "0.155.1",
+  "executableSha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+  "synthetic": false,
+  "configurationOverride": false,
+  "actualGuiPicker": "not observed",
+  "text": "passed",
+  "installedLoopbackRoute": true,
+  "subscriptionAuthentication": true,
+  "models": [
+    {
+      "id": "gpt-6-astra",
+      "name": "GPT-6-Astra"
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "name": "GPT-5.6-Sol"
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "name": "GPT-5.6-Terra"
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "name": "GPT-5.6-Luna"
+    },
+    {
+      "id": "gpt-daybreak-blue-latest",
+      "name": "Daybreak Blue"
+    },
+    {
+      "id": "gpt-5.5",
+      "name": "GPT-5.5"
+    },
+    {
+      "id": "webbridge/402f0b19d5610fcbee25b681",
+      "name": "ChatGPT Web · Latest · Extra High"
+    }
+  ],
+  "selectedEffort": "xhigh",
+  "ownedAndNativeCatalog": true,
+  "textChecks": [
+    {
+      "model": "webbridge/402f0b19d5610fcbee25b681",
+      "effort": "xhigh",
+      "route": "web",
+      "result": "passed"
+    },
+    {
+      "model": "gpt-6-astra",
+      "effort": "low",
+      "route": "native",
+      "result": "passed"
+    },
+    {
+      "model": "webbridge/402f0b19d5610fcbee25b681",
+      "effort": "xhigh",
+      "route": "web",
+      "result": "passed"
+    }
+  ],
+  "nativeSubscriptionCoexistence": "passed: web, native, web in the same client process",
+  "result": "PASS",
+  "configUnchanged": true,
+  "executableUnchanged": true,
+  "observedAt": "2026-09-20T09:51:23.2197026Z"
+}

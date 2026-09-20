@@ -1,5 +1,6 @@
 // Verify an explicitly selected native client's real installed routing.
-// Uses its existing subscription and consumes allowance when --text is supplied.
+// Uses its existing subscription. --text consumes web allowance; --coexistence
+// also exercises a native subscription model between two independent web turns.
 // No auth files, routing overrides, model catalogs or client binaries are changed.
 import { spawn } from 'node:child_process';
 import { readFile, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
@@ -10,7 +11,7 @@ import assert from 'node:assert/strict';
 
 const [client, home, model, option] = process.argv.slice(2);
 assert.ok(client && home && model?.startsWith('webbridge/') && isAbsolute(client) && isAbsolute(home));
-assert.ok(process.argv.length <= 6 && (!option || option === '--text'));
+assert.ok(process.argv.length <= 6 && (!option || ['--text', '--coexistence'].includes(option)));
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const builds = new Map([
   ['eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316', '0.155.1'],
@@ -57,7 +58,33 @@ async function rpc(method, params) {
     return reply.result;
   } finally { clearTimeout(timer); pending.delete(requestId); }
 }
-const evidence = { schema: 'cxweb.installed-client.v1', build: builds.get(hash), executableSha256: hash, synthetic: false, configurationOverride: false, actualGuiPicker: 'not observed', text: 'not requested' };
+const evidence = { schema: 'cxweb.installed-client.v1', startedAt: new Date().toISOString(), build: builds.get(hash), executableSha256: hash, synthetic: false, configurationOverride: false, actualGuiPicker: 'not observed', text: 'not requested' };
+async function verifyText(selectedModel, effort) {
+  const check = { model: selectedModel.id, effort, route: selectedModel.id.startsWith('webbridge/') ? 'web' : 'native', result: 'started' };
+  (evidence.textChecks ??= []).push(check);
+  console.log(JSON.stringify({ phase: 'text', route: check.route, model: check.model }));
+  const expected = `CXWEB_INSTALLED_${randomBytes(8).toString('hex')}`;
+  const started = (await rpc('thread/start', { cwd, model: selectedModel.id, ephemeral: true, approvalPolicy: 'untrusted', sandbox: 'read-only' }));
+  assert.equal(started.model, selectedModel.id, 'E_SELECTED_MODEL');
+  assert.equal(started.modelProvider, 'openai', 'E_NATIVE_PROVIDER');
+  const thread = started.thread.id;
+  const turn = (await rpc('turn/start', { threadId: thread, effort, input: [{ type: 'text', text: `Use no tools. Return a final answer with exactly this text: ${expected}`, text_elements: [] }] })).turn.id;
+  const deadline = Date.now() + 240000;
+  let completed;
+  while (Date.now() < deadline) {
+    assert.ok(!failure, failure);
+    completed = events.find(event => event.method === 'turn/completed' && event.params?.threadId === thread && event.params?.turn?.id === turn);
+    if (completed) break;
+    assert.equal(child.exitCode, null, 'E_CLIENT_EXIT');
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  assert.equal(completed?.params?.turn?.status, 'completed', 'E_TURN_FAILED');
+  const answers = events.filter(event => event.method === 'item/completed' && event.params?.threadId === thread && event.params?.turnId === turn && event.params?.item?.type === 'agentMessage');
+  assert.equal(answers.length, 1, 'E_ANSWER_COUNT');
+  assert.equal(answers[0].params.item.text, expected, 'E_ANSWER_TEXT');
+  assert.ok(!events.some(event => event.method === 'item/started' && event.params?.threadId === thread && event.params?.turnId === turn && ['commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall'].includes(event.params?.item?.type)), 'E_UNEXPECTED_TOOL');
+  check.result = 'passed';
+}
 try {
   await rpc('initialize', { clientInfo: { name: 'cxweb_installed_check', version: '0.1.0' }, capabilities: { experimentalApi: true } });
   send({ method: 'initialized', params: {} });
@@ -86,24 +113,18 @@ try {
   evidence.selectedEffort = selectedModel.defaultReasoningEffort;
   assert.ok(models.some(row => !row.id.startsWith('webbridge/')), 'E_NATIVE_MODELS_MISSING');
   evidence.ownedAndNativeCatalog = true;
-  if (option === '--text') {
+  if (option) {
     evidence.text = 'started';
-    const expected = `CXWEB_INSTALLED_${randomBytes(8).toString('hex')}`;
-    const thread = (await rpc('thread/start', { cwd, model, ephemeral: true, approvalPolicy: 'untrusted', sandbox: 'read-only' })).thread.id;
-    const turn = (await rpc('turn/start', { threadId: thread, effort: selectedModel.defaultReasoningEffort, input: [{ type: 'text', text: `Use no tools. Return a final answer with exactly this text: ${expected}`, text_elements: [] }] })).turn.id;
-    const deadline = Date.now() + 240000;
-    let completed;
-    while (Date.now() < deadline) {
-      assert.ok(!failure, failure);
-      completed = events.find(event => event.method === 'turn/completed' && event.params?.threadId === thread && event.params?.turn?.id === turn);
-      if (completed) break;
-      assert.equal(child.exitCode, null, 'E_CLIENT_EXIT');
-      await new Promise(resolve => setTimeout(resolve, 100));
+    await verifyText(selectedModel, selectedModel.defaultReasoningEffort);
+    if (option === '--coexistence') {
+      const native = models.find(row => !row.id.startsWith('webbridge/') && row.isDefault)
+        ?? models.find(row => !row.id.startsWith('webbridge/'));
+      assert.ok(native, 'E_NATIVE_MODELS_MISSING');
+      const effort = native.supportedReasoningEfforts.some(entry => entry.reasoningEffort === 'low') ? 'low' : native.defaultReasoningEffort;
+      await verifyText(native, effort);
+      await verifyText(selectedModel, selectedModel.defaultReasoningEffort);
+      evidence.nativeSubscriptionCoexistence = 'passed: web, native, web in the same client process';
     }
-    assert.equal(completed?.params?.turn?.status, 'completed', 'E_TURN_FAILED');
-    const answers = events.filter(event => event.method === 'item/completed' && event.params?.threadId === thread && event.params?.turnId === turn && event.params?.item?.type === 'agentMessage');
-    assert.equal(answers.length, 1, 'E_ANSWER_COUNT');
-    assert.equal(answers[0].params.item.text, expected, 'E_ANSWER_TEXT');
     evidence.text = 'passed';
   }
   evidence.result = 'PASS';
@@ -123,6 +144,7 @@ try {
   if (child.exitCode === null) child.kill();
   evidence.configUnchanged = sha256(await readFile(configPath)) === configBefore;
   evidence.executableUnchanged = sha256(await readFile(client)) === hash;
+  evidence.observedAt = new Date().toISOString();
   if (!evidence.configUnchanged || !evidence.executableUnchanged) { evidence.result = 'FAIL'; process.exitCode = 1; }
   await writeFile(join(cwd, 'evidence.json'), JSON.stringify(evidence, null, 2) + '\n');
   console.log(JSON.stringify(evidence, null, 2));

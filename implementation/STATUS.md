@@ -8,13 +8,41 @@ Manual login and managed reuse of the saved session are user-confirmed. Scoped
 background text generation and native read/apply_patch cycles now pass through
 both actual native backends. The actual CLI picker passed isolated synthetic and
 authenticated browser round trips, including its structured auxiliary request.
-Actual App picker, native subscription coexistence, broader coding/model
+Actual App picker, broader native feature coexistence, coding/model
 qualification and release gates remain incomplete. The setup activation path is
 implemented and production routing is installed on this machine. Verification of
 the installed catalogs and authenticated text requests passed both native builds.
-The real installed CLI /model picker displays the owned row. The running App
-still has its old catalog; a full restart and actual App picker pass remain open.
+The real installed CLI /model picker displays the owned row. A fresh signed App
+instance also displays the saved owned selection in its composer. Its full picker,
+native/web switching and GUI request still need verification. Both native backends
+pass web/native/web text generation in one process through the installed runtime.
 Scheduled browser recovery now passes after removing an MSIX data-path ambiguity.
+
+## Installed native subscription coexistence (2026-09-20)
+
+- Added `--coexistence` to `scripts/probe-installed-client.mjs`. It requests a web
+  answer, a native subscription answer, then another web answer in the same native
+  process. Each uses an ephemeral read-only thread, verifies the exact selected
+  model and built-in provider, and checks the attributed answer against a fresh
+  random marker. It approves no client actions and checks for unexpected tools.
+- Both CLI 0.155.1 and App backend 0.155.0-alpha.9.2 passed all three turns through
+  the scheduled installation. The native model was GPT-6 Astra with supported low
+  effort; the owned model retained its qualified Extra High effort. Existing
+  subscription authentication, native config bytes and executable bytes stayed
+  unchanged. No route, catalog or authentication overrides were used.
+- Sanitized reports are the two `*.installed-coexistence.json` files under
+  `integration-tests/compatibility`. The command is
+  `node scripts/probe-installed-client.mjs <reviewed-client> <native-home> <owned-model> --coexistence`.
+  This proves the tested text requests and model selections, not every native
+  tool, transport or GUI workflow.
+- A separate fresh instance of the unmodified signed Codex App, using isolated
+  GUI data and the existing native home, displayed `ChatGPT Web · Latest · Extra
+  High` in its composer. No native auth store was copied. The previous running
+  instance showed only native choices. The actual source also has conditional
+  renderer catalog filtering; which conditions explain all switching behavior
+  remains unverified. No package, feature flag or catalog workaround was applied.
+- Computer Use was interrupted before the fresh instance's expanded picker and
+  round trip could be verified. This partial observation does not pass G0.
 
 ## Shared browser state across Windows launch contexts (2026-09-20)
 
