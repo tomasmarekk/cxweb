@@ -38,7 +38,11 @@ pub enum LoginAction {
 pub type LoginWork = Pin<Box<dyn Future<Output = Result<ControlStatus, &'static str>> + Send>>;
 pub trait LoginBackend: Send + Sync + 'static {
     fn request(&self, action: LoginAction) -> LoginWork;
-    fn native_text(&self, _target: crate::setup_owner::NativeTarget) -> LoginWork {
+    fn native_text(
+        &self,
+        _target: crate::setup_owner::NativeTarget,
+        _cancellation: CancellationToken,
+    ) -> LoginWork {
         Box::pin(async { Err("E_NATIVE_TEST_FAILED") })
     }
 }
@@ -88,6 +92,10 @@ pub enum Command {
         instance: String,
         operation: String,
         action: LoginAction,
+    },
+    CancelNative {
+        instance: String,
+        operation: String,
     },
     NativeText {
         instance: String,
@@ -229,6 +237,7 @@ pub struct Service {
     login: Option<Arc<dyn LoginBackend>>,
     login_status: Arc<Mutex<ControlStatus>>,
     receipts: Arc<Mutex<HashMap<String, (OperationKind, Outcome)>>>,
+    native_cancellations: Arc<Mutex<HashMap<String, CancellationToken>>>,
 }
 impl Service {
     pub fn new(backend: Arc<dyn Lifecycle>) -> Self {
@@ -238,6 +247,7 @@ impl Service {
             login: None,
             login_status: Arc::default(),
             receipts: Arc::default(),
+            native_cancellations: Arc::default(),
         }
     }
     pub fn login(backend: Arc<dyn LoginBackend>) -> Self {
@@ -247,6 +257,7 @@ impl Service {
             login: Some(backend),
             login_status: Arc::default(),
             receipts: Arc::default(),
+            native_cancellations: Arc::default(),
         }
     }
     fn handle(&self, bytes: &[u8]) -> Reply {
@@ -259,6 +270,7 @@ impl Service {
         if request.version != VERSION {
             return error(ErrorCode::Version);
         }
+        let cancel_native = matches!(&request.command, Command::CancelNative { .. });
         let (instance, operation, start) = match request.command {
             Command::Status {} => {
                 let Some(backend) = &self.backend else {
@@ -274,17 +286,36 @@ impl Service {
                 if self.login.is_none() {
                     return error(ErrorCode::Unsupported);
                 }
+                let receipts = self.receipts.lock().expect("control receipt lock poisoned");
+                let mut status = self
+                    .login_status
+                    .lock()
+                    .expect("login status lock poisoned")
+                    .clone();
+                status.native_operation = receipts.iter().find_map(|(id, (kind, outcome))| {
+                    (matches!(kind, OperationKind::NativeText(_))
+                        && *outcome == Outcome::Running {})
+                    .then(|| crate::control::NativeOperation {
+                        instance: self.instance.clone(),
+                        operation: id.clone(),
+                        cancellation_requested: self
+                            .native_cancellations
+                            .lock()
+                            .expect("cancellation lock poisoned")
+                            .get(id)
+                            .is_some_and(CancellationToken::is_cancelled),
+                    })
+                });
                 return Reply::BrowserStatus {
                     version: VERSION,
                     instance: self.instance.clone(),
-                    status: self
-                        .login_status
-                        .lock()
-                        .expect("login status lock poisoned")
-                        .clone()
-                        .into(),
+                    status: Box::new(status),
                 };
             }
+            Command::CancelNative {
+                instance,
+                operation,
+            } => (instance, operation, None),
             Command::Browser {
                 instance,
                 operation,
@@ -316,6 +347,19 @@ impl Service {
         }
         let mut receipts = self.receipts.lock().expect("control receipt lock poisoned");
         if let Some((kind, outcome)) = receipts.get(&operation) {
+            if cancel_native {
+                if !matches!(kind, OperationKind::NativeText(_)) {
+                    return error(ErrorCode::OperationConflict);
+                }
+                if let Some(cancel) = self
+                    .native_cancellations
+                    .lock()
+                    .expect("cancellation lock poisoned")
+                    .get(&operation)
+                {
+                    cancel.cancel();
+                }
+            }
             if start.is_some_and(|requested| requested != *kind) {
                 return error(ErrorCode::OperationConflict);
             }
@@ -346,6 +390,20 @@ impl Service {
             return error(ErrorCode::Capacity);
         }
         receipts.insert(operation.clone(), (kind.clone(), Outcome::Running {}));
+        let cancellation = CancellationToken::new();
+        if matches!(&kind, OperationKind::NativeText(_)) {
+            let mut cached = self
+                .login_status
+                .lock()
+                .expect("login status lock poisoned");
+            cached.native_text_report = None;
+            cached.native_text_error = None;
+            self.native_cancellations
+                .lock()
+                .expect("cancellation lock poisoned")
+                .insert(operation.clone(), cancellation.clone());
+        }
+        let cancellations = self.native_cancellations.clone();
         let backend = self.backend.clone();
         let login = self.login.clone();
         let status = self.login_status.clone();
@@ -369,7 +427,9 @@ impl Service {
                         let backend = login.expect("validated login backend");
                         let result = match action {
                             OperationKind::Login(action) => backend.request(action),
-                            OperationKind::NativeText(target) => backend.native_text(target),
+                            OperationKind::NativeText(target) => {
+                                backend.native_text(target, cancellation)
+                            }
                             OperationKind::Disconnect => unreachable!(),
                         }
                         .await;
@@ -399,10 +459,12 @@ impl Service {
                 }
             });
             let outcome = worker.await.unwrap_or(Outcome::Failed {});
-            completed
+            let mut completed = completed.lock().expect("control receipt lock poisoned");
+            completed.insert(id.clone(), (kind, outcome));
+            cancellations
                 .lock()
-                .expect("control receipt lock poisoned")
-                .insert(id, (kind, outcome));
+                .expect("cancellation lock poisoned")
+                .remove(&id);
         });
         Reply::Operation {
             operation,
@@ -481,7 +543,8 @@ pub async fn exchange(installation: &str, request: &Request) -> io::Result<Reply
                 Command::Disconnect { operation, .. }
                 | Command::Operation { operation, .. }
                 | Command::Browser { operation, .. }
-                | Command::NativeText { operation, .. },
+                | Command::NativeText { operation, .. }
+                | Command::CancelNative { operation, .. },
                 Reply::Operation {
                     operation: received,
                     ..
@@ -546,7 +609,11 @@ mod tests {
             fn request(&self, _: LoginAction) -> LoginWork {
                 panic!("unexpected browser observation");
             }
-            fn native_text(&self, target: crate::setup_owner::NativeTarget) -> LoginWork {
+            fn native_text(
+                &self,
+                target: crate::setup_owner::NativeTarget,
+                _cancellation: CancellationToken,
+            ) -> LoginWork {
                 assert_eq!(target.route, "webbridge/fixture");
                 self.calls.fetch_add(1, Ordering::SeqCst);
                 let release = self.release.clone();
@@ -741,6 +808,16 @@ mod tests {
         };
         let first = dispatch(&service, command());
         assert_eq!(dispatch(&service, command()), first);
+        assert_eq!(
+            dispatch(
+                &service,
+                Command::CancelNative {
+                    instance: service.instance.clone(),
+                    operation: "a".repeat(32),
+                }
+            ),
+            error(ErrorCode::OperationConflict)
+        );
         assert_eq!(
             dispatch(
                 &service,

@@ -26,6 +26,21 @@ mod desktop {
     }
 
     #[tauri::command]
+    async fn native_cancel(
+        state: tauri::State<'_, AppState>,
+        instance: String,
+        operation: String,
+    ) -> Result<(), String> {
+        state
+            .control
+            .as_ref()
+            .map_err(|e| e.to_string())?
+            .cancel_native(instance, operation)
+            .await
+            .map_err(str::to_owned)
+    }
+
+    #[tauri::command]
     async fn native_text(
         state: tauri::State<'_, AppState>,
         client: std::path::PathBuf,
@@ -144,7 +159,8 @@ mod desktop {
                 background,
                 native_discover,
                 native_preflight,
-                native_text
+                native_text,
+                native_cancel
             ])
             .run(tauri::generate_context!())
             .expect("cxweb desktop runtime");

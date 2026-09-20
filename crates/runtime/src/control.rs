@@ -25,7 +25,17 @@ fn replacement_error(error: &std::io::Error) -> &'static str {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct NativeOperation {
+    pub instance: String,
+    pub operation: String,
+    pub cancellation_requested: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ControlStatus {
+    #[serde(default)]
+    pub native_operation: Option<NativeOperation>,
     #[serde(default)]
     pub background_session: bool,
     #[serde(default)]
@@ -66,6 +76,7 @@ impl Default for ControlStatus {
     fn default() -> Self {
         Self {
             background_session: false,
+            native_operation: None,
             native_text_report: None,
             native_text_error: None,
             phase: "disconnected".into(),
@@ -132,12 +143,15 @@ mod qualification_tests {
             }
         });
         let result = owner
-            .native_text(crate::setup_owner::NativeTarget {
-                client: "nonexistent".into(),
-                home: "nonexistent".into(),
-                cwd: "nonexistent".into(),
-                route: "webbridge/fixture".into(),
-            })
+            .native_text(
+                crate::setup_owner::NativeTarget {
+                    client: "nonexistent".into(),
+                    home: "nonexistent".into(),
+                    cwd: "nonexistent".into(),
+                    route: "webbridge/fixture".into(),
+                },
+                tokio_util::sync::CancellationToken::new(),
+            )
             .await
             .unwrap();
         worker.await.unwrap();
@@ -148,6 +162,51 @@ mod qualification_tests {
             Some("E_NATIVE_TEST_BACKGROUND")
         );
         assert!(result.native_text_report.is_none());
+    }
+
+    #[tokio::test]
+    async fn cancelled_native_setup_reads_only_the_existing_receipt() {
+        use crate::control_protocol::LoginBackend;
+        let (commands, mut incoming) = mpsc::channel(8);
+        let owner = crate::setup_owner::SetupOwner::new(Control { commands });
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        cancellation.cancel();
+        let work = tokio::spawn(async move {
+            owner
+                .native_text(
+                    crate::setup_owner::NativeTarget {
+                        client: "nonexistent".into(),
+                        home: "nonexistent".into(),
+                        cwd: "nonexistent".into(),
+                        route: "webbridge/fixture".into(),
+                    },
+                    cancellation,
+                )
+                .await
+                .unwrap()
+        });
+        let WorkerCommand::Snapshot(reply) = incoming.recv().await.unwrap() else {
+            panic!("cancelled setup may only read its last receipt");
+        };
+        reply
+            .send(Ok(ControlStatus {
+                phase: "tool_protocol_qualified".into(),
+                background_session: true,
+                tool_qualified_model: Some("webbridge/fixture".into()),
+                ..Default::default()
+            }))
+            .unwrap();
+        let result = work.await.unwrap();
+        assert_eq!(result.phase, "tool_protocol_qualified");
+        assert_eq!(
+            result.tool_qualified_model.as_deref(),
+            Some("webbridge/fixture")
+        );
+        assert_eq!(
+            result.native_text_error.as_deref(),
+            Some("E_NATIVE_PROBE_CANCELLED")
+        );
+        assert!(incoming.recv().await.is_none());
     }
 
     #[tokio::test(start_paused = true)]

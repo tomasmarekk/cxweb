@@ -527,3 +527,104 @@ test('cached native text failure preserves background status and never resubmits
   assert.deepEqual(ui.calls, ['status']);
   assert.equal(ui.nodes.get('native-text').disabled, false);
 });
+
+
+const runningNative = {
+  phase: 'generation_ready', background_session: true, tool_qualified_model: 'webbridge/fixture',
+  native_operation: { instance: 'a'.repeat(32), operation: 'b'.repeat(32), cancellation_requested: false }
+};
+async function tickNative(ui) {
+  assert.equal(ui.timers.size, 1);
+  const [token, action] = ui.timers.entries().next().value;
+  ui.timers.delete(token);
+  await action();
+}
+test('reopened UI cancels the observed operation once and waits for cleanup', async () => {
+  let state = runningNative;
+  let finishCancel;
+  const ui = panel(async command => {
+    if (command === 'native_cancel') return new Promise(resolve => { finishCancel = resolve; });
+    return state;
+  });
+  await flush();
+  assert.equal(ui.nodes.get('native-cancel').hidden, false);
+  assert.equal(ui.nodes.get('native-cancel').disabled, false);
+  assert.equal(ui.nodes.get('native-client').disabled, true);
+  assert.match(ui.nodes.get('native-text-result').textContent, /test is running/);
+  await ui.nodes.get('native-text').click();
+  await ui.nodes.get('native-discover').click();
+  assert.deepEqual(ui.calls, ['status']);
+  const cancelling = ui.nodes.get('native-cancel').click();
+  await ui.nodes.get('native-cancel').click();
+  assert.deepEqual(ui.calls, ['status', 'native_cancel']);
+  assert.deepEqual({...ui.requests.at(-1).params}, {instance: 'a'.repeat(32), operation: 'b'.repeat(32)});
+  state = {...runningNative, native_operation: {...runningNative.native_operation, cancellation_requested:true}};
+  finishCancel(); await cancelling;
+  assert.equal(ui.nodes.get('native-cancel').disabled, true);
+  assert.equal(ui.nodes.get('native-text').disabled, true);
+  assert.match(ui.nodes.get('native-text-result').textContent, /waiting for cleanup/);
+  state = {...runningNative, native_operation:null, native_text_error:'E_NATIVE_PROBE_CANCELLED'};
+  await tickNative(ui);
+  assert.equal(ui.nodes.get('native-cancel').hidden, true);
+  assert.equal(ui.nodes.get('native-text').disabled, false);
+  assert.match(ui.nodes.get('native-text-result').textContent, /was cancelled/);
+  assert.equal(ui.timers.size, 0);
+  assert.ok(ui.requests.filter(r => r.command === 'status').every(r => r.refresh === false));
+  assert.ok(!ui.calls.includes('native_text'));
+});
+
+test('a pending native request exposes cancellation without waiting for its result', async () => {
+  let finish;
+  let state = {...runningNative, native_operation:null};
+  const ui = panel(async command => command === 'native_text'
+    ? new Promise(resolve => { finish = resolve; }) : state);
+  await flush(); fillTarget(ui);
+  const action = ui.nodes.get('native-text').click();
+  state = runningNative;
+  await tickNative(ui);
+  assert.equal(ui.nodes.get('native-cancel').disabled, false);
+  assert.equal(ui.nodes.get('native-text').disabled, true);
+  finish({...state, native_operation:null, native_text_error:'E_NATIVE_PROBE_CANCELLED'});
+  await action;
+  assert.equal(ui.nodes.get('native-cancel').hidden, true);
+  assert.equal(ui.timers.size, 0);
+});
+
+test('a stale cached poll cannot overwrite the final native result', async () => {
+  let finish, finishPoll;
+  let polls = 0;
+  const ui = panel(async command => {
+    if (command === 'native_text') return new Promise(resolve => { finish = resolve; });
+    if (++polls === 1) return {...runningNative, native_operation:null};
+    return new Promise(resolve => { finishPoll = resolve; });
+  });
+  await flush(); fillTarget(ui);
+  const action = ui.nodes.get('native-text').click();
+  const polling = tickNative(ui);
+  finish({...runningNative, native_operation:null, native_text_error:'E_NATIVE_PROBE_CANCELLED'});
+  await action;
+  finishPoll(runningNative); await polling;
+  assert.match(ui.nodes.get('native-text-result').textContent, /was cancelled/);
+  assert.equal(ui.nodes.get('native-cancel').hidden, true);
+  assert.equal(ui.timers.size, 0);
+});
+
+
+test('a transient cached status failure recovers without resubmitting the native test', async () => {
+  let reads = 0;
+  const ui = panel(async command => {
+    assert.equal(command, 'status');
+    if (++reads === 2) throw 'E_CONTROL_UNAVAILABLE';
+    if (reads === 1) return runningNative;
+    return {...runningNative, native_operation:null, native_text_error:'E_NATIVE_PROBE_CANCELLED'};
+  });
+  await flush();
+  await tickNative(ui);
+  assert.equal(ui.nodes.get('error').hidden, false);
+  assert.equal(ui.nodes.get('native-text').disabled, true);
+  await tickNative(ui);
+  assert.equal(ui.nodes.get('error').hidden, true);
+  assert.equal(ui.nodes.get('native-text').disabled, false);
+  assert.equal(ui.timers.size, 0);
+  assert.ok(ui.requests.every(r => r.refresh === false));
+});

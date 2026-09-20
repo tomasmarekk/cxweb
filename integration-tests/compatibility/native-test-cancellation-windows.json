@@ -1,0 +1,43 @@
+{
+  "schema": "cxweb.native-test-cancellation.v1",
+  "date": "2026-09-20",
+  "result": "PASS automated component, private IPC and isolated native tests; authenticated UI NOT RUN",
+  "verification": {
+    "rust_workspace": {
+      "passed": 211,
+      "ignored": 9
+    },
+    "desktop_ui_unit_tests": {
+      "passed": 35
+    },
+    "clippy": "PASS",
+    "format": "PASS",
+    "release_builds": [
+      "CLI",
+      "daemon",
+      "desktop"
+    ],
+    "actual_native_response_and_cancellation": [
+      "CLI 0.155.1",
+      "App backend 0.155.0-alpha.9.2"
+    ]
+  },
+  "checks": {
+    "cached_status_available_during_original_request": true,
+    "reopened_control_cancels_exact_operation": true,
+    "stale_instance_and_unknown_operation_refused": true,
+    "non_native_operation_refused": true,
+    "cleanup_blocks_new_admission": true,
+    "completed_cancel_cannot_stop_next_operation": true,
+    "cancelled_setup_only_reads_cached_receipt": true,
+    "stale_poll_cannot_overwrite_completion": true,
+    "transient_status_failure_recovers_without_model_resubmission": true,
+    "real_native_child_cancellation_and_reaping": true
+  },
+  "limits": [
+    "Native backend tests used local synthetic responses and disposable signed-out homes.",
+    "The manual login process remains running and owns the saved browser profile.",
+    "No new desktop GUI was launched and no blocked browser surface was accessed.",
+    "Authenticated desktop-to-native cancellation, actual Codex App picker and production activation remain unverified."
+  ]
+}

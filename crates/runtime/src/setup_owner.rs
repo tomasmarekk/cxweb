@@ -77,14 +77,14 @@ impl LoginBackend for SetupOwner {
         })
     }
 
-    fn native_text(&self, target: NativeTarget) -> LoginWork {
+    fn native_text(&self, target: NativeTarget, cancellation: CancellationToken) -> LoginWork {
         let control = self.control.clone();
         let state = self.state.clone();
         Box::pin(async move {
             let mut state = state.lock().await;
             state.report = None;
             state.error = None;
-            let result = qualify(&control, &mut state, target).await;
+            let result = qualify(&control, &mut state, target, cancellation).await;
             match result {
                 Ok(report) => state.report = Some(report),
                 Err(code) => state.error = Some(native_error(code).into()),
@@ -98,7 +98,11 @@ async fn qualify(
     control: &Control,
     state: &mut State,
     target: NativeTarget,
+    cancellation: CancellationToken,
 ) -> Result<native_probe::Report, &'static str> {
+    if cancellation.is_cancelled() {
+        return Err("E_NATIVE_PROBE_CANCELLED");
+    }
     let status = control.snapshot().await?;
     if !status.background_session
         || !matches!(
@@ -119,6 +123,9 @@ async fn qualify(
     home_guard
         .verify_unchanged()
         .map_err(|_| "E_PREFLIGHT_TARGET_IDENTITY")?;
+    if cancellation.is_cancelled() {
+        return Err("E_NATIVE_PROBE_CANCELLED");
+    }
     let config = target
         .home
         .canonicalize()
@@ -142,14 +149,16 @@ async fn qualify(
             route: target.route.clone(),
         });
     }
+    if cancellation.is_cancelled() {
+        return Err("E_NATIVE_PROBE_CANCELLED");
+    }
     let prepared = state.prepared.as_mut().expect("prepared target");
     let session = control
         .take_generation(prepared.installation.installation_id().into(), target.route)
         .await?;
     // Retain the browser receipt before any model request, including failures.
     prepared.session = Some(session.clone());
-    let result =
-        native_probe::qualify_text(&target.client, session, false, CancellationToken::new()).await;
+    let result = native_probe::qualify_text(&target.client, session, false, cancellation).await;
     home_guard
         .verify_unchanged()
         .map_err(|_| "E_PREFLIGHT_TARGET_IDENTITY")?;

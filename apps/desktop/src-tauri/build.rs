@@ -10,6 +10,7 @@ fn main() {
             "native_discover",
             "native_preflight",
             "native_text",
+            "native_cancel",
         ]),
     ))
     .expect("Tauri build configuration");

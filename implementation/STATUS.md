@@ -21,6 +21,35 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Native test cancellation and reopened controls (2026-09-20)
+
+- Cached runtime status now identifies the active native test and whether its
+  cancellation was requested. An explicit CancelNative command is bound to the
+  exact runtime instance and operation receipt. Unknown, stale-instance and
+  non-native receipts are rejected; replaying a completed cancellation cannot
+  stop a later test. Receipt admission remains busy until cleanup finishes.
+- The setup owner passes cancellation through to the isolated native runner,
+  checks it before preflight/handoff work, and retains the browser handoff receipt
+  even if cancellation arrives during transfer. Already-cancelled setup only
+  reads its cached browser receipt and does not launch a client. Cancellation
+  does not drop an in-progress ownership transfer or native cleanup future.
+- The desktop can observe and cancel a test while its original request is waiting
+  or after reopening. Cached reads no longer wait for the mutation mutex. The UI
+  keeps conflicting controls disabled until cleanup, ignores stale polling
+  results after completion, and retries only cached reads after a transient IPC
+  failure. It never automatically submits another model test. Fixed an invalid
+  UTF-8 byte in the previous native test waiting label.
+- Verification: workspace tests passed (211 passed, 9 ignored); desktop UI tests
+  passed (35); Clippy with warnings denied, formatting and diff checks passed.
+  Release CLI, daemon and desktop binaries built. The opt-in isolated native
+  response/cancellation test also passed separately for CLI 0.155.1 and App
+  backend 0.155.0-alpha.9.2, using synthetic local responses and disposable homes.
+  Those tests launch backend executables only, never the ChatGPT desktop app.
+- Live limits remain: the manual-login process still owns the saved profile;
+  no blocked browser surface was accessed through an alternative. The new
+  desktop cancellation flow has not been tested visually against authenticated
+  ChatGPT. Actual Codex App picker and production activation remain unverified.
+
 ## Desktop-to-runtime native qualification control (2026-09-20)
 
 - Added a daemon-owned SetupOwner. It reinspects the selected executable/home/cwd,

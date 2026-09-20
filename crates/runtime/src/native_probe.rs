@@ -46,6 +46,9 @@ async fn qualify_owned(
     websocket: bool,
     cancellation: CancellationToken,
 ) -> Result<Report, &'static str> {
+    if cancellation.is_cancelled() {
+        return Err("E_NATIVE_PROBE_CANCELLED");
+    }
     let target =
         TargetPathGuard::capture(executable, false).map_err(|_| "E_NATIVE_PROBE_TARGET")?;
     let hash = native_preflight::fingerprint(executable).await?;

@@ -9,23 +9,61 @@ let preflightPending = false;
 let targetRevision = 0;
 let nativeRoute = null;
 let nativeReady = false;
+let nativeOperation = null;
+let nativeWaiting = false;
+let nativeCancelling = false;
+let nativeTimer = null;
+let nativePolling = false;
+let nativePollEpoch = 0;
+function scheduleNativeStatus(delay = 500) {
+  if (nativePolling || nativeTimer !== null || (!nativeWaiting && !nativeOperation)) return;
+  const epoch = nativePollEpoch;
+  nativeTimer = setTimeout(async () => {
+    nativeTimer = null;
+    nativePolling = true;
+    let nextDelay = 500;
+    try {
+      const status = await invoke('status', { refresh: false });
+      if (epoch !== nativePollEpoch) return;
+      render(status);
+    } catch (error) {
+      if (epoch === nativePollEpoch) showError(error);
+      nextDelay = 2000;
+    } finally {
+      nativePolling = false;
+      scheduleNativeStatus(nextDelay);
+    }
+  }, delay);
+}
 const nativeControls = ['native-choice', 'native-client', 'native-home', 'native-cwd', 'native-preflight', 'native-discover'];
 function updateNativeButton() {
-  $('native-text').disabled = pending || preflightPending || discoveryPending || !nativeReady;
+  const running = nativeWaiting || Boolean(nativeOperation);
+  $('native-text').disabled = pending || running || preflightPending || discoveryPending || !nativeReady;
+  $('native-cancel').hidden = !running;
+  $('native-cancel').disabled = !nativeOperation || nativeCancelling || nativeOperation.cancellation_requested === true;
+  if (running) {
+    for (const id of ['connect', 'test-text', 'test-tools', 'background', ...nativeControls]) $(id).disabled = true;
+  } else if (!pending && !preflightPending && !discoveryPending) {
+    for (const id of ['connect', 'test-text', 'test-tools', 'background', ...nativeControls]) $(id).disabled = false;
+  }
 }
 function renderNative(status) {
+  nativeOperation = status.native_operation || null;
   nativeRoute = status.tool_qualified_model || null;
   nativeReady = status.background_session === true && Boolean(nativeRoute) && ['tool_protocol_qualified', 'generation_ready'].includes(status.phase);
   const result = $('native-text-result');
   const report = status.phase === 'generation_ready' ? status.native_text_report : null;
-  result.hidden = !report && !status.native_text_error;
-  if (status.native_text_error) {
+  result.hidden = !report && !status.native_text_error && !nativeOperation;
+  if (nativeOperation) {
+    result.textContent = nativeOperation.cancellation_requested ? 'Stopping the client test and waiting for cleanup...' : 'The Codex client test is running. You can close this window and return to its result later.';
+  } else if (status.native_text_error) {
     const errors = {
       E_NATIVE_TEST_BACKGROUND: 'Complete the tool protocol test in background mode before testing Codex.',
       E_NATIVE_TEST_TARGET_CHANGED: 'This runtime already prepared a different Codex home or ChatGPT route. Continue with the original target.',
       E_NATIVE_TEST_PREPARE: 'The selected configuration could not be prepared. No configuration was changed.',
       E_NATIVE_PROBE_TARGET: 'Select existing original absolute paths for the executable, home and working directory.',
       E_NATIVE_PROBE_CLIENT_UNQUALIFIED: 'This backend version is not reviewed. It was not started.',
+      E_NATIVE_PROBE_CANCELLED: 'The client test was cancelled. No automatic retry was made.',
       E_NATIVE_PROBE_TIMEOUT: 'The client test did not finish in time. No automatic retry was made.',
       E_NATIVE_PROBE_TEXT: 'The client did not return the exact expected text. No automatic retry was made.',
       E_NATIVE_PROBE_CONFIG: 'The isolated client configuration or account state could not be verified.',
@@ -40,6 +78,7 @@ function renderNative(status) {
     result.textContent = `Text transport verified through Codex ${report.client_build}. Coding support, the actual picker and production activation still need verification.`;
   } else result.textContent = '';
   updateNativeButton();
+  scheduleNativeStatus();
 }
 function showError(code) {
   const messages = {
@@ -180,8 +219,9 @@ function render(status) {
 }
 const actionButtons = ['connect', 'test-text', 'test-tools', 'background', 'native-text'];
 async function runAction(command, params = {}) {
-  if (pending) return;
+  if (pending || (nativeOperation && command !== 'status')) return;
   pending = true;
+  if (command === 'native_text') { nativeWaiting = true; scheduleNativeStatus(); }
   if (command === 'native_text') for (const id of nativeControls) $(id).disabled = true;
   for (const id of actionButtons) $(id).disabled = true;
   try { render(await invoke(command, params)); }
@@ -196,9 +236,15 @@ async function runAction(command, params = {}) {
   }
   finally {
     pending = false;
+    if (command === 'native_text') {
+      nativeWaiting = false;
+      nativePollEpoch += 1;
+      if (nativeTimer !== null) { clearTimeout(nativeTimer); nativeTimer = null; }
+    }
     for (const id of actionButtons) $(id).disabled = false;
     if (command === 'native_text') for (const id of nativeControls) $(id).disabled = false;
     updateNativeButton();
+    scheduleNativeStatus();
   }
 }
 async function check(connect = false, refresh = true) {
@@ -231,7 +277,7 @@ $('background').addEventListener('click', async () => {
   await runAction('background');
 });
 $('native-discover').addEventListener('click', async () => {
-  if (pending || discoveryPending || preflightPending) return;
+  if (pending || nativeOperation || discoveryPending || preflightPending) return;
   discoveryPending = true; $('native-discover').disabled = true;
   const results = $('native-targets');
   results.hidden = false; results.textContent = 'Inspecting local executable filesâ€¦';
@@ -286,7 +332,7 @@ $('native-choice').addEventListener('change', () => {
 });
 $('native-preflight-form').addEventListener('submit', async event => {
   event.preventDefault();
-  if (pending || preflightPending || discoveryPending) return;
+  if (pending || nativeOperation || preflightPending || discoveryPending) return;
   const target = { client: $('native-client').value.trim(), home: $('native-home').value.trim(), cwd: $('native-cwd').value.trim() };
   const results = $('native-preflight-result');
   results.hidden = false; results.replaceChildren();
@@ -355,15 +401,28 @@ $('native-preflight-form').addEventListener('submit', async event => {
   }
 });
 $('native-text').addEventListener('click', async () => {
-  if (pending || preflightPending || discoveryPending || !nativeReady) return;
+  if (pending || nativeOperation || preflightPending || discoveryPending || !nativeReady) return;
   const target = { client: $('native-client').value.trim(), home: $('native-home').value.trim(), cwd: $('native-cwd').value.trim(), route: nativeRoute };
   if (!target.client || !target.home || !target.cwd) {
     $('native-text-result').hidden = false;
     $('native-text-result').textContent = 'Enter the executable, Codex home and working directory before testing the selected client.';
     return;
   }
-  $('native-text').textContent = 'Waiting for the Codex text test…';
+  $('native-text').textContent = 'Waiting for the Codex text test...';
   try { await runAction('native_text', target); }
   finally { $('native-text').textContent = 'Test selected client'; }
+});
+$('native-cancel').addEventListener('click', async () => {
+  if (!nativeOperation || nativeCancelling || nativeOperation.cancellation_requested) return;
+  const receipt = { instance: nativeOperation.instance, operation: nativeOperation.operation };
+  nativeCancelling = true;
+  updateNativeButton();
+  const epoch = nativePollEpoch;
+  try {
+    await invoke('native_cancel', receipt);
+    const status = await invoke('status', { refresh: false });
+    if (epoch === nativePollEpoch) render(status);
+  } catch (error) { showError(error); }
+  finally { nativeCancelling = false; updateNativeButton(); scheduleNativeStatus(); }
 });
 if (invoke) check(false, false); else showError('E_DESKTOP_IPC');

@@ -129,8 +129,33 @@ impl RemoteControl {
         if refresh {
             return self.perform(LoginAction::Refresh).await;
         }
-        let _request = self.serial.lock().await;
+        // Cached status must remain readable while another request waits for
+        // native generation, including from a reopened control window.
         Ok(self.attach().await?.1)
+    }
+    pub async fn cancel_native(
+        &self,
+        instance: String,
+        operation: String,
+    ) -> Result<(), &'static str> {
+        // Target the exact operation observed by the UI. Never attach/restart or
+        // substitute the currently running operation if that receipt is stale.
+        let reply = control_protocol::exchange(
+            &self.channel,
+            &Request {
+                version: 1,
+                command: Command::CancelNative {
+                    instance,
+                    operation,
+                },
+            },
+        )
+        .await
+        .map_err(|_| "E_CONTROL_UNAVAILABLE")?;
+        match reply {
+            Reply::Operation { .. } => Ok(()),
+            _ => Err("E_RUNTIME_PROTOCOL"),
+        }
     }
     pub async fn native_text(
         &self,
@@ -375,7 +400,11 @@ mod tests {
             fn request(&self, _: LoginAction) -> LoginWork {
                 panic!("no browser observation requested");
             }
-            fn native_text(&self, target: crate::setup_owner::NativeTarget) -> LoginWork {
+            fn native_text(
+                &self,
+                target: crate::setup_owner::NativeTarget,
+                _cancellation: CancellationToken,
+            ) -> LoginWork {
                 assert_eq!(target.route, "webbridge/fixture");
                 self.calls.fetch_add(1, Ordering::SeqCst);
                 self.started.notify_one();
@@ -445,6 +474,179 @@ mod tests {
         assert_eq!(status.phase, "generation_ready");
         assert!(status.native_text_report.unwrap().exact_text_received);
         assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+        stop.cancel();
+        server.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn reopened_ui_cancels_exact_native_operation_and_waits_for_cleanup() {
+        struct Native {
+            started: Notify,
+            cancelled: Arc<Notify>,
+            cleanup: Arc<Semaphore>,
+            calls: AtomicUsize,
+        }
+        impl LoginBackend for Native {
+            fn request(&self, _: LoginAction) -> LoginWork {
+                panic!("no browser observation requested");
+            }
+            fn native_text(
+                &self,
+                _: crate::setup_owner::NativeTarget,
+                cancellation: CancellationToken,
+            ) -> LoginWork {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                self.started.notify_one();
+                let cancelled = self.cancelled.clone();
+                let cleanup = self.cleanup.clone();
+                Box::pin(async move {
+                    cancellation.cancelled().await;
+                    cancelled.notify_one();
+                    cleanup.acquire().await.unwrap().forget();
+                    Ok(ControlStatus {
+                        phase: "generation_ready".into(),
+                        background_session: true,
+                        native_text_error: Some("E_NATIVE_PROBE_CANCELLED".into()),
+                        ..Default::default()
+                    })
+                })
+            }
+        }
+        let channel = format!("{:032x}", rand::random::<u128>());
+        let listener = control_pipe::listen(&channel).unwrap();
+        let backend = Arc::new(Native {
+            started: Notify::new(),
+            cancelled: Arc::new(Notify::new()),
+            cleanup: Arc::new(Semaphore::new(0)),
+            calls: AtomicUsize::new(0),
+        });
+        let service = Service::login(backend.clone());
+        let stop = CancellationToken::new();
+        let server = tokio::spawn({
+            let stop = stop.clone();
+            async move { service.serve(listener, stop).await }
+        });
+        let remote = Arc::new(client(&channel));
+        let target = crate::setup_owner::NativeTarget {
+            client: r"C:\fixture\codex.exe".into(),
+            home: r"C:\fixture\home".into(),
+            cwd: r"C:\fixture\workspace".into(),
+            route: "webbridge/fixture".into(),
+        };
+        let waiting = tokio::spawn({
+            let remote = remote.clone();
+            let target = target.clone();
+            async move { remote.native_text(target).await }
+        });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            backend.started.notified().await;
+            // Reading from the same client must not wait for its mutation lock.
+            let operation = remote
+                .status(false)
+                .await
+                .unwrap()
+                .native_operation
+                .unwrap();
+            assert!(!operation.cancellation_requested);
+            waiting.abort();
+            assert!(waiting.await.unwrap_err().is_cancelled());
+            let reopened = client(&channel);
+            assert!(
+                reopened
+                    .cancel_native("0".repeat(32), operation.operation.clone())
+                    .await
+                    .is_err()
+            );
+            assert!(
+                reopened
+                    .cancel_native(operation.instance.clone(), "0".repeat(32))
+                    .await
+                    .is_err()
+            );
+            assert!(
+                !reopened
+                    .status(false)
+                    .await
+                    .unwrap()
+                    .native_operation
+                    .unwrap()
+                    .cancellation_requested
+            );
+            reopened
+                .cancel_native(operation.instance.clone(), operation.operation.clone())
+                .await
+                .unwrap();
+            backend.cancelled.notified().await;
+            assert!(
+                reopened
+                    .status(false)
+                    .await
+                    .unwrap()
+                    .native_operation
+                    .unwrap()
+                    .cancellation_requested
+            );
+            assert_eq!(
+                reopened.native_text(target.clone()).await.unwrap_err(),
+                "E_CONTROL_BUSY"
+            );
+            reopened
+                .cancel_native(operation.instance.clone(), operation.operation.clone())
+                .await
+                .unwrap();
+            backend.cleanup.add_permits(1);
+            loop {
+                let status = reopened.status(false).await.unwrap();
+                if status.native_operation.is_none() {
+                    assert_eq!(
+                        status.native_text_error.as_deref(),
+                        Some("E_NATIVE_PROBE_CANCELLED")
+                    );
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+            assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+            let next = tokio::spawn({
+                let remote = remote.clone();
+                async move { remote.native_text(target).await }
+            });
+            backend.started.notified().await;
+            let next_operation = reopened
+                .status(false)
+                .await
+                .unwrap()
+                .native_operation
+                .unwrap();
+            assert_ne!(operation.operation, next_operation.operation);
+            // Replaying a completed receipt cannot cancel the next operation.
+            reopened
+                .cancel_native(operation.instance, operation.operation)
+                .await
+                .unwrap();
+            assert!(
+                !reopened
+                    .status(false)
+                    .await
+                    .unwrap()
+                    .native_operation
+                    .unwrap()
+                    .cancellation_requested
+            );
+            reopened
+                .cancel_native(next_operation.instance, next_operation.operation)
+                .await
+                .unwrap();
+            backend.cancelled.notified().await;
+            backend.cleanup.add_permits(1);
+            assert_eq!(
+                next.await.unwrap().unwrap().native_text_error.as_deref(),
+                Some("E_NATIVE_PROBE_CANCELLED")
+            );
+            assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
+        })
+        .await
+        .unwrap();
         stop.cancel();
         server.await.unwrap().unwrap();
     }
