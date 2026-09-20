@@ -1079,13 +1079,18 @@ mod tests {
         let provider = Arc::new(RecoveringCatalog(AtomicUsize::new(1)));
         let gateway = Gateway::new(12345, native, provider.clone());
         let request = |build: &str, etag: Option<&str>| {
+            let agent = if build == "0.155.0" {
+                "Codex Desktop/0.155.0-alpha.9.2 (Windows 11)".to_owned()
+            } else {
+                format!("codex_cli_rs/{build} (Windows 11)")
+            };
             let mut request = Request::builder()
                 .uri(format!(
                     "{}/models?client_version={build}",
                     gateway.base_url()
                 ))
                 .header("host", "127.0.0.1:12345")
-                .header("user-agent", format!("codex_cli_rs/{build} (Windows 11)"));
+                .header("user-agent", agent);
             if let Some(etag) = etag {
                 request = request.header("if-none-match", etag);
             }
@@ -1108,11 +1113,16 @@ mod tests {
             2
         );
         provider.0.store(0, Ordering::SeqCst);
-        for validator in [None, Some(etag.as_str())] {
+        for (build, validator) in [
+            ("0.155.1", None),
+            ("0.155.1", Some(etag.as_str())),
+            ("0.155.0", None),
+            ("0.155.0", Some(etag.as_str())),
+        ] {
             let response = gateway
                 .clone()
                 .router()
-                .oneshot(request("0.155.1", validator))
+                .oneshot(request(build, validator))
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);

@@ -41,12 +41,22 @@ not completed authenticated recovery or the installed tool scenario.
   the browser profile's previous placement. The window was discovered through
   Computer Use, but screenshot verification was stopped because the tool could
   not determine the browser URL sufficiently to enforce policy. Visual placement
-  and the actual page are not verified. No automated login was attempted.
+  and the actual user page were not verified by that tool. A separate real-Chrome
+  regression with a fresh, credential-free profile now passes: it records an
+  off-screen window, closes that owner, reopens the profile through the actual
+  login path, and verifies the requested on-screen bounds and normal window state.
+  No automated login or interaction with the user's login window was attempted.
 - Preparation diagnostics retain fixed causes through startup and native turns;
   health reports preserve reviewed preparation codes and sanitize unknown text.
 - Validation: workspace 267 passed / 14 ignored; browser DOM 33 passed; Clippy,
   formatting and diff checks passed. The latest catalog change is not yet in the
   running installation. The live login owner is preserved while the user signs in.
+  The added browser placement test passed separately with
+  `cargo test -p cxweb-browser-adapter --lib login_window_returns_to_desktop_after_background_profile_use -- --ignored`.
+  Catalog recovery regression now covers both reviewed CLI and App request
+  versions, with and without validators. Full release CLI/daemon/desktop builds
+  passed for the explicit `x86_64-pc-windows-msvc` target in a separate output
+  directory so the active login service did not need to be terminated.
 
 ## Installed tool string rendering and remaining preparation failure (2026-09-20)
 

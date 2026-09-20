@@ -2113,6 +2113,52 @@ mod tests {
     }
     #[test]
     #[ignore = "requires an installed Chrome; creates fresh diagnostic profiles"]
+    fn login_window_returns_to_desktop_after_background_profile_use() {
+        let executable = cxweb_platform::state::installed_browser().unwrap();
+        let profile = std::env::temp_dir().join(format!(
+            "cxweb-login-placement-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        cxweb_platform::state::protected_directory(&profile).unwrap();
+        let mut background = ManagedBrowser::launch_offscreen(&executable, &profile).unwrap();
+        let page = background.open_hidden_page("about:blank", true).unwrap();
+        let parked = background
+            .call(
+                "Browser.getWindowForTarget",
+                json!({"targetId":page.target}),
+                None,
+            )
+            .unwrap();
+        assert!(parked["bounds"]["left"].as_i64().unwrap() < 0);
+        background.close().unwrap();
+        drop(background);
+
+        let mut browser = ManagedBrowser::launch(&executable, &profile, true).unwrap();
+        let page = browser.open_login().unwrap();
+        let window = browser
+            .call(
+                "Browser.getWindowForTarget",
+                json!({"targetId":page.target}),
+                None,
+            )
+            .unwrap();
+        let (left, top, width, height) = BrowserProcess::login_bounds();
+        assert_eq!(window["bounds"]["windowState"], "normal");
+        assert_eq!(window["bounds"]["left"], left);
+        assert_eq!(window["bounds"]["top"], top);
+        assert_eq!(window["bounds"]["width"], width);
+        assert_eq!(window["bounds"]["height"], height);
+        // This empty test profile has no credentials or account interaction.
+        // Closing this owner does not touch the real login browser.
+        browser.close().unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires an installed Chrome; creates fresh diagnostic profiles"]
     fn browser_replacement_preserves_tabs_and_drafts() {
         let executable = cxweb_platform::state::installed_browser().unwrap();
         for offscreen in [false, true] {
