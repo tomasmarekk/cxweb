@@ -146,6 +146,12 @@ mod tests {
     }
     impl Drop for Fixture {
         fn drop(&mut self) {
+            // A failing async test may still have a host holding the journal
+            // until runtime shutdown. Preserve its private diagnostics rather
+            // than panic again while unwinding and abort the entire test process.
+            if std::thread::panicking() {
+                return;
+            }
             std::fs::remove_dir_all(&self.0).unwrap();
         }
     }
@@ -153,6 +159,129 @@ mod tests {
     impl WebProvider for FixtureProvider {
         fn respond(&self, _: WebRequest) -> WebFuture {
             Box::pin(async { "fixture web response".into_response() })
+        }
+    }
+
+    struct TaskCleanup(Option<cxweb_platform::scheduled_runtime::RegisteredRuntime>);
+    impl TaskCleanup {
+        fn remove(&mut self) -> std::io::Result<()> {
+            if let Some(task) = &self.0 {
+                task.remove_stopped()?;
+            }
+            self.0 = None;
+            Ok(())
+        }
+    }
+    impl Drop for TaskCleanup {
+        fn drop(&mut self) {
+            for _ in 0..100 {
+                if self.remove().is_ok() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            eprintln!("E_FIXTURE_TASK_CLEANUP: the owned registration still needs cleanup");
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "registers temporary owned Windows tasks; requires CXWEB_ACTIVATION_DAEMON pointing to the built windowless daemon"]
+    async fn supervised_activation_verifies_registration_and_refuses_a_removed_task() {
+        use cxweb_platform::scheduled_runtime::RegistrationReceipt;
+        let executable = PathBuf::from(
+            std::env::var_os("CXWEB_ACTIVATION_DAEMON").expect("set CXWEB_ACTIVATION_DAEMON"),
+        );
+        assert!(executable.is_absolute() && executable.is_file());
+        assert_eq!(executable.file_name().unwrap(), "cxweb-daemon.exe");
+        for removed_before_apply in [false, true] {
+            let fixture = Fixture::new();
+            // Cargo's top-level binary is a hard link to its deps output.
+            // Exercise an installed copy; production correctly refuses aliases.
+            let installed = fixture.0.join("cxweb-daemon.exe");
+            std::fs::copy(&executable, &installed).unwrap();
+            let config = fixture.0.join("config.toml");
+            let directory = fixture.0.join("journal");
+            let reserved = PreparedInstallation::reserve(&directory, &config).unwrap();
+            let installation = reserved.installation_id().to_owned();
+            let (host, activation) = reserved
+                .finish(
+                    Arc::new(FixtureProvider),
+                    vec!["webbridge/fixture".into()],
+                    vec!["native-fixture".into()],
+                )
+                .unwrap();
+            assert_eq!(
+                activation.register_supervisor(installed.clone()).await,
+                Err("E_RUNTIME_NOT_READY")
+            );
+            let host_task = tokio::spawn(host.serve());
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while !activation.is_serving() {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            assert_eq!(activation.apply().await, Err("E_SUPERVISION_PENDING"));
+            assert!(!config.exists());
+            activation
+                .register_supervisor(installed.clone())
+                .await
+                .unwrap();
+            let record: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(directory.join("integration.json")).unwrap())
+                    .unwrap();
+            let receipt: RegistrationReceipt =
+                serde_json::from_value(record["scheduler"]["receipt"].clone()).unwrap();
+            let mut cleanup = TaskCleanup(Some(receipt.reopen(&installation).unwrap()));
+            assert!(activation.supervision_registered().await.unwrap());
+            assert!(!config.exists());
+            assert_eq!(
+                activation.register_supervisor(installed.clone()).await,
+                Err("E_SUPERVISION_PLAN")
+            );
+            if !removed_before_apply {
+                activation.apply().await.unwrap();
+                assert!(
+                    std::fs::read_to_string(&config)
+                        .unwrap()
+                        .contains("openai_base_url")
+                );
+            }
+            // The real recovery daemon is started by registration. The active
+            // host holds the journal, so that child exits without taking its route.
+            // Never terminate processes or remove a running/changed task.
+            let last_result = tokio::time::timeout(Duration::from_secs(20), async {
+                loop {
+                    let status = cleanup.0.as_ref().unwrap().status().unwrap();
+                    if status.last_run > 0.0 && !status.running {
+                        break status.last_result;
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            })
+            .await
+            .unwrap();
+            // The real daemon returns 3 when the existing host owns its journal.
+            assert_eq!(last_result, 3);
+            tokio::time::timeout(Duration::from_secs(20), async {
+                while cleanup.remove().is_err() {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            })
+            .await
+            .unwrap();
+            assert_eq!(
+                activation.supervision_registered().await,
+                Err("E_SUPERVISION_CHANGED")
+            );
+            if removed_before_apply {
+                assert_eq!(activation.apply().await, Err("E_SUPERVISION_CHANGED"));
+                assert!(!config.exists());
+            }
+            host_task.abort();
+            let _ = host_task.await;
+            drop(activation);
         }
     }
 
@@ -225,6 +354,18 @@ mod tests {
             })
             .await
             .unwrap();
+            assert!(!activation.supervision_registered().await.unwrap());
+            assert_eq!(activation.apply().await, Err("E_SUPERVISION_PENDING"));
+            assert_eq!(
+                activation
+                    .register_supervisor(fixture.0.join("missing-daemon.exe"))
+                    .await,
+                Err("E_SUPERVISION_EXECUTABLE")
+            );
+            let record: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(directory.join("integration.json")).unwrap())
+                    .unwrap();
+            assert!(record["scheduler"].is_null());
             let client = reqwest::Client::builder()
                 .no_proxy()
                 .timeout(Duration::from_secs(2))
@@ -244,13 +385,13 @@ mod tests {
                 assert_eq!(response.text().await.unwrap(), expected);
             }
             if changed {
-                assert_eq!(activation.apply().await, Err("E_CONFIG_APPLY"));
+                assert_eq!(activation.apply_fixture().await, Err("E_CONFIG_APPLY"));
                 assert_eq!(
                     std::fs::read_to_string(&config).unwrap(),
                     "model = 'user-change'\n"
                 );
             } else {
-                activation.apply().await.unwrap();
+                activation.apply_fixture().await.unwrap();
                 assert!(
                     std::fs::read_to_string(&config)
                         .unwrap()

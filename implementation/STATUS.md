@@ -21,6 +21,40 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Mandatory supervisor receipt for public activation (2026-09-20)
+
+- ActivationHandle now registers the independently qualified installed daemon
+  through the same serialized installation owner as apply/disconnect. It checks
+  the original executable path identity, persists the Task Scheduler plan first,
+  creates a new task without replacing an existing task, and persists the exact
+  registration receipt. An accepted operation outlives its calling UI future.
+- Public apply requires a recorded task whose current OS definition still matches
+  the receipt. Missing/pending registration and a removed/changed registration have
+  distinct fixed errors. Invalid executable paths do not create a pending plan.
+  Read-only registration status exposes no task XML, local user ID or capability.
+- Previous file/ordering tests retain an explicit test-only supervisor substitute;
+  that variant is absent from production builds. Those tests now also assert that
+  the public operation refuses their missing registration. Real registration and
+  public apply are covered separately through the actual Windows scheduler.
+- The live test creates two disposable installations using independent copies of
+  the built windowless daemon. It verifies refusal before host startup and before
+  registration, create-only behavior, successful public apply with a receipt, and
+  refusal after removing the exact recorded task. Scheduler status confirmed an
+  actual daemon run with exit code 3 while the active host held the journal.
+  Both test tasks were removed after confirmed stop; no arbitrary PID was killed.
+- The first fixture used Cargo's hardlinked top-level build output and correctly
+  failed executable identity checks. The fixture now uses an installed copy;
+  hardlink protection remains intact. Test cleanup also preserves diagnostics
+  during unwinding instead of causing a second panic on a still-open journal.
+- Verification: 202 workspace tests passed (8 opt-in tests excluded by the default
+  run); the new real-scheduler test passed against the newly built daemon. Clippy
+  with warnings denied, formatting, diff checks and release CLI/daemon/desktop
+  builds passed. Evidence: `integration-tests/compatibility/supervised-activation-windows.json`.
+- This confirms registration and guarded duplicate startup, not full crash recovery
+  of an authenticated generation session. Desktop/daemon activation orchestration,
+  client/browser qualification, installed-binary trust and the remaining release
+  requirements still prevent production activation.
+
 ## Reserved installation and running activation host (2026-09-20)
 
 - Added a new-installation runtime path alongside native-only recovery. It binds

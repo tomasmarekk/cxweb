@@ -33,12 +33,85 @@ pub struct DisconnectController {
     native: Arc<Vec<String>>,
 }
 
+pub(crate) enum ApplySupervision {
+    Registered,
+    // Isolate file/ordering tests from OS task registration. Production builds
+    // have no unchecked activation variant; live tests use Registered.
+    #[cfg(test)]
+    Fixture,
+}
+
+fn supervision_error(error: std::io::Error) -> &'static str {
+    if error.to_string() == "E_SUPERVISION_PENDING" {
+        "E_SUPERVISION_PENDING"
+    } else {
+        "E_SUPERVISION_CHANGED"
+    }
+}
+
 impl DisconnectController {
+    pub(crate) async fn register_supervisor(
+        &self,
+        serving: Arc<std::sync::atomic::AtomicBool>,
+        executable: std::path::PathBuf,
+    ) -> Result<(), &'static str> {
+        let controller = self.clone();
+        tokio::spawn(async move {
+            let _operation = controller.serial.lock().await;
+            if *controller.state.borrow() != DisconnectState::Idle {
+                return Err("E_ACTIVATION_STATE");
+            }
+            let journal = controller.journal.clone();
+            tokio::task::spawn_blocking(move || {
+                let mut journal = journal.lock().map_err(|_| "E_INTEGRATION_STATE")?;
+                if !serving.load(std::sync::atomic::Ordering::Acquire) {
+                    return Err("E_RUNTIME_NOT_READY");
+                }
+                if journal.phase() != Phase::Prepared {
+                    return Err("E_ACTIVATION_STATE");
+                }
+                let target =
+                    cxweb_platform::target_path::TargetPathGuard::capture(&executable, false)
+                        .map_err(|_| "E_SUPERVISION_EXECUTABLE")?;
+                let plan = journal
+                    .prepare_scheduler(&executable)
+                    .map_err(|_| "E_SUPERVISION_PLAN")?;
+                target
+                    .verify_unchanged()
+                    .map_err(|_| "E_SUPERVISION_EXECUTABLE")?;
+                let task = plan.register().map_err(|_| "E_SUPERVISION_REGISTER")?;
+                // An uncertain OS mutation remains pending in the journal. Never
+                // adopt a task by name or roll it back without an exact receipt.
+                journal
+                    .record_scheduler(&task)
+                    .map_err(|_| "E_SUPERVISION_RECEIPT")
+            })
+            .await
+            .map_err(|_| "E_ACTIVATION_WORKER")?
+        })
+        .await
+        .map_err(|_| "E_ACTIVATION_WORKER")?
+    }
+
+    pub(crate) async fn supervision_registered(&self) -> Result<bool, &'static str> {
+        let journal = self.journal.clone();
+        tokio::task::spawn_blocking(move || {
+            let journal = journal.lock().map_err(|_| "E_INTEGRATION_STATE")?;
+            match journal.registered_scheduler() {
+                Ok(_) => Ok(true),
+                Err(error) if error.to_string() == "E_SUPERVISION_PENDING" => Ok(false),
+                Err(error) => Err(supervision_error(error)),
+            }
+        })
+        .await
+        .map_err(|_| "E_ACTIVATION_WORKER")?
+    }
     /// Internal activation owner only. Native/client qualification must precede
     /// this call; the private control protocol does not expose configuration apply.
     pub(crate) async fn apply_prepared(
         &self,
         serving: Arc<std::sync::atomic::AtomicBool>,
+        supervision: ApplySupervision,
     ) -> Result<(), &'static str> {
         let controller = self.clone();
         // Once accepted, UI cancellation must not interrupt a configuration write.
@@ -59,6 +132,9 @@ impl DisconnectController {
                 journal
                     .catalog_receipt()
                     .map_err(|_| "E_CATALOG_RECEIPT_MISSING")?;
+                if matches!(supervision, ApplySupervision::Registered) {
+                    journal.registered_scheduler().map_err(supervision_error)?;
+                }
                 journal.apply().map_err(|_| "E_CONFIG_APPLY")
             })
             .await
@@ -260,7 +336,10 @@ mod tests {
         let waiter = tokio::spawn(async move {
             started.send(()).unwrap();
             pending
-                .apply_prepared(Arc::new(std::sync::atomic::AtomicBool::new(true)))
+                .apply_prepared(
+                    Arc::new(std::sync::atomic::AtomicBool::new(true)),
+                    ApplySupervision::Fixture,
+                )
                 .await
         });
         accepted.await.unwrap();

@@ -404,7 +404,8 @@ mod tests {
         })
         .await
         .unwrap();
-        activation.apply().await.unwrap();
+        assert_eq!(activation.apply().await, Err("E_SUPERVISION_PENDING"));
+        activation.apply_fixture().await.unwrap();
         assert!(
             std::fs::read_to_string(&config)
                 .unwrap()

@@ -41,9 +41,39 @@ impl ActivationHandle {
         self.serving.load(Ordering::Acquire)
     }
     /// Call only after selected-target preflight and complete client/browser
-    /// qualification. No desktop/remote command exposes this internal operation.
+    /// qualification and recorded supervisor registration. No desktop/remote
+    /// command exposes this internal operation.
     pub async fn apply(&self) -> Result<(), &'static str> {
-        self.controller.apply_prepared(self.serving.clone()).await
+        self.controller
+            .apply_prepared(
+                self.serving.clone(),
+                crate::lifecycle::ApplySupervision::Registered,
+            )
+            .await
+    }
+    /// Register only the independently qualified installed daemon executable.
+    /// The accepted operation persists its receipt even if the caller disappears.
+    pub async fn register_supervisor(
+        &self,
+        executable: std::path::PathBuf,
+    ) -> Result<(), &'static str> {
+        self.controller
+            .register_supervisor(self.serving.clone(), executable)
+            .await
+    }
+    /// Verify the journal's exact task still exists; this is not current-process
+    /// health or proof that the browser session has survived a runtime restart.
+    pub async fn supervision_registered(&self) -> Result<bool, &'static str> {
+        self.controller.supervision_registered().await
+    }
+    #[cfg(test)]
+    pub(crate) async fn apply_fixture(&self) -> Result<(), &'static str> {
+        self.controller
+            .apply_prepared(
+                self.serving.clone(),
+                crate::lifecycle::ApplySupervision::Fixture,
+            )
+            .await
     }
 }
 

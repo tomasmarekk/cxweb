@@ -1,0 +1,26 @@
+{
+  "schema": "cxweb.supervised-activation.v1",
+  "date": "2026-09-20",
+  "result": "PASS",
+  "command": "cargo test -p cxweb-runtime supervised_activation_verifies_registration_and_refuses_a_removed_task -- --ignored --nocapture",
+  "daemon_executable_sha256": "d1bf87c711e18a43ca7064bbcb1cc7728698228a135c590b39034fd21a7fb019",
+  "fixture": "Two disposable installations and independent copies of the built windowless daemon; synthetic catalogs, no account access",
+  "checks": {
+    "registration_requires_running_host": true,
+    "public_apply_refuses_missing_receipt": true,
+    "os_registration_receipt_persisted_and_reopened": true,
+    "duplicate_registration_refused": true,
+    "public_apply_with_valid_receipt_succeeded": true,
+    "removed_task_detected": true,
+    "public_apply_refuses_removed_task": true,
+    "actual_daemon_run_observed": true,
+    "duplicate_start_exit_code": 3,
+    "test_tasks_removed_after_confirmed_stop": 2
+  },
+  "limits": [
+    "This verifies scheduler registration and guarded duplicate startup while a host holds the journal; it does not prove authenticated generation after a crash.",
+    "No real native subscription, browser generation or actual Codex App picker was tested.",
+    "The supplied daemon copy is a development build; installed-binary trust and complete activation orchestration remain release prerequisites.",
+    "No real user configuration was changed and no arbitrary process was terminated."
+  ]
+}
