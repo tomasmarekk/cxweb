@@ -1,0 +1,40 @@
+{
+  "evidence_level": "mock_integration",
+  "date_utc": "2026-09-20",
+  "actual_browser": true,
+  "browser": "Chrome/153.0.8010.48",
+  "platform": "Windows x64 10.0.26100.0",
+  "fixture": "Bundled synthetic markup in fresh offscreen profiles",
+  "account_generation": false,
+  "release_qualified": false,
+  "installed_runtime_sha256": "f5a8d6ae34b5606df4fdf7b8b13a507f48052365dfb76705c50235821d302d08",
+  "checks": [
+    {
+      "command": "cargo test --locked -p cxweb-browser-adapter send_waits_for_editor_readiness_and_clicks_only_once -- --ignored --nocapture",
+      "before_fix": "FAIL: E_SEND_DISABLED when Send becomes enabled 400 ms after preparation",
+      "after_fix": "PASS",
+      "verified": ["Delayed readiness produces exactly one click", "Cancellation produces zero clicks", "Permanent disablement produces zero clicks", "Prompt mismatch produces zero clicks", "An exception from the click produces exactly one attempted click"]
+    },
+    {
+      "command": "cargo test --locked -p cxweb-browser-adapter incomplete_utf16_dom_text_does_not_destroy_browser_transport -- --ignored --nocapture",
+      "before_fix": "FAIL: a lone surrogate in a DOM result kills the reply reader; Browser.getVersion returns browser pipe unavailable",
+      "after_fix": "PASS",
+      "verified": ["Lone surrogates in strings, nested arrays and object keys are rejected without losing transport", "A partial non-BMP character defers only its final incomplete UTF-16 unit", "The completed character survives exactly after an already committed prefix", "Malformed completed text fails explicitly", "Browser.getVersion and owned-target cleanup still work"]
+    },
+    {
+      "command": "cargo test --locked -p cxweb-browser-adapter rate_limit_stops_account_checks_and_send_without_dismissing_dialog -- --ignored --nocapture",
+      "after_fix": "PASS",
+      "verified": ["The service restriction blocks account checks, insertion, Send, observation and menu dismissal without any click or key action"]
+    },
+    {
+      "command": "cargo test --locked -p cxweb-browser-adapter invalid_delimited_reply_preserves_cleanup_transport_but_framing_failure_stops",
+      "evidence_level": "unit",
+      "after_fix": "PASS",
+      "verified": ["An invalid fully delimited JSON frame fails its operation while retaining later frame alignment", "Oversized framing remains terminal", "EOF remains terminal"]
+    }
+  ],
+  "limits": [
+    "The exact raw frame from the account-live cleanup failure was not captured; causal attribution to the reproduced surrogate defect remains an inference.",
+    "These synthetic browser and unit checks are excluded from every account-live quality denominator."
+  ]
+}

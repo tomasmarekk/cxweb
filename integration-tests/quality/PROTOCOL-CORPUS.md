@@ -82,6 +82,9 @@ observation was recorded, not that its protocol or task expectation passed.
 Reports contain counts, booleans, fixed failure categories and identity hashes,
 never prompts, model output, credentials or raw account identifiers. The journal
 is authoritative if a crash occurs before its derivative report is refreshed.
+Fixed failure codes are now retained per attempt. The latest browser diagnostic
+contains numeric attribution data and observed model labels; no previous case's
+diagnostic is attached when an operation is refused before admitting a case.
 
 ## Reproduction
 
@@ -121,6 +124,23 @@ at 19:28:06 UTC with valid protocol and exact expected text. An immediate repeat
 during the spacing interval returned an error and left attempts.json byte-for-byte
 unchanged. The cumulative content-free report is archived separately; this small
 initial sample does not establish the 200-case threshold or any release gate.
+
+That first run subsequently failed case-003 after submission intent. The original
+generic transport result is retained: two protocol/task passes out of three
+attempts. Its exact failure code was unavailable. A distinct diagnostic build,
+f007ffe6afc11b00a6ac1afcd3eec2490bb73739ac0df2066443974c98787b09,
+was measured in protocol-diagnostics-xhigh-sep20.json. It completed five attempts:
+four protocol-valid, three task-correct, and one E_WEB_CLEANUP_UNCONFIRMED failure
+while observing a generating Unicode answer. Neither cohort is pooled with the
+subsequent Send-readiness/Unicode fix. Neither reaches the planned 200 cases.
+
+Run protocol-unicode-xhigh-sep20 starts a distinct cohort on fixed daemon
+f5a8d6ae34b5606df4fdf7b8b13a507f48052365dfb76705c50235821d302d08.
+Its first exact-text case passed at 19:58:36 UTC. The archived report is a
+point-in-time snapshot; the protected installation journal is authoritative
+while its serial batch is running. Actual App/CLI Unicode text checks also
+passed on this build, and remain separate native-client evidence rather than
+additional corpus samples.
 
 The actual installed App backend 0.155.0-alpha.9.2 and CLI 0.155.1 both returned
 the owned family with Instant, Medium, High, Extra High and Pro after this update.

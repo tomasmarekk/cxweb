@@ -7,23 +7,38 @@ const source = await readFile(new URL('../src/dom/send.js', import.meta.url), 'u
 const text = value => ({ nodeType: 3, textContent: value });
 const element = (tagName, ...childNodes) => ({ nodeType: 1, tagName, childNodes });
 
-function attempt(children, rendered, expected) {
+function attempt(children, rendered, expected, {disabled=false, busy=false, performClick=true, selected='Selected mode'}={}) {
   class Visible { getClientRects() { return [1]; } }
-  const model = Object.assign(new Visible(), { textContent: 'Selected mode' });
+  const model = Object.assign(new Visible(), { textContent: selected });
   const composer = {
     isContentEditable: true, innerText: rendered, childNodes: children,
     closest: () => ({ querySelectorAll: () => [model] })
   };
   let clicks = 0;
-  const send = { disabled: false, click: () => clicks++ };
+  const send = { disabled, click: () => clicks++ };
   const run = vm.runInNewContext(`(${source})`, {
     HTMLElement: Visible,
     document: { querySelector: selector => ({
-      '#prompt-textarea': composer, '[data-testid="send-button"]': send
+      '#prompt-textarea': composer, '[data-testid="send-button"]': send,
+      '[data-testid="stop-button"]': busy ? {} : null,
     })[selector] ?? null }
   });
-  return { result: run(expected, 'Selected mode'), clicks };
+  return { result: run(expected, 'Selected mode', performClick), clicks };
 }
+
+test('readiness checks never click and retain every prompt/model/busy guard', () => {
+  const children = [element('P', text('Exact'))];
+  assert.deepEqual(attempt(children, 'Exact', 'Exact', {performClick:false}), {result:true,clicks:0});
+  assert.deepEqual(attempt(children, 'Exact', 'Exact'), {result:true,clicks:1});
+  for (const performClick of [false,true]) {
+    for (const [options,result] of [
+      [{disabled:true},'E_SEND_DISABLED'],
+      [{busy:true},'E_BROWSER_BUSY'],
+      [{selected:'Different',disabled:true},'E_MODEL_SELECTION'],
+    ]) assert.deepEqual(attempt(children,'Exact','Exact',{...options,performClick}),{result,clicks:0});
+    assert.deepEqual(attempt(children,'Exact','Different',{disabled:true,performClick}),{result:'E_COMPOSER_MISMATCH',clicks:0});
+  }
+});
 
 test('plain editor paragraphs preserve line boundaries without layout spacing', () => {
   assert.deepEqual(attempt([

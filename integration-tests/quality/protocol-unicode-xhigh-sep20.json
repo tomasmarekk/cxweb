@@ -2,33 +2,14 @@
   "account_plan_category": null,
   "attempts": {
     "case-001": {
-      "finished_at": 1789932486,
+      "finished_at": 1789934316,
       "result": {
         "kind": "response",
         "protocol_valid": true,
         "task_passed": true
       },
-      "started_at": 1789932472,
-      "submitted_at": 1789932477
-    },
-    "case-002": {
-      "finished_at": 1789932581,
-      "result": {
-        "kind": "response",
-        "protocol_valid": true,
-        "task_passed": true
-      },
-      "started_at": 1789932563,
-      "submitted_at": 1789932568
-    },
-    "case-003": {
-      "finished_at": 1789932741,
-      "result": {
-        "kind": "failure",
-        "reason": "transport"
-      },
-      "started_at": 1789932735,
-      "submitted_at": 1789932741
+      "started_at": 1789934300,
+      "submitted_at": 1789934306
     }
   },
   "identity": {
@@ -36,11 +17,42 @@
     "corpus_sha256": "ebbaf51a3c453a614ed4c126b81aeba48bb3acae4bd89c7763fc143f0d5e34f1",
     "effort": "xhigh",
     "route_sha256": "5e07a528a537ababb2896783c9b26269809661a085ce9e4c9b70ab8aab2943e4",
-    "runtime_sha256": "a5d9d7e9073d135d81a8a90f58e0f61b98e448fee18327a14318f054f9a794a6",
+    "runtime_sha256": "f5a8d6ae34b5606df4fdf7b8b13a507f48052365dfb76705c50235821d302d08",
     "scope_sha256": "ed8337915afec118eee1878b0d6a111b2d9a2e9385313543cc66f172fa6aa531"
   },
+  "last_browser_diagnostic": {
+    "attribution": {
+      "actual_character_kind": 0,
+      "anchor_count": 0,
+      "answer_candidates": 1,
+      "answer_fenced": 0,
+      "answer_generating": 0,
+      "answer_length": 151,
+      "answer_utf16_pending": 0,
+      "block_count": 7,
+      "break_count": 0,
+      "code_count": 0,
+      "common_prefix_length": 1884,
+      "control_count": 1,
+      "expected_character_kind": 0,
+      "expected_length": 1884,
+      "intermediate_blocks": 0,
+      "plain_length": 1884,
+      "rendered_length": 1894,
+      "span_count": 0,
+      "text_content_matches": 1
+    },
+    "qualification": {
+      "assistant_present": true,
+      "expected_model_label": "Extra High",
+      "generating": false,
+      "observed_model_label": "Extra High",
+      "user_matches": true,
+      "user_present": true
+    }
+  },
   "native_client_exercised": false,
-  "not_before": 1789932801,
+  "not_before": 1789934376,
   "summary": {
     "adversarial_attempted": 0,
     "categories": {
@@ -63,10 +75,10 @@
         "task_passed": 0
       },
       "final_text": {
-        "attempted": 3,
-        "completed": 3,
-        "protocol_valid": 2,
-        "task_passed": 2
+        "attempted": 1,
+        "completed": 1,
+        "protocol_valid": 1,
+        "task_passed": 1
       },
       "function": {
         "attempted": 0,
@@ -107,20 +119,18 @@
     },
     "complete": false,
     "counts": {
-      "attempted": 3,
-      "completed": 3,
-      "protocol_valid": 2,
-      "task_passed": 2
+      "attempted": 1,
+      "completed": 1,
+      "protocol_valid": 1,
+      "task_passed": 1
     },
     "custom_or_namespaced_attempted": 0,
-    "failures": {
-      "transport": 1
-    },
+    "failures": {},
     "meets_envelope_threshold": false,
     "planned": 200,
     "protocol_wilson_95": [
-      0.2076596008020477,
-      0.9385080552796037
+      0.20654931437723745,
+      1.0
     ],
     "release_qualified": false
   },

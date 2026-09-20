@@ -53,8 +53,19 @@ function (baselineIds, expectedPrompt) {
   let prefix = 0;
   while (prefix < plain.length && prefix < expected.length && plain[prefix] === expected[prefix]) prefix++;
   const characterKind = c => c === undefined ? 0 : c === '\n' ? 1 : c === '\r' ? 2 : c === ' ' ? 3 : c === '\t' ? 4 : c === '\u00a0' ? 5 : 6;
-  const text = content?.innerText ?? '';
+  let text = content?.innerText ?? '';
   if (text.length > 4 * 1024 * 1024) throw new Error('E_PAYLOAD_LIMIT');
+  // A renderer may temporarily end between the UTF-16 units of one character.
+  // Publish only the complete prefix while generating, never a replacement
+  // character. Final text and any malformed interior unit must fail explicitly.
+  let pendingUtf16 = false;
+  if (!text.isWellFormed()) {
+    const last = text.charCodeAt(text.length - 1);
+    const prefix = text.slice(0, -1);
+    if (!generating || last < 0xd800 || last > 0xdbff || !prefix.isWellFormed()) throw new Error('E_BROWSER_UTF16');
+    text = prefix;
+    pendingUtf16 = true;
+  }
   return {
     attribution_diagnostic: {
       expected_length: expected.length, plain_length: plain.length, rendered_length: rendered.length,
@@ -68,7 +79,7 @@ function (baselineIds, expectedPrompt) {
       block_count: messageCopy?.querySelectorAll('div, p, pre, li').length ?? 0,
       answer_candidates: answer.candidates, intermediate_blocks: answer.intermediate,
       answer_fenced: Number(!!content?.querySelector('pre')), answer_generating: Number(generating),
-      answer_length: text.length
+      answer_length: text.length, answer_utf16_pending: Number(pendingUtf16)
     },
     user_id: user?.getAttribute('data-turn-id-container') ?? null,
     user_matches: userMatches,

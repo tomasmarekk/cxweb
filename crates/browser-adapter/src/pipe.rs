@@ -272,16 +272,7 @@ impl ManagedBrowser {
         let (sender, replies) = sync_channel(32);
         std::thread::spawn(move || {
             let mut input = BufReader::new(output);
-            loop {
-                let result = read_frame(&mut input).and_then(|frame| {
-                    serde_json::from_slice(&frame)
-                        .map_err(|_| io::Error::other("invalid CDP frame"))
-                });
-                let failed = result.is_err();
-                if sender.send(result).is_err() || failed {
-                    break;
-                }
-            }
+            forward_frames(&mut input, sender);
         });
         Ok(Self {
             process,
@@ -555,8 +546,9 @@ impl ManagedBrowser {
         let effort_label = include_str!("dom/effort_label.js");
         let model_families = include_str!("dom/model_families.js");
         let answer_content = include_str!("dom/answer_content.js");
+        let well_formed_result = include_str!("dom/well_formed_result.js");
         let guarded = format!(
-            "function(expectedOrigin, args) {{ if (location.origin !== expectedOrigin || (expectedOrigin === 'null' && location.href !== 'about:blank')) throw new Error('E_OFFICIAL_ORIGIN_REQUIRED'); const readEffortLabel = ({effort_label}); const readModelFamilies = ({model_families}); const readAnswerContent = ({answer_content}); return ({function})(...args); }}"
+            "function(expectedOrigin, args) {{ if (location.origin !== expectedOrigin || (expectedOrigin === 'null' && location.href !== 'about:blank')) throw new Error('E_OFFICIAL_ORIGIN_REQUIRED'); const readEffortLabel = ({effort_label}); const readModelFamilies = ({model_families}); const readAnswerContent = ({answer_content}); const assertWellFormedResult = ({well_formed_result}); const result = ({function})(...args); assertWellFormedResult(result); return result; }}"
         );
         let result = self.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":guarded,"arguments":[{"value":if page.fixture {"null"} else {"https://chatgpt.com"}},{"value":arguments}],"returnByValue":true}), Some(&page.session));
         let _ = self.call(
@@ -570,6 +562,8 @@ impl ManagedBrowser {
                 .as_str()
                 .and_then(|text| text.lines().next());
             for code in [
+                "E_BROWSER_UTF16",
+                "E_BROWSER_RESULT_DEPTH",
                 "E_MODEL_FAMILY",
                 "E_MODEL_EFFORT_LABEL",
                 "E_MODEL_MENU",
@@ -1041,6 +1035,7 @@ impl ManagedBrowser {
         cancelled: impl Fn() -> bool,
     ) -> io::Result<QualificationOutcome> {
         self.qualification_diagnostic = None;
+        self.attribution_diagnostic.clear();
         let page = self.open_temporary_chat()?;
         let result =
             self.qualify_page_checked(&page, candidate, before_send, verify_scope, cancelled);
@@ -1392,12 +1387,16 @@ impl ManagedBrowser {
         }
         before_send()?;
         tracker.begin_submission().map_err(io::Error::other)?;
-        if let Err(error) = self.press_send(page, prompt, &baseline.selected_model) {
+        if let Err(error) =
+            self.press_send_cancellable(page, prompt, &baseline.selected_model, &cancelled)
+        {
             let code = match error.to_string().as_str() {
                 "E_SEND_SURFACE" => "E_SEND_SURFACE",
                 "E_SEND_DISABLED" => "E_SEND_DISABLED",
                 "E_MODEL_SELECTION" => "E_MODEL_SELECTION",
                 "E_COMPOSER_MISMATCH" => "E_COMPOSER_MISMATCH",
+                "E_BROWSER_BUSY" => "E_BROWSER_BUSY",
+                "E_CANCELLED" => "E_CANCELLED",
                 _ => "E_SUBMISSION_UNCERTAIN",
             };
             return Err(io::Error::other(code));
@@ -1407,9 +1406,13 @@ impl ManagedBrowser {
             if cancelled() {
                 return Err(io::Error::other("E_CANCELLED"));
             }
-            let observation = self
-                .observe(page, &baseline, prompt)
-                .map_err(|_| io::Error::other("E_QUALIFICATION_OBSERVE"))?;
+            let observation = self.observe(page, &baseline, prompt).map_err(|error| {
+                io::Error::other(match error.to_string().as_str() {
+                    "E_BROWSER_UTF16" => "E_BROWSER_UTF16",
+                    "E_BROWSER_RATE_LIMITED" => "E_BROWSER_RATE_LIMITED",
+                    _ => "E_QUALIFICATION_OBSERVE",
+                })
+            })?;
             self.qualification_diagnostic = Some(QualificationDiagnostic {
                 expected_model_label: baseline.selected_model.clone(),
                 observed_model_label: observation.selected_model.clone(),
@@ -1652,27 +1655,47 @@ impl ManagedBrowser {
         prompt: &str,
         selected_model: &str,
     ) -> io::Result<()> {
+        self.press_send_cancellable(page, prompt, selected_model, || false)
+    }
+
+    fn press_send_cancellable(
+        &mut self,
+        page: &ManagedPage,
+        prompt: &str,
+        selected_model: &str,
+        cancelled: impl Fn() -> bool,
+    ) -> io::Result<()> {
+        // Editor input can precede the enabled Send state. Poll a read-only
+        // guard before the single click; never repeat the side-effecting call.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if cancelled() {
+                return Err(io::Error::other("E_CANCELLED"));
+            }
+            self.check_service_limit(page)?;
+            let ready = self.dom(
+                page,
+                include_str!("dom/send.js"),
+                vec![json!(prompt), json!(selected_model), json!(false)],
+            )?;
+            if ready == true {
+                break;
+            }
+            if ready != "E_SEND_DISABLED" || Instant::now() >= deadline {
+                return send_outcome(ready);
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        if cancelled() {
+            return Err(io::Error::other("E_CANCELLED"));
+        }
         self.check_service_limit(page)?;
         let outcome = self.dom(
             page,
             include_str!("dom/send.js"),
-            vec![json!(prompt), json!(selected_model)],
+            vec![json!(prompt), json!(selected_model), json!(true)],
         )?;
-        match outcome {
-            Value::Bool(true) => Ok(()),
-            Value::String(code)
-                if matches!(
-                    code.as_str(),
-                    "E_SEND_SURFACE"
-                        | "E_SEND_DISABLED"
-                        | "E_MODEL_SELECTION"
-                        | "E_COMPOSER_MISMATCH"
-                ) =>
-            {
-                Err(io::Error::other(code))
-            }
-            _ => Err(io::Error::other("E_SUBMISSION_UNCERTAIN")),
-        }
+        send_outcome(outcome)
     }
 
     pub fn observe(
@@ -1710,6 +1733,7 @@ impl ManagedBrowser {
                 "answer_fenced",
                 "answer_generating",
                 "answer_length",
+                "answer_utf16_pending",
             ] {
                 if let Some(value) = diagnostic[key].as_u64() {
                     self.attribution_diagnostic.insert(key.into(), value);
@@ -2073,6 +2097,25 @@ impl ManagedBrowser {
     }
 }
 
+fn send_outcome(outcome: Value) -> io::Result<()> {
+    match outcome {
+        Value::Bool(true) => Ok(()),
+        Value::String(code)
+            if matches!(
+                code.as_str(),
+                "E_SEND_SURFACE"
+                    | "E_SEND_DISABLED"
+                    | "E_MODEL_SELECTION"
+                    | "E_COMPOSER_MISMATCH"
+                    | "E_BROWSER_BUSY"
+            ) =>
+        {
+            Err(io::Error::other(code))
+        }
+        _ => Err(io::Error::other("E_SUBMISSION_UNCERTAIN")),
+    }
+}
+
 /// Qualifies the observed account-switcher variant with no workspace selector.
 /// This does not infer a provider-side personal workspace ID from missing data.
 /// Any workspace control, organization marker or unknown menu layout invalidates
@@ -2135,6 +2178,29 @@ fn qualifies_default_context(surface: &ScopeSurface) -> bool {
             ]
 }
 
+fn forward_frames(
+    input: &mut impl BufRead,
+    sender: std::sync::mpsc::SyncSender<io::Result<Value>>,
+) {
+    loop {
+        let frame = match read_frame(input) {
+            Ok(frame) => frame,
+            Err(error) => {
+                let _ = sender.send(Err(error));
+                break;
+            }
+        };
+        // A fully delimited bad JSON reply fails the waiting operation, but
+        // does not lose frame alignment. Keep the pipe available for cleanup.
+        // Framing/size/I/O failures above remain terminal; never scan past them.
+        let result =
+            serde_json::from_slice(&frame).map_err(|_| io::Error::other("invalid CDP frame"));
+        if sender.send(result).is_err() {
+            break;
+        }
+    }
+}
+
 fn read_frame(input: &mut impl BufRead) -> io::Result<Vec<u8>> {
     let mut frame = Vec::new();
     loop {
@@ -2195,6 +2261,39 @@ fn check_replacement_targets(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalid_delimited_reply_preserves_cleanup_transport_but_framing_failure_stops() {
+        let bytes = concat!(
+            r#"{"id":1,"result":{}}"#,
+            "\0",
+            r#"{"id":2,"result":"\ud83e"}"#,
+            "\0",
+            r#"{"id":3,"result":{"success":true}}"#,
+            "\0"
+        );
+        let (sender, receiver) = sync_channel(8);
+        forward_frames(&mut std::io::Cursor::new(bytes.as_bytes()), sender);
+        assert_eq!(receiver.recv().unwrap().unwrap()["id"], 1);
+        assert_eq!(
+            receiver.recv().unwrap().unwrap_err().to_string(),
+            "invalid CDP frame"
+        );
+        assert_eq!(receiver.recv().unwrap().unwrap()["id"], 3);
+        assert_eq!(
+            receiver.recv().unwrap().unwrap_err().kind(),
+            io::ErrorKind::UnexpectedEof
+        );
+        assert!(receiver.recv().is_err());
+        let oversized = vec![b'x'; MAX_FRAME + 1];
+        let (sender, receiver) = sync_channel(8);
+        forward_frames(&mut std::io::Cursor::new(oversized), sender);
+        assert_eq!(
+            receiver.recv().unwrap().unwrap_err().to_string(),
+            "CDP frame too large"
+        );
+        assert!(receiver.recv().is_err());
+    }
 
     #[test]
     fn account_failures_export_only_fixed_diagnostics() {
@@ -2346,6 +2445,137 @@ mod tests {
         assert!(FAILURE_CAPTURE.lock().unwrap().is_none());
         assert!(!path.exists());
         std::fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires installed Chrome; uses a fresh offscreen fixture profile"]
+    fn incomplete_utf16_dom_text_does_not_destroy_browser_transport() {
+        let executable = cxweb_platform::state::installed_browser().unwrap();
+        let profile = std::env::temp_dir().join(format!(
+            "cxweb-utf16-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        cxweb_platform::state::protected_directory(&profile).unwrap();
+        let mut browser = ManagedBrowser::launch_offscreen(&executable, &profile).unwrap();
+        let page = browser.open_hidden_page("about:blank", true).unwrap();
+        for source in [
+            "function () { return String.fromCharCode(0xd83e); }",
+            "function () { return {nested:[String.fromCharCode(0xdd80)]}; }",
+            "function () { return {[String.fromCharCode(0xd83e)]:'value'}; }",
+        ] {
+            let malformed = browser.dom(&page, source, vec![]);
+            assert_eq!(malformed.unwrap_err().to_string(), "E_BROWSER_UTF16");
+            assert!(browser.version().is_ok());
+        }
+        let frame = browser
+            .call("Page.getFrameTree", json!({}), Some(&page.session))
+            .unwrap();
+        let html = r#"<!doctype html><form><button type="button" data-testid="model-switcher-dropdown-button" aria-haspopup="menu">Fixture</button><textarea id="prompt-textarea"></textarea></form><div data-turn-id-container="u"><div data-message-author-role="user">Exact fixture</div></div><div data-turn-id-container="a"><div data-message-author-role="assistant"><div class="markdown" id="answer"></div></div><button data-testid="copy-turn-action-button">Copy</button></div><button data-testid="stop-button">Stop</button>"#;
+        browser
+            .call(
+                "Page.setDocumentContent",
+                json!({"frameId":frame["frameTree"]["frame"]["id"],"html":html}),
+                Some(&page.session),
+            )
+            .unwrap();
+        browser.dom(&page, "function () { document.querySelector('#answer').textContent='prefix '+String.fromCharCode(0xd83e); return true; }", vec![]).unwrap();
+        let baseline = Baseline {
+            ids: vec![],
+            selected_model: "Fixture".into(),
+            composer_empty: true,
+            generating: false,
+        };
+        let mut tracker = TurnTracker::new(baseline.clone(), "Fixture").unwrap();
+        tracker.begin_submission().unwrap();
+        let partial = browser.observe(&page, &baseline, "Exact fixture").unwrap();
+        assert_eq!(partial.text, "prefix ");
+        assert_eq!(browser.attribution_diagnostic()["answer_utf16_pending"], 1);
+        assert!(matches!(
+            tracker.observe(partial).unwrap(),
+            Progress::Generating
+        ));
+        tracker.commit_prefix("prefix ").unwrap();
+        browser.dom(&page, "function () { document.querySelector('#answer').textContent='prefix '+String.fromCharCode(0xd83e,0xdd80); document.querySelector('[data-testid=stop-button]').remove(); return true; }", vec![]).unwrap();
+        let complete = browser.observe(&page, &baseline, "Exact fixture").unwrap();
+        assert_eq!(browser.attribution_diagnostic()["answer_utf16_pending"], 0);
+        assert!(
+            matches!(tracker.observe(complete).unwrap(), Progress::Completed(text) if text == "prefix 🦀")
+        );
+        browser.dom(&page, "function () { document.querySelector('#answer').textContent='prefix '+String.fromCharCode(0xd83e); return true; }", vec![]).unwrap();
+        assert_eq!(
+            browser
+                .observe(&page, &baseline, "Exact fixture")
+                .err()
+                .unwrap()
+                .to_string(),
+            "E_BROWSER_UTF16"
+        );
+        assert!(browser.version().is_ok());
+        browser.close_page_checked(&page).unwrap();
+        browser.close().unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires installed Chrome; uses a fresh offscreen fixture profile"]
+    fn send_waits_for_editor_readiness_and_clicks_only_once() {
+        let executable = cxweb_platform::state::installed_browser().unwrap();
+        let profile = std::env::temp_dir().join(format!(
+            "cxweb-send-ready-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        cxweb_platform::state::protected_directory(&profile).unwrap();
+        let mut browser = ManagedBrowser::launch_offscreen(&executable, &profile).unwrap();
+        let page = browser.open_hidden_page("about:blank", true).unwrap();
+        let frame = browser
+            .call("Page.getFrameTree", json!({}), Some(&page.session))
+            .unwrap();
+        let html = r#"<!doctype html><form><button type="button" data-testid="model-switcher-dropdown-button" aria-haspopup="menu">Fixture</button><textarea id="prompt-textarea">Exact fixture</textarea><button type="button" data-testid="send-button" onclick="window.clicks++">Send</button></form><script>window.clicks=0;</script>"#;
+        browser
+            .call(
+                "Page.setDocumentContent",
+                json!({"frameId":frame["frameTree"]["frame"]["id"],"html":html}),
+                Some(&page.session),
+            )
+            .unwrap();
+        browser.dom(&page, "function () { const send=document.querySelector('[data-testid=send-button]'); send.disabled=true; setTimeout(()=>send.disabled=false,400); return true; }", vec![]).unwrap();
+        let result = browser.press_send(&page, "Exact fixture", "Fixture");
+        let clicks = browser
+            .dom(&page, "function () { return window.clicks; }", vec![])
+            .unwrap();
+        browser.dom(&page, "function () { window.clicks=0; document.querySelector('[data-testid=send-button]').disabled=true; return true; }", vec![]).unwrap();
+        let checks = std::cell::Cell::new(0);
+        let cancelled = browser.press_send_cancellable(&page, "Exact fixture", "Fixture", || {
+            checks.set(checks.get() + 1);
+            checks.get() >= 3
+        });
+        let disabled = browser.press_send(&page, "Exact fixture", "Fixture");
+        let mismatch = browser.press_send(&page, "Wrong fixture", "Fixture");
+        let unclicked = browser
+            .dom(&page, "function () { return window.clicks; }", vec![])
+            .unwrap();
+        browser.dom(&page, "function () { const send=document.querySelector('[data-testid=send-button]'); send.disabled=false; send.click=()=>{window.clicks++;throw new Error('uncertain fixture');}; return true; }", vec![]).unwrap();
+        let uncertain = browser.press_send(&page, "Exact fixture", "Fixture");
+        let uncertain_clicks = browser
+            .dom(&page, "function () { return window.clicks; }", vec![])
+            .unwrap();
+        browser.close_page_checked(&page).unwrap();
+        browser.close().unwrap();
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(clicks, 1);
+        assert_eq!(cancelled.unwrap_err().to_string(), "E_CANCELLED");
+        assert_eq!(disabled.unwrap_err().to_string(), "E_SEND_DISABLED");
+        assert_eq!(mismatch.unwrap_err().to_string(), "E_COMPOSER_MISMATCH");
+        assert_eq!(unclicked, 0);
+        assert!(uncertain.is_err());
+        assert_eq!(uncertain_clicks, 1);
     }
 
     #[test]

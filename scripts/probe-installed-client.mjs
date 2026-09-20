@@ -3,6 +3,7 @@
 // also exercises a native subscription model between two independent web turns.
 // --tools runs one exact native read/patch exercise in a disposable workspace.
 // --reasoning verifies all five qualified choices through actual native turns.
+// --unicode verifies exact non-BMP text, accents, quotes and a literal path.
 // --denial refuses one exact read and verifies the model receives that refusal.
 // --repair observes a failing test, approves one exact correction, then retests.
 // No auth files, routing overrides, model catalogs or client binaries are changed.
@@ -17,7 +18,7 @@ import { approveFixtureTest, approveFixtureRepair, fixtureRepairProgress, fixtur
 
 const [client, home, model, option] = process.argv.slice(2);
 assert.ok(client && home && model?.startsWith('webbridge/') && isAbsolute(client) && isAbsolute(home));
-assert.ok(process.argv.length <= 6 && (!option || ['--text', '--coexistence', '--tools', '--reasoning', '--denial', '--repair'].includes(option)));
+assert.ok(process.argv.length <= 6 && (!option || ['--text', '--unicode', '--coexistence', '--tools', '--reasoning', '--denial', '--repair'].includes(option)));
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const builds = new Map([
   ['eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316', '0.155.1'],
@@ -109,12 +110,17 @@ async function verifyText(selectedModel, effort) {
   const check = { model: selectedModel.id, effort, route: selectedModel.id.startsWith('webbridge/') ? 'web' : 'native', result: 'started' };
   (evidence.textChecks ??= []).push(check);
   console.log(JSON.stringify({ phase: 'text', route: check.route, model: check.model, effort }));
-  const expected = `CXWEB_INSTALLED_${randomBytes(8).toString('hex')}`;
+  const expected = `CXWEB_INSTALLED_${randomBytes(8).toString('hex')}` + (option === '--unicode' ? ' café 🦀 Ω "quoted" C:\\fixture\\input.txt' : '');
+  check.unicode = option === '--unicode';
+  check.expectedUtf8Sha256 = sha256(Buffer.from(expected, 'utf8'));
   const started = (await rpc('thread/start', { cwd, model: selectedModel.id, ephemeral: true, approvalPolicy: 'untrusted', sandbox: 'read-only' }));
   assert.equal(started.model, selectedModel.id, 'E_SELECTED_MODEL');
   assert.equal(started.modelProvider, 'openai', 'E_NATIVE_PROVIDER');
   const thread = started.thread.id;
-  const turn = (await rpc('turn/start', { threadId: thread, effort, input: [{ type: 'text', text: `Use no tools. Return a final answer with exactly this text: ${expected}`, text_elements: [] }] })).turn.id;
+  const text = option === '--unicode'
+    ? `Use no tools. Return a final answer containing exactly this JSON-decoded string: ${JSON.stringify(expected)}`
+    : `Use no tools. Return a final answer with exactly this text: ${expected}`;
+  const turn = (await rpc('turn/start', { threadId: thread, effort, input: [{ type: 'text', text, text_elements: [] }] })).turn.id;
   const deadline = Date.now() + 240000;
   let completed;
   while (Date.now() < deadline) {

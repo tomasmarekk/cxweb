@@ -2,7 +2,7 @@
 //! This generates responses but does not execute fixture tools or publish gates.
 use crate::{
     managed_driver::Binding,
-    quality_journal::{Identity, Journal, ResultRecord},
+    quality_journal::{Identity, Journal, ResultRecord, diagnostic_code},
 };
 use cxweb_browser_adapter::ManagedBrowser;
 use cxweb_codex_adapter::quality_corpus::{self, tally::Failure};
@@ -81,6 +81,7 @@ pub(crate) fn run(
         effort: target.effort.clone(),
     };
     let mut journal = Journal::open(directory, &target.run, identity, now()?)?;
+    let prior_attempts = journal.report()?["summary"]["counts"]["attempted"].clone();
     let result = execute_next(
         browser,
         binding,
@@ -96,7 +97,17 @@ pub(crate) fn run(
         .join(format!("quality-{}", target.run))
         .join("report.json");
     let snapshot = Snapshot::capture(&report_path).map_err(|_| "E_QUALITY_REPORT")?;
-    let bytes = serde_json::to_vec_pretty(&journal.report()?).map_err(|_| "E_QUALITY_REPORT")?;
+    let mut report = journal.report()?;
+    report["last_browser_diagnostic"] =
+        if report["summary"]["counts"]["attempted"] != prior_attempts {
+            serde_json::json!({
+                "qualification": browser.qualification_diagnostic(),
+                "attribution": browser.attribution_diagnostic(),
+            })
+        } else {
+            serde_json::Value::Null
+        };
+    let bytes = serde_json::to_vec_pretty(&report).map_err(|_| "E_QUALITY_REPORT")?;
     let staged = snapshot
         .stage(
             &format!(".cxweb-quality-{:032x}.tmp", rand::random::<u128>()),
@@ -136,14 +147,7 @@ fn execute_next(
                 |browser, page| crate::reasoning_qualification::check_scope(browser, page, binding),
                 || cancel.is_cancelled(),
             )
-            .map_err(|error| match error.to_string().as_str() {
-                "E_CANCELLED" => "E_CANCELLED",
-                "E_BROWSER_RATE_LIMITED" => "E_BROWSER_RATE_LIMITED",
-                "E_QUALIFICATION_TIMEOUT" => "E_QUALIFICATION_TIMEOUT",
-                "E_WEB_CLEANUP_UNCONFIRMED" => "E_WEB_CLEANUP_UNCONFIRMED",
-                "E_SESSION_SCOPE" => "E_SESSION_SCOPE",
-                _ => "E_QUALITY_BROWSER",
-            })
+            .map_err(|error| diagnostic_code(&error.to_string()))
     })();
     let (record, error) = match response {
         Ok(outcome) if outcome.candidate_label == label => {
@@ -175,13 +179,15 @@ fn execute_next(
                     "E_CANCELLED" => Failure::Cancelled,
                     "E_BROWSER_RATE_LIMITED" => Failure::RateLimited,
                     "E_QUALIFICATION_TIMEOUT" => Failure::Timeout,
-                    "E_SESSION_SCOPE" => Failure::WrongRoute,
+                    "E_SESSION_SCOPE" | "E_MODEL_SELECTION" | "E_MODEL_FIDELITY" => {
+                        Failure::WrongRoute
+                    }
                     _ => Failure::Transport,
                 },
             },
             Some(code),
         ),
     };
-    journal.finish(&case.id, record, now()?)?;
+    journal.finish_detailed(&case.id, record, error, now()?)?;
     error.map_or(Ok(()), Err)
 }

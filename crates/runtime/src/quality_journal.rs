@@ -18,6 +18,48 @@ use std::{
 const SPACING: u64 = 60;
 const RATE_BACKOFF: u64 = 900;
 
+/// Never persist arbitrary browser/transport error text: it may contain data.
+pub(crate) fn diagnostic_code(code: &str) -> &'static str {
+    const CODES: &[&str] = &[
+        "E_CANCELLED",
+        "E_BROWSER_RATE_LIMITED",
+        "E_QUALIFICATION_TIMEOUT",
+        "E_WEB_CLEANUP_UNCONFIRMED",
+        "E_SESSION_SCOPE",
+        "E_QUALIFICATION_SELECT",
+        "E_QUALIFICATION_BASELINE",
+        "E_QUALIFICATION_INSERT",
+        "E_QUALIFICATION_OBSERVE",
+        "E_SEND_SURFACE",
+        "E_SEND_DISABLED",
+        "E_BROWSER_BUSY",
+        "E_BROWSER_UTF16",
+        "E_BROWSER_RESULT_DEPTH",
+        "E_MODEL_SELECTION",
+        "E_COMPOSER_MISMATCH",
+        "E_SUBMISSION_UNCERTAIN",
+        "E_MODEL_FIDELITY",
+        "E_TURN_AMBIGUOUS",
+        "E_USER_MESSAGE_MISMATCH",
+        "E_TURN_ATTRIBUTION",
+        "E_STREAM_REVISION",
+        "E_TOOL_ENVELOPE_FENCED",
+        "E_LOGIN_REQUIRED",
+        "E_BROWSER_VERIFICATION_REQUIRED",
+        "E_QUALITY_CLOCK",
+        "E_QUALITY_WRITE",
+        "E_QUALITY_CHANGED",
+        "E_QUALITY_ATTEMPT",
+        "E_QUALITY_ROUTE",
+        "E_QUALITY_BROWSER",
+    ];
+    CODES
+        .iter()
+        .copied()
+        .find(|known| *known == code)
+        .unwrap_or("E_QUALITY_BROWSER")
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Identity {
@@ -86,6 +128,8 @@ pub struct Attempt {
     pub submitted_at: Option<u64>,
     pub finished_at: Option<u64>,
     pub result: Option<ResultRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_code: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -245,6 +289,7 @@ impl Journal {
                 submitted_at: None,
                 finished_at: None,
                 result: None,
+                failure_code: None,
             },
         );
         self.save(record)?;
@@ -262,6 +307,16 @@ impl Journal {
     }
 
     pub fn finish(&mut self, id: &str, result: ResultRecord, now: u64) -> Result<(), &'static str> {
+        self.finish_detailed(id, result, None, now)
+    }
+
+    pub(crate) fn finish_detailed(
+        &mut self,
+        id: &str,
+        result: ResultRecord,
+        failure_code: Option<&str>,
+        now: u64,
+    ) -> Result<(), &'static str> {
         let mut record = self.record.clone();
         let attempt = record.attempts.get_mut(id).ok_or("E_QUALITY_ATTEMPT")?;
         if attempt.result.is_some()
@@ -283,6 +338,7 @@ impl Journal {
         };
         attempt.finished_at = Some(now);
         attempt.result = Some(result);
+        attempt.failure_code = failure_code.map(|code| diagnostic_code(code).to_owned());
         record.not_before = now.saturating_add(backoff);
         self.save(record)
     }
@@ -305,6 +361,12 @@ fn validate(record: &Record) -> Result<Report, &'static str> {
     let mut pending = 0;
     for (id, attempt) in &record.attempts {
         tally.begin(id)?;
+        if attempt.failure_code.as_deref().is_some_and(|code| {
+            code != diagnostic_code(code)
+                || !matches!(attempt.result, Some(ResultRecord::Failure { .. }))
+        }) {
+            return Err("E_QUALITY_RECORD");
+        }
         if attempt
             .submitted_at
             .is_some_and(|time| time < attempt.started_at)
@@ -352,6 +414,58 @@ mod tests {
                 effort: "xhigh".into(),
             },
         )
+    }
+
+    #[test]
+    fn diagnostics_preserve_known_failure_codes_and_redact_unknown_error_text() {
+        let (path, identity) = setup();
+        let mut journal = Journal::open(&path, "diagnostics", identity.clone(), 1).unwrap();
+        let first = journal.begin_next(1).unwrap().unwrap();
+        journal.submitting(&first.id, 2).unwrap();
+        journal
+            .finish_detailed(
+                &first.id,
+                ResultRecord::Failure {
+                    reason: Failure::Transport,
+                },
+                Some("E_SEND_DISABLED"),
+                3,
+            )
+            .unwrap();
+        let second = journal.begin_next(63).unwrap().unwrap();
+        journal
+            .finish_detailed(
+                &second.id,
+                ResultRecord::Failure {
+                    reason: Failure::Transport,
+                },
+                Some("PRIVATE_ERROR_SENTINEL"),
+                64,
+            )
+            .unwrap();
+        drop(journal);
+        let journal = Journal::open(&path, "diagnostics", identity, 65).unwrap();
+        let report = journal.report().unwrap();
+        assert_eq!(
+            report["attempts"][&first.id]["failure_code"],
+            "E_SEND_DISABLED"
+        );
+        assert_eq!(
+            report["attempts"][&second.id]["failure_code"],
+            "E_QUALITY_BROWSER"
+        );
+        assert!(
+            !serde_json::to_string(&report)
+                .unwrap()
+                .contains("PRIVATE_ERROR_SENTINEL")
+        );
+        assert!(
+            !String::from_utf8(std::fs::read(&journal.path).unwrap())
+                .unwrap()
+                .contains("PRIVATE_ERROR_SENTINEL")
+        );
+        drop(journal);
+        std::fs::remove_dir_all(path).unwrap();
     }
 
     #[test]
@@ -511,6 +625,7 @@ mod tests {
                 submitted_at: None,
                 finished_at: None,
                 result: None,
+                failure_code: None,
             },
         );
         let bytes = serde_json::to_vec(&record).unwrap();

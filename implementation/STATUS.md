@@ -23,6 +23,58 @@ English. The complete installed CLI and App-backend read/patch/final scenarios
 now pass. A fixed message sent from the actual GUI also passed with the owned
 model and effort corroborated by the native turn context.
 
+## Send readiness and Unicode transport recovery (2026-09-20)
+
+- The original protocol-xhigh-sep20 run reached three attempted cases: two exact
+  passes and one generic transport failure immediately after submission intent.
+  Its precise original failure was not retained and cannot be reconstructed.
+  The failed case remains in the denominator and was not resubmitted in that run.
+- Added fixed per-attempt failure codes and content-free browser attribution
+  diagnostics. Unknown error text is redacted and rejected on journal reload.
+  A second, separately bound run using daemon
+  f007ffe6afc11b00a6ac1afcd3eec2490bb73739ac0df2066443974c98787b09
+  reached five cases: four protocol-valid, three task-correct and one transport
+  failure. Case-004's valid-but-wrong result remains a task failure. Case-005
+  failed cleanup while observing a generating Unicode answer; its Chrome process
+  was still alive. Evidence: protocol-diagnostics-xhigh-sep20.json.
+- A controlled real-Chrome test reproduced an immediate E_SEND_DISABLED when
+  editor readiness lagged input by 400 ms. Send now polls a read-only guard for
+  up to two seconds before one click. Cancellation, changed prompt/model, busy
+  generation and permanent disablement do not click. A failed click is never
+  repeated. The regression failed before the change and passes afterward.
+- Another real-Chrome test reproduced a lone UTF-16 surrogate causing a JSON
+  decode failure and terminating the reply reader, leaving Browser.getVersion
+  unusable despite Chrome still running. Bundled DOM results now reject malformed
+  strings/keys before CDP serialization. A generating answer may defer one final
+  high surrogate until its low surrogate arrives; complete text is never repaired
+  or replaced. A completed malformed string is an explicit E_BROWSER_UTF16 error.
+  The live Unicode/cleanup failure is consistent with this defect, but its raw
+  failed frame was not captured, so exact causal attribution remains unproven.
+- A fully delimited malformed JSON reply still fails the waiting operation, but
+  the reader retains frame alignment for cleanup. Oversized, incomplete and I/O
+  framing failures remain terminal. Tests cover both boundaries.
+- Final validation: 309 workspace tests passed, 20 opt-in tests ignored;
+  41 DOM tests passed; the Send, Unicode and rate-limit dialog real-Chrome
+  fixtures were explicitly run and passed separately. Clippy with warnings
+  denied, formatting and release build passed. No synthetic test enters the
+  account-live denominator.
+- Installed daemon updated to
+  f5a8d6ae34b5606df4fdf7b8b13a507f48052365dfb76705c50235821d302d08.
+  Saved-session recovery restored browser/account/model checks. Actual installed
+  CLI 0.155.1 and App backend 0.155.0-alpha.9.2 both passed exact Unicode text
+  generation at 19:55:20 and 19:57:03 UTC, including a non-BMP character, accents,
+  quotes and literal Windows backslashes. Both still return all five reasoning
+  choices and preserved configuration/executable fingerprints. Reports:
+  cli-0.155.1.unicode-text.json and
+  app-backend-0.155.0-alpha.9.2.unicode-text.json. These were backend tests, not
+  fresh GUI observations. Synthetic before/after evidence is recorded in
+  browser-send-unicode-regressions.json.
+- A new separately bound cohort, protocol-unicode-xhigh-sep20, passed its first
+  case at 19:58:36 UTC on the fixed daemon. Its serial runner is configured to
+  continue through case 200, stopping on an operational error and respecting
+  the stored spacing. The archived report is a point-in-time snapshot; read
+  the protected installation journal before continuing or reporting live counts.
+
 ## Durable installed protocol experiment runner (2026-09-20)
 
 - Added runtime-qualify-protocol with an explicit run name and reasoning mode.
