@@ -47,6 +47,7 @@ function updateNativeButton() {
   const running = nativeWaiting || Boolean(nativeOperation);
   $('native-text').disabled = pending || running || preflightPending || discoveryPending || !nativeReady;
   $('native-tools').disabled = $('native-text').disabled;
+  $('native-repair').disabled = $('native-text').disabled;
   $('native-denial').disabled = $('native-text').disabled;
   $('reset-test').disabled = pending || running || preflightPending || discoveryPending || !resetReady;
   $('native-cancel').hidden = !running;
@@ -81,7 +82,7 @@ function renderNative(status) {
       E_NATIVE_PROBE_TEXT: 'The client did not return the exact expected text. No automatic retry was made.',
       E_NATIVE_PROBE_CONFIG: 'The isolated client configuration or account state could not be verified.',
       E_NATIVE_PROBE_DENIAL: 'The command denial could not be verified. No automatic retry was made.',
-      E_NATIVE_PROBE_TEST: 'The fixture test did not return the expected successful result. No automatic retry was made.',
+      E_NATIVE_PROBE_TEST: 'The fixture test sequence did not return the expected results. No automatic retry was made.',
       E_NATIVE_PROBE_ACTION: 'The client requested an operation outside this test. The test was stopped.',
       E_BROWSER_CLOSED: 'The background browser has stopped. Check status to restore the session.',
       E_BROWSER_OTHER_PAGES: 'Other cxweb browser tabs are open. Finish or close them before transferring the session.',
@@ -94,6 +95,10 @@ function renderNative(status) {
       ? `Command denial verified through Codex ${report.client_build}. The read was declined and the final response acknowledged it. Full coding qualification, the actual picker and production activation still need verification.`
       : report.exercise === 'read_patch_test' && report.native_tools_executed === 3
       ? `Read, patch and test verified through Codex ${report.client_build}. The test command returned exit code 0 and the expected output. Full coding qualification, the actual picker and production activation still need verification.`
+      : report.exercise === 'read_test_repair'
+      ? (report.native_tools_executed === 4 && report.exact_text_received === true
+        ? `Test failure and repair verified through Codex ${report.client_build}. The first test failed, Codex repaired the fixture file, and the second test passed. Full coding qualification, the actual picker and production activation still need verification.`
+        : 'The failure and repair test result is incomplete. No repair qualification was recorded.')
       : report.native_tools_executed === 2
       ? `Read and patch verified through Codex ${report.client_build}. Full coding qualification, the actual picker and production activation still need verification.`
       : `Text transport verified through Codex ${report.client_build}. Coding support, the actual picker and production activation still need verification.`;
@@ -238,7 +243,7 @@ function render(status) {
     $('chatgpt').textContent = 'Unverified'; $('connect').textContent = 'Check status';
   }
 }
-const actionButtons = ['connect', 'test-text', 'test-tools', 'background', 'native-text', 'native-tools', 'native-denial', 'reset-test'];
+const actionButtons = ['connect', 'test-text', 'test-tools', 'background', 'native-text', 'native-tools', 'native-repair', 'native-denial', 'reset-test'];
 async function runAction(command, params = {}) {
   if (pending || (nativeOperation && command !== 'status')) return;
   pending = true;
@@ -433,7 +438,7 @@ async function runNativeTest(exercise = 'text') {
     $('native-text-result').textContent = 'Enter the executable, Codex home and working directory before testing the selected client.';
     return;
   }
-  const [id, label] = {text:['native-text', 'Test selected client'], read_patch_test:['native-tools', 'Test coding tools'], denied_read:['native-denial', 'Test command denial']}[exercise];
+  const [id, label] = {text:['native-text', 'Test selected client'], read_patch_test:['native-tools', 'Test coding tools'], read_test_repair:['native-repair', 'Test failure and repair'], denied_read:['native-denial', 'Test command denial']}[exercise];
   const button = $(id);
   button.textContent = 'Waiting for the Codex test...';
   try { await runAction('native_text', target); }
@@ -441,6 +446,7 @@ async function runNativeTest(exercise = 'text') {
 }
 $('native-text').addEventListener('click', () => runNativeTest());
 $('native-tools').addEventListener('click', () => runNativeTest('read_patch_test'));
+$('native-repair').addEventListener('click', () => runNativeTest('read_test_repair'));
 $('native-denial').addEventListener('click', () => runNativeTest('denied_read'));
 $('native-cancel').addEventListener('click', async () => {
   if (!nativeOperation || nativeCancelling || nativeOperation.cancellation_requested) return;

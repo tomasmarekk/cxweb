@@ -18,6 +18,7 @@ pub enum Exercise {
     Text,
     ReadPatch,
     ReadPatchTest,
+    ReadTestRepair,
     DeniedRead,
 }
 
@@ -61,7 +62,7 @@ pub async fn qualify_text(
     .map_err(|_| "E_NATIVE_PROBE_WORKER")?
 }
 
-/// One fixed read/patch/test or command-denial exercise in a disposable workspace. This does not
+/// One fixed read/patch/test/repair or command-denial exercise in a disposable workspace. This does not
 /// certify the complete coding corpus or publish a production coding route.
 pub async fn qualify_tools(
     executable: &Path,
@@ -105,7 +106,8 @@ async fn qualify_owned(
         let mut fixture =
             crate::native_fixture::Fixture::new(directory.join("workspace"), marker.clone());
         fixture.denial = exercise == Exercise::DeniedRead;
-        fixture.test = exercise == Exercise::ReadPatchTest;
+        fixture.test = matches!(exercise, Exercise::ReadPatchTest | Exercise::ReadTestRepair);
+        fixture.repair = exercise == Exercise::ReadTestRepair;
         Arc::new(fixture)
     });
     let expected = fixture
@@ -173,7 +175,9 @@ async fn qualify_owned(
         catalog_codec: codec.id().into(),
         executable_sha256: hash,
         exact_text_received: true,
-        native_tools_executed: if exercise == Exercise::ReadPatchTest {
+        native_tools_executed: if exercise == Exercise::ReadTestRepair {
+            4
+        } else if exercise == Exercise::ReadPatchTest {
             3
         } else if exercise == Exercise::ReadPatch {
             2
@@ -236,7 +240,7 @@ struct Client {
     read_approved: bool,
     read_denied: bool,
     patch_approved: bool,
-    test_approved: bool,
+    tests_approved: u8,
 }
 impl Client {
     async fn send(&mut self, value: Value) -> Result<(), &'static str> {
@@ -288,19 +292,23 @@ impl Client {
                             accepted = !fixture.denial;
                             self.read_approved |= accepted;
                             self.read_denied |= intentional_denial;
-                        } else if !self.test_approved
+                        } else if self.tests_approved < if fixture.repair { 2 } else { 1 }
                             && fixture.approve_test(params)
                             && self.observations.iter().any(|event| {
                                 event["method"] == "item/completed"
                                     && event["params"]["threadId"] == params["threadId"]
                                     && event["params"]["turnId"] == params["turnId"]
-                                    && event["params"]["item"]["type"] == "fileChange"
-                                    && event["params"]["item"]["status"] == "completed"
-                                    && fixture.patch_changes(&event["params"]["item"])
+                                    && if fixture.repair && self.tests_approved == 0 {
+                                        read_result(fixture, &event["params"]["item"])
+                                    } else {
+                                        event["params"]["item"]["type"] == "fileChange"
+                                            && event["params"]["item"]["status"] == "completed"
+                                            && fixture.patch_changes(&event["params"]["item"])
+                                    }
                             })
                         {
                             accepted = true;
-                            self.test_approved = true;
+                            self.tests_approved += 1;
                         }
                     }
                     Some("item/fileChange/requestApproval")
@@ -310,7 +318,14 @@ impl Client {
                             event["method"] == "item/started"
                                 && event["params"]["item"]["id"] == params["itemId"]
                         }) {
-                            accepted = fixture.approve_patch(params, started);
+                            accepted = fixture.approve_patch(params, started)
+                                && (!fixture.repair
+                                    || self.observations.iter().any(|event| {
+                                        event["method"] == "item/completed"
+                                            && event["params"]["threadId"] == params["threadId"]
+                                            && event["params"]["turnId"] == params["turnId"]
+                                            && test_result(fixture, &event["params"]["item"], false)
+                                    }));
                             self.patch_approved |= accepted;
                         }
                     }
@@ -514,6 +529,13 @@ async fn run_client(
         }
         std::fs::write(cwd.join("probe-input.txt"), format!("{}\n", fixture.marker))
             .map_err(|_| "E_NATIVE_PROBE_DIRECTORY")?;
+        if fixture.repair {
+            std::fs::write(
+                cwd.join("probe-output.txt"),
+                format!("{}\n", crate::native_fixture::BROKEN_OUTPUT),
+            )
+            .map_err(|_| "E_NATIVE_PROBE_DIRECTORY")?;
+        }
     }
     let catalog = home.join("catalog.json");
     std::fs::write(&catalog, endpoint.catalog.to_string()).map_err(|_| "E_NATIVE_PROBE_CONFIG")?;
@@ -564,7 +586,7 @@ async fn run_client(
         read_approved: false,
         read_denied: false,
         patch_approved: false,
-        test_approved: false,
+        tests_approved: 0,
     };
     let result = tokio::select! {
         () = cancellation.cancelled() => Err("E_NATIVE_PROBE_CANCELLED"),
@@ -646,6 +668,31 @@ fn verify_denial(
     Ok(())
 }
 
+fn read_result(fixture: &crate::native_fixture::Fixture, item: &Value) -> bool {
+    item["type"] == "commandExecution"
+        && item["status"] == "completed"
+        && item["exitCode"] == 0
+        && fixture.approve_read(item)
+        && item["aggregatedOutput"]
+            .as_str()
+            .is_some_and(|s| s.trim() == fixture.marker)
+}
+
+fn test_result(fixture: &crate::native_fixture::Fixture, item: &Value, passed: bool) -> bool {
+    item["type"] == "commandExecution"
+        && (item["status"] == "completed" || (!passed && item["status"] == "failed"))
+        && item["exitCode"] == if passed { 0 } else { 1 }
+        && fixture.approve_test(item)
+        && item["aggregatedOutput"].as_str().is_some_and(|s| {
+            s.trim()
+                == if passed {
+                    crate::native_fixture::TEST_PASSED
+                } else {
+                    crate::native_fixture::TEST_FAILED
+                }
+        })
+}
+
 fn verify_tools(
     fixture: &crate::native_fixture::Fixture,
     events: &[Value],
@@ -669,7 +716,16 @@ fn verify_tools(
         .iter()
         .filter(|item| item["type"] == "fileChange")
         .collect();
-    if commands.len() != if fixture.test { 2 } else { 1 } || patches.len() != 1 {
+    if commands.len()
+        != if fixture.repair {
+            3
+        } else if fixture.test {
+            2
+        } else {
+            1
+        }
+        || patches.len() != 1
+    {
         return Err("E_NATIVE_PROBE_ACTION");
     }
     let tool_order: Vec<_> = items
@@ -680,7 +736,14 @@ fn verify_tools(
                 .filter(|kind| matches!(*kind, "commandExecution" | "fileChange"))
         })
         .collect();
-    let expected_order: &[&str] = if fixture.test {
+    let expected_order: &[&str] = if fixture.repair {
+        &[
+            "commandExecution",
+            "commandExecution",
+            "fileChange",
+            "commandExecution",
+        ]
+    } else if fixture.test {
         &["commandExecution", "fileChange", "commandExecution"]
     } else {
         &["commandExecution", "fileChange"]
@@ -690,24 +753,13 @@ fn verify_tools(
     }
     let command = commands[0];
     let patch = patches[0];
-    if fixture.test {
-        let test = commands[1];
-        if test["status"] != "completed"
-            || test["exitCode"] != 0
-            || !fixture.approve_test(test)
-            || test["aggregatedOutput"]
-                .as_str()
-                .is_none_or(|s| s.trim() != crate::native_fixture::TEST_PASSED)
-        {
-            return Err("E_NATIVE_PROBE_TEST");
-        }
+    if fixture.test
+        && (!test_result(fixture, commands[if fixture.repair { 2 } else { 1 }], true)
+            || (fixture.repair && !test_result(fixture, commands[1], false)))
+    {
+        return Err("E_NATIVE_PROBE_TEST");
     }
-    if command["status"] != "completed"
-        || command["exitCode"] != 0
-        || !fixture.approve_read(command)
-        || !command["aggregatedOutput"]
-            .as_str()
-            .is_some_and(|s| s.contains(&fixture.marker))
+    if !read_result(fixture, command)
         || patch["status"] != "completed"
         || !fixture.patch_changes(patch)
     {
@@ -932,8 +984,73 @@ mod tests {
         std::fs::remove_dir_all(directory).unwrap();
     }
 
+    #[test]
+    fn repair_requires_a_real_failure_before_the_patch_and_success_afterward() {
+        let directory = std::env::temp_dir().join(format!(
+            "cxweb-repair-evidence-{:032x}",
+            rand::random::<u128>()
+        ));
+        protected_directory(&directory).unwrap();
+        let mut fixture =
+            crate::native_fixture::Fixture::new(directory.clone(), "private-marker".into());
+        fixture.test = true;
+        fixture.repair = true;
+        for name in ["probe-input.txt", "probe-output.txt"] {
+            std::fs::write(directory.join(name), "private-marker\n").unwrap();
+        }
+        let event = |item| json!({"method":"item/completed","params":{"threadId":"thread","turnId":"turn","item":item}});
+        let read = event(
+            json!({"type":"commandExecution","status":"completed","exitCode":0,"command":crate::native_fixture::READ,"cwd":directory,"aggregatedOutput":"private-marker\n"}),
+        );
+        let failed = event(
+            json!({"type":"commandExecution","status":"failed","exitCode":1,"command":crate::native_fixture::TEST,"cwd":directory,"aggregatedOutput":crate::native_fixture::TEST_FAILED}),
+        );
+        let patch = event(
+            json!({"type":"fileChange","status":"completed","changes":[{"kind":{"type":"update","movePath":null},"path":"probe-output.txt","diff":format!("@@ -1 +1 @@\n-{}\n+private-marker\n", crate::native_fixture::BROKEN_OUTPUT)}]}),
+        );
+        let passed = event(
+            json!({"type":"commandExecution","status":"completed","exitCode":0,"command":crate::native_fixture::TEST,"cwd":directory,"aggregatedOutput":crate::native_fixture::TEST_PASSED}),
+        );
+        let valid = vec![read.clone(), failed.clone(), patch.clone(), passed.clone()];
+        let check = |events: &[Value]| verify_tools(&fixture, events, "thread", "turn");
+        assert_eq!(check(&valid), Ok(()));
+        for events in [
+            vec![read.clone(), patch.clone(), passed.clone()],
+            vec![read.clone(), patch.clone(), failed.clone(), passed.clone()],
+            vec![read.clone(), passed.clone(), patch.clone(), passed.clone()],
+            vec![read.clone(), failed.clone(), patch.clone(), failed.clone()],
+        ] {
+            assert!(check(&events).is_err());
+        }
+        for (index, pointer, value) in [
+            (1, "/params/threadId", json!("other")),
+            (1, "/params/turnId", json!("other")),
+            (1, "/params/item/exitCode", json!(0)),
+            (
+                1,
+                "/params/item/aggregatedOutput",
+                json!("unrelated failure"),
+            ),
+            (1, "/params/item/command", json!("exit 1")),
+            (2, "/params/item/changes/0/path", json!("probe-input.txt")),
+            (
+                2,
+                "/params/item/changes/0/kind/movePath",
+                json!("other.txt"),
+            ),
+            (2, "/params/item/changes/0/diff", json!("unrelated edit")),
+        ] {
+            let mut changed = valid.clone();
+            *changed[index].pointer_mut(pointer).unwrap() = value;
+            assert!(check(&changed).is_err());
+        }
+        std::fs::write(directory.join("probe-output.txt"), "still incorrect\n").unwrap();
+        assert!(check(&valid).is_err());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
     #[tokio::test]
-    #[ignore = "requires CXWEB_NATIVE_PROBE_BACKEND; executes exact local read/patch/test and denial fixtures through a reviewed native backend"]
+    #[ignore = "requires CXWEB_NATIVE_PROBE_BACKEND; executes exact local read/patch/test/repair and denial fixtures through a reviewed native backend"]
     async fn actual_native_backend_executes_guarded_tools_and_denial_fixtures() {
         use axum::{
             body::{Body, to_bytes},
@@ -951,11 +1068,13 @@ mod tests {
         let target = TargetPathGuard::capture(&executable, false).unwrap();
         let hash = native_preflight::fingerprint(&executable).await.unwrap();
         let (_, codec) = native_preflight::reviewed(&hash).unwrap();
-        for (denial, test, corrupt_output) in [
-            (false, false, false),
-            (true, false, false),
-            (false, true, false),
-            (false, true, true),
+        for (denial, test, repair, corrupt_output) in [
+            (false, false, false, false),
+            (true, false, false, false),
+            (false, true, false, false),
+            (false, true, false, true),
+            (false, true, true, false),
+            (false, true, true, true),
         ] {
             let directory = std::env::temp_dir().join(format!(
                 "cxweb-native-tools-{:032x}",
@@ -968,6 +1087,7 @@ mod tests {
             );
             fixture.denial = denial;
             fixture.test = test;
+            fixture.repair = repair;
             let fixture = Arc::new(fixture);
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let state = crate::ProbeState::new(listener.local_addr().unwrap().port());
@@ -988,7 +1108,7 @@ mod tests {
                     let body = to_bytes(request.into_body(), 8 * 1024 * 1024).await.unwrap();
                     let payload = strict_json::parse(&body, 8 * 1024 * 1024).unwrap();
                     let index = count.fetch_add(1, Ordering::SeqCst);
-                    let name = if index == 0 || (index == 2 && fixture.test) { "exec_command" } else { "apply_patch" };
+                    let name = if index == 0 || (fixture.repair && matches!(index, 1 | 3)) || (!fixture.repair && index == 2 && fixture.test) { "exec_command" } else { "apply_patch" };
                     let namespace = payload["tools"].as_array().unwrap().iter().find_map(|tool| {
                         (tool["type"] == "namespace" && tool["tools"].as_array().is_some_and(|children|
                             children.iter().any(|child| child["name"] == name)))
@@ -999,6 +1119,34 @@ mod tests {
                             native_name: name.into(), namespace, kind: ToolKind::Function,
                             input: json!({"cmd":crate::native_fixture::READ,"login":false,"max_output_tokens":1024}),
                         }]),
+                        1 if fixture.repair => {
+                            assert!(payload["input"].as_array().unwrap().iter().any(|item|
+                                item["type"] == "function_call_output" && item["output"].to_string().contains(&fixture.marker)));
+                            ValidatedOutput::Calls(vec![ValidatedCall {native_name:name.into(), namespace,
+                                kind:ToolKind::Function, input:json!({"cmd":crate::native_fixture::TEST,"login":false,"max_output_tokens":1024})}])
+                        }
+                        2 if fixture.repair => {
+                            assert!(payload["input"].as_array().unwrap().iter().any(|item|
+                                item["type"] == "function_call_output" && item["output"].to_string().contains(crate::native_fixture::TEST_FAILED)));
+                            assert_eq!(std::fs::read_to_string(fixture.cwd.join("probe-output.txt")).unwrap(), format!("{}\n", crate::native_fixture::BROKEN_OUTPUT));
+                            ValidatedOutput::Calls(vec![ValidatedCall {native_name:name.into(), namespace,
+                                kind:ToolKind::Custom, input:json!(fixture.patch())}])
+                        }
+                        3 if fixture.repair => {
+                            assert!(payload["input"].as_array().unwrap().iter().any(|item| item["type"] == "custom_tool_call_output"));
+                            if corrupt_output {
+                                std::fs::write(fixture.cwd.join("probe-output.txt"), format!("{}\n", crate::native_fixture::BROKEN_OUTPUT)).unwrap();
+                            }
+                            ValidatedOutput::Calls(vec![ValidatedCall {native_name:name.into(), namespace,
+                                kind:ToolKind::Function, input:json!({"cmd":crate::native_fixture::TEST,"login":false,"max_output_tokens":1024})}])
+                        }
+                        4 if fixture.repair => {
+                            let outputs: Vec<_> = payload["input"].as_array().unwrap().iter()
+                                .filter(|item| item["type"] == "function_call_output").collect();
+                            let expected_output = if corrupt_output { crate::native_fixture::TEST_FAILED } else { crate::native_fixture::TEST_PASSED };
+                            assert!(outputs.last().unwrap()["output"].to_string().contains(expected_output));
+                            ValidatedOutput::Final(fixture.expected().into())
+                        }
                         1 if fixture.denial => {
                             let outputs: Vec<_> = payload["input"].as_array().unwrap().iter()
                                 .filter(|item| item["type"] == "function_call_output").collect();
@@ -1062,12 +1210,14 @@ mod tests {
             };
             assert_eq!(
                 result, expected,
-                "denial={denial}, test={test}, corrupt_output={corrupt_output}"
+                "denial={denial}, test={test}, repair={repair}, corrupt_output={corrupt_output}"
             );
             assert_eq!(
                 count.load(Ordering::SeqCst),
                 if denial {
                     2
+                } else if repair {
+                    5
                 } else if test {
                     4
                 } else {

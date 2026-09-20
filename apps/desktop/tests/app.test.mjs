@@ -731,6 +731,42 @@ test('native read, patch and test exercise is explicit and never claims full qua
 });
 
 
+test('native repair test is explicit and requires its own completed evidence', async () => {
+  let finish;
+  const initial = {...runningNative, native_operation:null};
+  const ui = panel(async command => command === 'native_text'
+    ? new Promise(resolve => { finish = resolve; }) : initial);
+  await flush(); fillTarget(ui);
+  assert.deepEqual(ui.calls, ['status']);
+  const action = ui.nodes.get('native-repair').click();
+  await ui.nodes.get('native-repair').click();
+  await ui.nodes.get('native-tools').click();
+  assert.deepEqual(ui.calls, ['status','native_text']);
+  assert.equal(ui.requests.at(-1).params.exercise, 'read_test_repair');
+  assert.equal(ui.nodes.get('native-repair').disabled, true);
+  finish({...initial,native_text_report:{exercise:'read_test_repair',client_build:'fixture',native_tools_executed:4,exact_text_received:true}});
+  await action;
+  assert.match(ui.nodes.get('native-text-result').textContent, /Test failure and repair verified/);
+  assert.match(ui.nodes.get('native-text-result').textContent, /first test failed.*second test passed/);
+  assert.match(ui.nodes.get('native-text-result').textContent, /Full coding qualification.*still need verification/);
+  assert.equal(ui.nodes.get('native-repair').textContent, 'Test failure and repair');
+  assert.equal(ui.nodes.get('native-repair').disabled, false);
+  assert.equal(ui.nodes.get('codex').textContent, 'Awaiting integration');
+});
+
+test('incomplete repair evidence does not become text or coding success', async () => {
+  for (const report of [
+    {exercise:'read_test_repair',client_build:'fixture',native_tools_executed:3,exact_text_received:true},
+    {exercise:'read_test_repair',client_build:'fixture',native_tools_executed:4,exact_text_received:false}
+  ]) {
+    const ui = panel(async () => ({...runningNative,native_operation:null,native_text_report:report}));
+    await flush();
+    assert.match(ui.nodes.get('native-text-result').textContent, /result is incomplete/);
+    assert.doesNotMatch(ui.nodes.get('native-text-result').textContent, /verified through/);
+    assert.equal(ui.nodes.get('codex').textContent, 'Awaiting integration');
+  }
+});
+
 test('native denial test is explicit, serialized and reports denial instead of execution', async () => {
   let finish;
   const initial = {...runningNative, native_operation:null};

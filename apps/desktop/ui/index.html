@@ -74,6 +74,8 @@
       <button id="native-text" class="secondary" disabled>Test selected client</button>
       <button id="native-tools" class="secondary" disabled>Test coding tools</button>
       <p>This tool test asks Codex to read one test file, create one file and run a command that checks the result in a disposable workspace. It uses additional ChatGPT responses. Only these exact fixture operations are allowed.</p>
+      <button id="native-repair" class="secondary" disabled>Test failure and repair</button>
+      <p>This test starts with an incorrect fixture file. Codex must observe a failing test, repair that file and rerun the test successfully. It uses additional ChatGPT responses in an isolated workspace.</p>
       <button id="native-denial" class="secondary" disabled>Test command denial</button>
       <p>This test asks Codex to read one test file, declines the request and verifies the denial reaches the final response. It uses additional ChatGPT responses.</p>
       <button id="native-cancel" class="secondary" hidden disabled>Cancel client test</button>

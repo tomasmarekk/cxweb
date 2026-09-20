@@ -1,4 +1,4 @@
-//! Exact operations for isolated native read/patch/test and denial diagnostics.
+//! Exact operations for isolated native read/patch/test/repair and denial diagnostics.
 //! This policy never executes tools and is never installed on production routes.
 use cxweb_codex_adapter::strict_json;
 use serde_json::Value;
@@ -12,12 +12,15 @@ use std::{
 pub(crate) const READ: &str = "Get-Content -LiteralPath './probe-input.txt'";
 pub(crate) const DENIED: &str = "cxweb native read was denied";
 pub(crate) const TEST_PASSED: &str = "cxweb fixture tests passed";
+pub(crate) const TEST_FAILED: &str = "cxweb fixture tests failed";
+pub(crate) const BROKEN_OUTPUT: &str = "incorrect fixture output";
 pub(crate) const TEST: &str = "if ((Get-Content -LiteralPath './probe-output.txt' -Raw -ErrorAction Stop) -ceq (Get-Content -LiteralPath './probe-input.txt' -Raw -ErrorAction Stop)) { Write-Output 'cxweb fixture tests passed'; exit 0 } else { Write-Output 'cxweb fixture tests failed'; exit 1 }";
 const ERROR: &str = "E_NATIVE_PROBE_ACTION";
 
 pub(crate) struct Fixture {
     pub denial: bool,
     pub test: bool,
+    pub repair: bool,
     pub cwd: PathBuf,
     pub marker: String,
     shells: Vec<PathBuf>,
@@ -47,6 +50,7 @@ impl Fixture {
         Self {
             denial: false,
             test: false,
+            repair: false,
             cwd,
             marker,
             shells,
@@ -68,6 +72,11 @@ impl Fixture {
                 "Use exec_command exactly once with cmd exactly {READ:?}, login=false and the current working directory. The user will deny this test command. Wait for the actual tool result. If the command is denied, return exactly: {DENIED}. Do not retry, run a different command, modify files, request elevated permissions or claim you read the file."
             );
         }
+        if self.repair {
+            return format!(
+                "Use exec_command with cmd exactly {READ:?}, login=false and the current working directory. Then run exec_command with cmd exactly {TEST:?} and login=false. The fixture probe-output.txt initially contains the single incorrect line {BROKEN_OUTPUT:?}. Wait for the test result; it must fail with exit code 1 and output {TEST_FAILED:?}. Only after observing that failure, use apply_patch exactly once to update probe-output.txt by replacing that incorrect line with the exact line read from probe-input.txt, followed by a newline. Wait for the patch result, then run the same test command again. Return exactly {TEST_PASSED:?} only after the second test exits with code 0 and prints that text. Do not run other commands, edit other files, request elevated permissions or access the network."
+            );
+        }
         if self.test {
             return format!(
                 "Use exec_command with cmd exactly {READ:?}, login=false and the current working directory. Then use the apply_patch custom tool exactly once to add probe-output.txt containing the exact line read followed by a newline. After the patch succeeds, use exec_command with cmd exactly {TEST:?}, login=false and the current working directory. Wait for each actual tool result. Return exactly {TEST_PASSED:?} only if the test command exits with code 0 and prints that text. Do not claim the test passed before observing its result. Do not run other commands, change other files, request elevated permissions or access the network."
@@ -78,6 +87,12 @@ impl Fixture {
         )
     }
     pub fn patch(&self) -> String {
+        if self.repair {
+            return format!(
+                "*** Begin Patch\n*** Update File: probe-output.txt\n@@\n-{BROKEN_OUTPUT}\n+{}\n*** End Patch",
+                self.marker
+            );
+        }
         format!(
             "*** Begin Patch\n*** Add File: probe-output.txt\n+{}\n*** End Patch",
             self.marker
@@ -114,7 +129,8 @@ impl Fixture {
                         .as_str()
                         .is_some_and(|a| self.command_arguments(a, READ))
             }
-            1 if !self.denial => {
+            1 if self.repair => self.test_delivery(item),
+            step if !self.denial && step == if self.repair { 2 } else { 1 } => {
                 item["type"] == "custom_tool_call"
                     && item["name"] == "apply_patch"
                     && namespace(item)
@@ -122,17 +138,14 @@ impl Fixture {
                         .as_str()
                         .is_some_and(|s| s == self.patch() || s == self.patch() + "\n")
             }
-            2 if self.test && !self.denial => {
-                item["type"] == "function_call"
-                    && item["name"] == "exec_command"
-                    && namespace(item)
-                    && item["arguments"]
-                        .as_str()
-                        .is_some_and(|a| self.command_arguments(a, TEST))
+            step if self.test && !self.denial && step == if self.repair { 3 } else { 2 } => {
+                self.test_delivery(item)
             }
             step if step
                 == if self.denial {
                     1
+                } else if self.repair {
+                    4
                 } else if self.test {
                     3
                 } else {
@@ -154,6 +167,14 @@ impl Fixture {
         }
         delivered.insert(id.into(), hash);
         Ok(())
+    }
+    fn test_delivery(&self, item: &Value) -> bool {
+        item["type"] == "function_call"
+            && item["name"] == "exec_command"
+            && namespace(item)
+            && item["arguments"]
+                .as_str()
+                .is_some_and(|a| self.command_arguments(a, TEST))
     }
     fn command_arguments(&self, text: &str, command: &str) -> bool {
         let Ok(value) = strict_json::parse(text.as_bytes(), 16 * 1024) else {
@@ -233,11 +254,19 @@ impl Fixture {
     pub fn patch_changes(&self, item: &Value) -> bool {
         item["changes"].as_array().is_some_and(|changes| {
             changes.len() == 1
-                && changes[0]["kind"]["type"] == "add"
+                && changes[0]["kind"]["type"] == if self.repair { "update" } else { "add" }
+                && changes[0]["kind"]
+                    .get("movePath")
+                    .is_none_or(Value::is_null)
                 && changes[0]["path"].as_str().is_some_and(|p| {
                     p == "probe-output.txt" || same_path(p, &self.cwd.join("probe-output.txt"))
                 })
-                && changes[0]["diff"] == self.marker.clone() + "\n"
+                && changes[0]["diff"]
+                    == if self.repair {
+                        format!("@@ -1 +1 @@\n-{BROKEN_OUTPUT}\n+{}\n", self.marker)
+                    } else {
+                        self.marker.clone() + "\n"
+                    }
         })
     }
 }
@@ -389,6 +418,47 @@ mod tests {
             !fixture.approve_test(
                 &json!({"cwd":fixture.cwd,"command":TEST,"networkApprovalContext":{}})
             )
+        );
+    }
+
+    #[test]
+    fn repair_requires_failed_test_step_then_exact_update_and_another_test() {
+        let mut fixture = fixture();
+        fixture.test = true;
+        fixture.repair = true;
+        let first = response("read", read(json!({"cmd":READ,"login":false})));
+        let failed_test = response("failed_test", read(json!({"cmd":TEST,"login":false})));
+        let patch = response(
+            "patch",
+            json!({"type":"custom_tool_call","name":"apply_patch","input":fixture.patch()}),
+        );
+        let passed_test = response("passed_test", read(json!({"cmd":TEST,"login":false})));
+        let final_text = response(
+            "final",
+            json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":TEST_PASSED}]}),
+        );
+        fixture.check_delivery(&first).unwrap();
+        assert!(fixture.check_delivery(&patch).is_err());
+        fixture.check_delivery(&failed_test).unwrap();
+        assert!(fixture.check_delivery(&final_text).is_err());
+        for invalid in [
+            patch.replace("Update File", "Add File"),
+            patch.replace("probe-output.txt", "probe-input.txt"),
+            patch.replace(BROKEN_OUTPUT, "unrelated content"),
+        ] {
+            assert!(fixture.check_delivery(&invalid).is_err());
+        }
+        fixture.check_delivery(&patch).unwrap();
+        assert!(fixture.check_delivery(&final_text).is_err());
+        fixture.check_delivery(&passed_test).unwrap();
+        fixture.check_delivery(&final_text).unwrap();
+        for accepted in [&first, &failed_test, &patch, &passed_test, &final_text] {
+            fixture.check_delivery(accepted).unwrap();
+        }
+        assert!(
+            fixture
+                .check_delivery(&passed_test.replace("passed_test", "extra_test"))
+                .is_err()
         );
     }
 

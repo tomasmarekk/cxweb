@@ -1,0 +1,45 @@
+{
+  "schema": "cxweb.runtime-native-repair.v1",
+  "observed_at": "2026-09-20T04:20:25Z",
+  "evidence_level": "mock_integration",
+  "result": "PASS actual native read, failing test, file update and successful retest with synthetic model responses",
+  "native_backends": [
+    {
+      "build": "0.155.1",
+      "sha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+      "read_test_repair": "PASS",
+      "failed_retest_rejects_fabricated_success": "PASS"
+    },
+    {
+      "build": "0.155.0-alpha.9.2",
+      "sha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+      "read_test_repair": "PASS",
+      "failed_retest_rejects_fabricated_success": "PASS"
+    }
+  ],
+  "command": "Set CXWEB_NATIVE_PROBE_BACKEND to the independently selected reviewed executable; cargo test -p cxweb-runtime actual_native_backend_executes_guarded_tools_and_denial_fixtures -- --ignored --nocapture",
+  "checks": {
+    "actual_native_execution": true,
+    "synthetic_model_responses": true,
+    "private_signed_out_native_home_and_workspace": true,
+    "fixture_initial_output_is_incorrect": true,
+    "first_test_exits_one_with_expected_failure_output": true,
+    "failure_returns_to_following_model_request": true,
+    "repair_approval_requires_observed_failure_in_same_thread_and_turn": true,
+    "only_exact_fixture_update_is_delivered_and_approved": true,
+    "repair_cannot_move_file_or_modify_input": true,
+    "retest_runs_after_completed_patch": true,
+    "success_requires_zero_exit_expected_output_and_correct_files": true,
+    "failed_retest_returns_to_model_and_cannot_be_reported_as_success": true,
+    "duplicate_delivery_does_not_advance_fixture": true,
+    "bridge_does_not_execute_model_tools": true,
+    "no_user_account_or_configuration_changes": true
+  },
+  "not_run": [
+    "This repair exercise through an authenticated ChatGPT web model",
+    "Actual Codex App renderer and picker",
+    "Full 20-exercise coding corpus per primary pair",
+    "200-response reliability experiment per exported route",
+    "Production activation and native subscription coexistence"
+  ]
+}

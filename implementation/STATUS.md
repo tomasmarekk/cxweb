@@ -21,6 +21,38 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Native failed-test repair exercise (2026-09-20)
+
+- Added the explicit ReadTestRepair diagnostic and Test failure and repair UI
+  action. An isolated workspace starts with an incorrect output file. Codex
+  reads the input, runs a genuinely failing comparison, updates the exact output
+  line, runs the same test again and returns the verified final result. The
+  bridge validates tool requests; the native backend executes them.
+- Repair approval requires the expected completed failure attributed to the
+  same thread/turn. Only the fixed update diff and target file are accepted;
+  moves, input edits, extra commands, skipped/reordered tests and early final
+  claims are refused. Successful verification requires real files plus ordered
+  native completion events, exit codes and outputs. Delivery replay keeps the
+  original receipt without advancing the exercise twice.
+- Both reviewed native backends (CLI 0.155.1 and App backend
+  0.155.0-alpha.9.2) passed actual execution with synthetic model responses. A
+  second case corrupts only the disposable output after the repair: the actual
+  retest then fails, its output returns to the model request, and a fabricated
+  successful final response is rejected. Existing read/patch/test and denial
+  scenarios passed in the same runs. No graphical application was launched.
+- The UI serializes the new action with other tests, exposes the existing
+  cancellation flow and does not label incomplete repair evidence as text or
+  coding success. A passing exercise still leaves integration unqualified.
+- Validation: workspace 252 passed / 12 opt-in ignored; desktop UI 56 passed;
+  both actual-backend opt-in runs passed; Clippy with warnings denied, Rust
+  formatting, diff checks and release CLI/daemon/desktop builds passed. Evidence:
+  integration-tests/compatibility/runtime-native-repair-windows.json.
+- NOT RUN: this exercise through authenticated ChatGPT, actual App picker, the
+  complete coding/reliability corpus, production activation and native account
+  coexistence. Synthetic response selection does not establish live model
+  reasoning or coding reliability. The saved-profile manual-login probe remains
+  separate from these disposable native tests.
+
 ## Explicit background startup verification retry (2026-09-20)
 
 - An installed host can explicitly repeat a completed transient browser startup
