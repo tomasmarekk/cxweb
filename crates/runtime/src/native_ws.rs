@@ -35,6 +35,11 @@ impl SocketRoute {
     }
 }
 
+pub(crate) struct ConnectionContext {
+    pub web: Option<crate::gateway::Gateway>,
+    pub health: Option<crate::native_health::Tracker>,
+}
+
 pub(crate) async fn upgrade(
     base: &str,
     route: SocketRoute,
@@ -42,8 +47,9 @@ pub(crate) async fn upgrade(
     upgrade: WebSocketUpgrade,
     query: Option<&str>,
     headers: HeaderMap,
-    web: Option<crate::gateway::Gateway>,
+    context: ConnectionContext,
 ) -> Response<Body> {
+    let ConnectionContext { web, health } = context;
     let Ok(permit) = slots.try_acquire_owned() else {
         return unavailable("E_NATIVE_BUSY");
     };
@@ -84,6 +90,10 @@ pub(crate) async fn upgrade(
     let config = WebSocketConfig::default()
         .max_message_size(Some(LIMIT))
         .max_frame_size(Some(LIMIT));
+    let observation = health.map(|health| {
+        let sequence = health.begin();
+        (health, sequence)
+    });
     let connected = tokio::time::timeout(
         Duration::from_secs(15),
         tokio_tungstenite::connect_async_with_config(request, Some(config), false),
@@ -91,24 +101,44 @@ pub(crate) async fn upgrade(
     .await;
     let (upstream, handshake) = match connected {
         Ok(Ok(value)) => value,
-        Ok(Err(tokio_tungstenite::tungstenite::Error::Http(response)))
-            if !response.status().is_redirection() =>
-        {
+        Ok(Err(tokio_tungstenite::tungstenite::Error::Http(response))) => {
+            if let Some((health, sequence)) = &observation {
+                let outcome = crate::native_health::Outcome::status(response.status());
+                health.observe(
+                    *sequence,
+                    if outcome == crate::native_health::Outcome::Received {
+                        crate::native_health::Outcome::RequestRejected
+                    } else {
+                        outcome
+                    },
+                );
+            }
+            if response.status().is_redirection() {
+                return unavailable("E_NATIVE_WEBSOCKET");
+            }
             let (parts, body) = response.into_parts();
             let mut outgoing = Response::new(Body::from(body.unwrap_or_default()));
             *outgoing.status_mut() = parts.status;
             *outgoing.headers_mut() = end_to_end_headers(&parts.headers);
             return outgoing;
         }
-        _ => return unavailable("E_NATIVE_WEBSOCKET"),
+        _ => {
+            if let Some((health, sequence)) = &observation {
+                health.observe(*sequence, crate::native_health::Outcome::TransportError);
+            }
+            return unavailable("E_NATIVE_WEBSOCKET");
+        }
     };
+    if let Some((health, sequence)) = &observation {
+        health.observe(*sequence, crate::native_health::Outcome::Connected);
+    }
     let web = web.map(|gateway| crate::web_ws::Connection::new(gateway, &headers));
     let mut response = upgrade
         .max_message_size(LIMIT)
         .max_frame_size(LIMIT)
         .on_upgrade(move |socket| async move {
             let _permit = permit;
-            relay(socket, upstream, route, web).await;
+            relay(socket, upstream, route, web, observation).await;
         });
     for (name, value) in &end_to_end_headers(handshake.headers()) {
         if !name.as_str().starts_with("sec-websocket-") && name != "content-length" {
@@ -166,6 +196,7 @@ async fn relay(
     mut upstream: WebSocketStream<MaybeTlsStream<TcpStream>>,
     route: SocketRoute,
     mut web: Option<crate::web_ws::Connection>,
+    observation: Option<(crate::native_health::Tracker, u64)>,
 ) {
     let mut native_pending = 0usize;
     loop {
@@ -192,7 +223,7 @@ async fn relay(
                                     let _ = local.send(LocalMessage::Text(crate::web_ws::error(409, "E_WEBSOCKET_BUSY").to_string().into())).await;
                                     return false;
                                 }
-                                return serve_owned(&mut local, &mut upstream, web, value).await;
+                                return serve_owned(&mut local, &mut upstream, web, value, &observation).await;
                             }
                             // Validate model fields on every message, including
                             // reused connections. Client binary frames remain unqualified.
@@ -216,9 +247,18 @@ async fn relay(
                         }
                         LocalMessage::Binary(_) => return false,
                     };
-                    upstream.send(message).await.is_ok()
+                    let sent = upstream.send(message).await.is_ok();
+                    if !sent && let Some((health, sequence)) = &observation {
+                        health.observe(*sequence, crate::native_health::Outcome::StreamError);
+                    }
+                    sent
                 }
                 incoming = upstream.next() => {
+                    if matches!(&incoming, Some(Err(_)))
+                        && let Some((health, sequence)) = &observation
+                    {
+                        health.observe(*sequence, crate::native_health::Outcome::StreamError);
+                    }
                     let Some(Ok(message)) = incoming else { return false; };
                     let message = match message {
                         Message::Text(text) => {
@@ -253,6 +293,7 @@ async fn serve_owned(
     upstream: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
     web: &mut crate::web_ws::Connection,
     value: serde_json::Value,
+    observation: &Option<(crate::native_health::Tracker, u64)>,
 ) -> bool {
     let prepared = match web.prepare(value) {
         Ok(value) => value,
@@ -309,6 +350,9 @@ async fn serve_owned(
                 }
             }
             incoming = upstream.next() => {
+                if matches!(&incoming, Some(Err(_))) && let Some((health, sequence)) = observation {
+                    health.observe(*sequence, crate::native_health::Outcome::StreamError);
+                }
                 match incoming {
                     Some(Ok(Message::Ping(data))) => {
                         if upstream.send(Message::Pong(data)).await.is_err() { return false; }
@@ -356,6 +400,7 @@ mod tests {
                 upstream_listener.local_addr().unwrap()
             ))
             .unwrap();
+            let observed_transport = native.health.clone();
             let received = Arc::new(AtomicUsize::new(0));
             let counter = received.clone();
             let upstream_task = tokio::spawn(async move {
@@ -434,6 +479,11 @@ mod tests {
                     .contains("E_WEB_CAPABILITY_UNSUPPORTED")
             );
             assert_eq!(received.load(Ordering::SeqCst), 4);
+            assert_eq!(
+                observed_transport.snapshot(),
+                None,
+                "standalone realtime must not certify subscription transport"
+            );
             task.abort();
             upstream_task.abort();
         }
@@ -544,6 +594,11 @@ mod tests {
             response.headers()["x-codex-turn-state"],
             "opaque-test-state"
         );
+        #[cfg(windows)]
+        assert_eq!(
+            control.health().native.unwrap().outcome,
+            crate::native_health::Outcome::Connected
+        );
         for text in [
             r#"{"type":"response.create", "model":"native", "input":"first"}"#,
             r#"{"type":"response.create","model":"native","previous_response_id":"opaque","input":[]}"#,
@@ -581,7 +636,7 @@ mod tests {
 
     #[tokio::test]
     async fn denied_upgrade_preserves_native_failure_and_redirect_is_not_returned() {
-        for (status, expected) in [(401, 401), (302, 502)] {
+        for (status, expected) in [(401, 401), (302, 502), (200, 200)] {
             let native_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let address = native_listener.local_addr().unwrap();
             let upstream = tokio::spawn(async move {
@@ -609,6 +664,8 @@ mod tests {
                 Arc::new(UnqualifiedProvider),
             );
             let url = format!("{}/responses", gateway.base_url()).replacen("http:", "ws:", 1);
+            #[cfg(windows)]
+            let observed = gateway.clone();
             let task = tokio::spawn(async move {
                 axum::serve(listener, gateway.router()).await.unwrap();
             });
@@ -617,10 +674,21 @@ mod tests {
                 panic!("expected HTTP rejection")
             };
             assert_eq!(response.status(), expected);
+            #[cfg(windows)]
+            assert_eq!(
+                observed.health().native.unwrap().outcome,
+                if status == 401 {
+                    crate::native_health::Outcome::AuthRequired
+                } else if status == 302 {
+                    crate::native_health::Outcome::Redirect
+                } else {
+                    crate::native_health::Outcome::RequestRejected
+                }
+            );
             if status == 401 {
                 assert_eq!(response.headers()["x-native-status"], "preserved");
                 assert_eq!(response.body().as_ref().unwrap(), b"native denial");
-            } else {
+            } else if status == 302 {
                 assert!(!response.headers().contains_key("location"));
             }
             task.abort();

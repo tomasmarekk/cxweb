@@ -266,7 +266,10 @@ mod tests {
     struct Fixture(PathBuf);
     impl Drop for Fixture {
         fn drop(&mut self) {
-            std::fs::remove_dir_all(&self.0).unwrap();
+            let result = std::fs::remove_dir_all(&self.0);
+            if !std::thread::panicking() {
+                result.unwrap();
+            }
         }
     }
     #[tokio::test]
@@ -499,7 +502,20 @@ mod tests {
             else {
                 panic!("missing health");
             };
-            assert_eq!(health, repeated);
+            // Health now performs a real config read. Evidence remains the
+            // same, but a subsequent observation may advance time/revision.
+            assert!(repeated.revision >= health.revision);
+            assert_eq!(repeated.overall, health.overall);
+            assert_eq!(repeated.active_web_turns, health.active_web_turns);
+            assert_eq!(repeated.suggested_action, health.suggested_action);
+            let before = serde_json::to_value(&health.components).unwrap();
+            let after = serde_json::to_value(&repeated.components).unwrap();
+            for (name, component) in before.as_object().unwrap() {
+                for key in ["state", "evidence", "code"] {
+                    assert_eq!(component[key], after[name][key]);
+                }
+                assert!(component["observed_at"].as_str() <= after[name]["observed_at"].as_str());
+            }
             let serialized = serde_json::to_string(&health).unwrap();
             assert!(!serialized.contains(&capability));
             assert!(!serialized.contains(&installation));

@@ -52,6 +52,7 @@ pub(crate) struct GatewayHealth {
     pub active_turns: u64,
     pub provider: ProviderHealth,
     pub clients: ClientActivity,
+    pub native: Option<crate::native_health::Observation>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -244,6 +245,7 @@ impl Gateway {
                 active_turns: state.active_turns,
                 provider,
                 clients,
+                native: self.native.health.snapshot(),
             },
             Err(_) => GatewayHealth {
                 accepting: false,
@@ -251,6 +253,7 @@ impl Gateway {
                 active_turns: 0,
                 provider,
                 clients,
+                native: self.native.health.snapshot(),
             },
         }
     }

@@ -285,6 +285,55 @@ impl Tracker {
                 );
             }
         }
+        if let Some(observed) = &gateway.native {
+            use crate::native_health::Outcome;
+            let (state, evidence, code) = match observed.outcome {
+                Outcome::Received => (State::Healthy, Evidence::LocalProbe, None),
+                Outcome::Connected => (State::Healthy, Evidence::ClientHandshake, None),
+                Outcome::AuthRequired => (
+                    State::AuthRequired,
+                    Evidence::LocalProbe,
+                    Some("E_NATIVE_AUTH_REQUIRED"),
+                ),
+                Outcome::Forbidden => (
+                    State::Degraded,
+                    Evidence::LocalProbe,
+                    Some("E_NATIVE_FORBIDDEN"),
+                ),
+                Outcome::RateLimited => (
+                    State::Degraded,
+                    Evidence::LocalProbe,
+                    Some("E_NATIVE_RATE_LIMITED"),
+                ),
+                Outcome::ServerError => (
+                    State::Unavailable,
+                    Evidence::LocalProbe,
+                    Some("E_NATIVE_SERVER"),
+                ),
+                Outcome::RequestRejected => (
+                    State::Degraded,
+                    Evidence::LocalProbe,
+                    Some("E_NATIVE_REQUEST_REJECTED"),
+                ),
+                Outcome::TransportError => (
+                    State::Unavailable,
+                    Evidence::LocalProbe,
+                    Some("E_NATIVE_UNAVAILABLE"),
+                ),
+                Outcome::Redirect => (
+                    State::Unavailable,
+                    Evidence::LocalProbe,
+                    Some("E_NATIVE_REDIRECT"),
+                ),
+                Outcome::StreamError => (
+                    State::Unavailable,
+                    Evidence::LocalProbe,
+                    Some("E_NATIVE_STREAM"),
+                ),
+            };
+            health.components.native_upstream =
+                component(state, evidence, observed.observed_at.clone(), code);
+        }
         if state == DisconnectState::Idle {
             let (config_state, code) = match self.configuration.state {
                 Configuration::Unknown => (State::Unknown, None),
@@ -365,6 +414,42 @@ impl Tracker {
 mod tests {
     use super::*;
     #[test]
+    fn native_transport_evidence_is_independent_of_browser_and_task_qualification() {
+        use crate::native_health::{Observation, Outcome};
+        let mut source = gateway(ProviderHealth::Recovering);
+        let mut tracker = Tracker::default();
+        for (outcome, expected) in [
+            (Outcome::Received, State::Healthy),
+            (Outcome::Connected, State::Healthy),
+            (Outcome::AuthRequired, State::AuthRequired),
+            (Outcome::Forbidden, State::Degraded),
+            (Outcome::RateLimited, State::Degraded),
+            (Outcome::ServerError, State::Unavailable),
+            (Outcome::TransportError, State::Unavailable),
+            (Outcome::Redirect, State::Unavailable),
+            (Outcome::StreamError, State::Unavailable),
+            (Outcome::RequestRejected, State::Degraded),
+        ] {
+            source.native = Some(Observation {
+                outcome,
+                observed_at: Some("2026-09-20T00:00:00.000Z".into()),
+            });
+            let health = tracker.snapshot(DisconnectState::Idle, source.clone());
+            assert_eq!(health.components.native_upstream.state, expected);
+            assert_eq!(
+                health.components.native_upstream.observed_at,
+                source.native.as_ref().unwrap().observed_at
+            );
+            assert_eq!(health.components.web_auth.state, State::Unknown);
+            assert_eq!(health.components.codex_app.state, State::Unknown);
+            assert_eq!(health.overall, Overall::Preflight);
+            assert_ne!(
+                health.components.native_upstream.evidence,
+                Evidence::RequestSuccess
+            );
+        }
+    }
+    #[test]
     fn configuration_observation_changes_revision_without_certifying_other_dimensions() {
         let mut tracker = Tracker::default();
         let source = gateway(ProviderHealth::Verified { observed_at: None });
@@ -414,6 +499,7 @@ mod tests {
             active_turns: 0,
             provider,
             clients: Default::default(),
+            native: None,
         }
     }
     #[test]

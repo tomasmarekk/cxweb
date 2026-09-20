@@ -1,9 +1,10 @@
 //! Native transports use fixed reviewed destinations and never call the browser.
+use crate::native_health::{Outcome, Tracker};
 use axum::{
     body::{Body, Bytes},
     http::{HeaderMap, Method, Response, StatusCode},
 };
-use futures_util::StreamExt;
+use futures_util::Stream;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::Semaphore;
 
@@ -45,6 +46,7 @@ pub struct NativeTransport {
     base: String,
     realtime_base: String,
     slots: Arc<Semaphore>,
+    pub(crate) health: Tracker,
 }
 
 impl NativeTransport {
@@ -68,7 +70,11 @@ impl NativeTransport {
             upgrade,
             query,
             headers,
-            web,
+            crate::native_ws::ConnectionContext {
+                web,
+                health: (route == crate::native_ws::SocketRoute::Responses)
+                    .then(|| self.health.clone()),
+            },
         )
         .await
     }
@@ -96,6 +102,7 @@ impl NativeTransport {
             realtime_base: base.clone(),
             base,
             slots: Arc::new(Semaphore::new(16)),
+            health: Tracker::default(),
         })
     }
 
@@ -118,6 +125,7 @@ impl NativeTransport {
             url.push_str(query);
         }
         let headers = end_to_end_headers(&headers);
+        let sequence = self.health.begin();
         let response = self
             .client
             .request(route.method(), url)
@@ -125,17 +133,47 @@ impl NativeTransport {
             .body(body)
             .send()
             .await
-            .map_err(|_| "E_NATIVE_UNAVAILABLE")?;
+            .map_err(|_| {
+                self.health.observe(sequence, Outcome::TransportError);
+                "E_NATIVE_UNAVAILABLE"
+            })?;
         if response.status().is_redirection() && response.status() != StatusCode::NOT_MODIFIED {
             // Never expose an upstream redirect to a local client that might
             // forward the native authorization to the Location destination.
+            self.health.observe(sequence, Outcome::Redirect);
             return Err("E_NATIVE_REDIRECT");
         }
         let status = response.status();
         let headers = end_to_end_headers(response.headers());
-        let stream = response.bytes_stream().map(move |item| {
+        let outcome = Outcome::status(status);
+        if outcome != Outcome::Received {
+            self.health.observe(sequence, outcome);
+        }
+        let health = self.health.clone();
+        let mut input = Box::pin(response.bytes_stream());
+        let mut failed = false;
+        let mut finished = false;
+        let stream = futures_util::stream::poll_fn(move |cx| {
             let _keep_slot = &permit;
-            item.map_err(|_| std::io::Error::other("E_NATIVE_STREAM"))
+            if finished {
+                return std::task::Poll::Ready(None);
+            }
+            match input.as_mut().poll_next(cx) {
+                std::task::Poll::Ready(Some(Err(_))) => {
+                    failed = true;
+                    health.observe(sequence, Outcome::StreamError);
+                    std::task::Poll::Ready(Some(Err(std::io::Error::other("E_NATIVE_STREAM"))))
+                }
+                std::task::Poll::Ready(None) => {
+                    finished = true;
+                    if !failed && outcome == Outcome::Received {
+                        health.observe(sequence, outcome);
+                    }
+                    std::task::Poll::Ready(None)
+                }
+                std::task::Poll::Ready(Some(Ok(bytes))) => std::task::Poll::Ready(Some(Ok(bytes))),
+                std::task::Poll::Pending => std::task::Poll::Pending,
+            }
         });
         let mut outgoing = Response::new(Body::from_stream(stream));
         *outgoing.status_mut() = status;
@@ -199,6 +237,82 @@ mod tests {
             axum::serve(listener, router).await.unwrap();
         });
         (url, task)
+    }
+
+    #[tokio::test]
+    async fn observes_complete_http_response_and_auth_errors_without_retaining_content() {
+        for (status, expected) in [
+            (200, Outcome::Received),
+            (304, Outcome::Received),
+            (401, Outcome::AuthRequired),
+            (403, Outcome::Forbidden),
+            (429, Outcome::RateLimited),
+            (500, Outcome::ServerError),
+            (400, Outcome::RequestRejected),
+        ] {
+            let (url, server) = mock(Router::new().route(
+                "/models",
+                any(move || async move {
+                    Response::builder()
+                        .status(status)
+                        .body(Body::from("MOCK_RESPONSE_SECRET"))
+                        .unwrap()
+                }),
+            ))
+            .await;
+            let transport = NativeTransport::new(url).unwrap();
+            let response = transport
+                .forward(NativeRoute::Models, None, HeaderMap::new(), Bytes::new())
+                .await
+                .unwrap();
+            if expected == Outcome::Received {
+                assert_eq!(transport.health.snapshot(), None);
+            } else {
+                assert_eq!(transport.health.snapshot().unwrap().outcome, expected);
+            }
+            response.into_body().collect().await.unwrap();
+            let observed = transport.health.snapshot().unwrap();
+            assert_eq!(observed.outcome, expected);
+            assert!(!format!("{observed:?}").contains("MOCK_RESPONSE_SECRET"));
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn truncated_http_body_cannot_become_a_successful_transport_observation() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            let mut used = 0;
+            while !request[..used].windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                assert!(used < request.len());
+                let received = socket.read(&mut request[used..]).await.unwrap();
+                assert!(received > 0);
+                used += received;
+            }
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\nshort",
+                )
+                .await
+                .unwrap();
+            socket.shutdown().await.unwrap();
+        });
+        let transport = NativeTransport::new(url).unwrap();
+        let response = transport
+            .forward(NativeRoute::Models, None, HeaderMap::new(), Bytes::new())
+            .await
+            .unwrap();
+        assert_eq!(transport.health.snapshot(), None);
+        assert!(response.into_body().collect().await.is_err());
+        assert_eq!(
+            transport.health.snapshot().unwrap().outcome,
+            Outcome::StreamError
+        );
+        server.await.unwrap();
     }
 
     #[tokio::test]

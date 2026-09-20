@@ -40,6 +40,7 @@ pub mod native;
 pub mod native_discovery;
 #[cfg(windows)]
 mod native_fixture;
+mod native_health;
 #[cfg(windows)]
 pub mod native_preflight;
 #[cfg(windows)]
