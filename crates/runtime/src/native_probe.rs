@@ -33,6 +33,26 @@ pub struct CheckpointTarget {
     pub capture_failure: bool,
     #[serde(default)]
     pub automatic: bool,
+    #[serde(default)]
+    pub tool_result: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ToolCheckpointEvidence {
+    read_verified: bool,
+    recall_verified: bool,
+}
+fn save_tool_checkpoint_evidence(cwd: &Path, recall_verified: bool) -> Result<(), &'static str> {
+    std::fs::write(
+        cwd.join("tool-checkpoint-progress.json"),
+        serde_json::to_vec(&ToolCheckpointEvidence {
+            read_verified: true,
+            recall_verified,
+        })
+        .map_err(|_| "E_NATIVE_PROBE_REPORT")?,
+    )
+    .map_err(|_| "E_NATIVE_PROBE_REPORT")
 }
 
 /// Uses an already leased installed browser, but a disposable signed-out native
@@ -44,6 +64,9 @@ pub(crate) async fn qualify_installed_checkpoint(
     installation_directory: &Path,
     cancellation: CancellationToken,
 ) -> Result<(), &'static str> {
+    if selected.automatic && selected.tool_result {
+        return Err("E_NATIVE_PROBE_CONFIG");
+    }
     let target =
         TargetPathGuard::capture(&selected.client, false).map_err(|_| "E_NATIVE_PROBE_TARGET")?;
     let hash = native_preflight::fingerprint(&selected.client).await?;
@@ -60,11 +83,18 @@ pub(crate) async fn qualify_installed_checkpoint(
     } else {
         None
     };
+    let marker = format!("CXWEB_NATIVE_CHECKPOINT_{:032x}", rand::random::<u128>());
+    let fixture = selected.tool_result.then(|| {
+        let mut fixture =
+            crate::native_fixture::Fixture::new(directory.join("workspace"), marker.clone());
+        fixture.checkpoint = true;
+        Arc::new(fixture)
+    });
     let descriptor = directory.join("runtime/connection.json");
     let report_path = installation_directory.join("native-compaction-probe-report.json");
     let mut report = json!({"schema":"cxweb.native-checkpoint.v1","stage":"starting","completed":false,
         "client_build":build,"catalog_codec":codec.id(),"executable_sha256":hash,"websocket":selected.websocket,
-        "saved_browser_reused":true,"isolated_native_home":true,"native_tools_executed":0,
+        "saved_browser_reused":true,"isolated_native_home":true,"native_tools_executed":if selected.tool_result { Value::Null } else { json!(0) },
         "production_capability_published":false});
     tokio::fs::write(&report_path, report.to_string())
         .await
@@ -75,9 +105,9 @@ pub(crate) async fn qualify_installed_checkpoint(
         &descriptor,
         driver,
         binding,
-        selected.websocket,
         codec,
-        selected.automatic,
+        selected,
+        fixture.clone(),
         stop.clone().cancelled_owned(),
     );
     let client = async {
@@ -94,15 +124,31 @@ pub(crate) async fn qualify_installed_checkpoint(
             };
             connection["verify_checkpoint"] = json!(true);
             connection["automatic_checkpoint"] = json!(selected.automatic);
+            connection["tool_result_checkpoint"] = json!(selected.tool_result);
             let route = binding.routes.first().ok_or("E_MODEL_UNAVAILABLE")?;
             let endpoint = Endpoint::parse(connection, &route.id, codec)?;
-            let marker = format!("CXWEB_NATIVE_CHECKPOINT_{:032x}", rand::random::<u128>());
-            run_client(&selected.client, &target, &directory, &endpoint, &marker, &cancellation, None).await
+            let expected = fixture.as_ref().map(|f| f.expected()).unwrap_or(&marker);
+            run_client(&selected.client, &target, &directory, &endpoint, expected, &cancellation, fixture.clone()).await
         }.await;
         stop.cancel();
         result
     };
     let (runtime, client) = tokio::join!(server, client);
+    report["tool_result_requested"] = json!(selected.tool_result);
+    if selected.tool_result {
+        report["native_tools_executed"] = Value::Null;
+        report["tool_result_recall_verified"] = json!(false);
+        if let Ok(bytes) =
+            tokio::fs::read(directory.join("workspace/tool-checkpoint-progress.json")).await
+            && let Ok(progress) = serde_json::from_slice::<ToolCheckpointEvidence>(&bytes)
+        {
+            if progress.read_verified {
+                report["native_tools_executed"] = json!(1);
+            }
+            report["tool_result_recall_verified"] =
+                json!(progress.recall_verified && client.is_ok());
+        }
+    }
     report["automatic_requested"] = json!(selected.automatic);
     if selected.automatic {
         report["diagnostic_budget"] = json!({"normal_encoded_bytes":96 * 1024,"summary_encoded_bytes":256 * 1024,"production_capacity_qualified":false});
@@ -118,6 +164,8 @@ pub(crate) async fn qualify_installed_checkpoint(
         // ScopeDiagnostic contains only bounded structural observations and
         // fixed UI labels; ScopeSurface's account/workspace IDs are excluded.
         report["browser_scope"] = runtime["diagnostic"]["scope"].clone();
+        // The driver exports fixed structural flags/counts only, never text.
+        report["output_shape"] = runtime["diagnostic"]["output_shape"].clone();
         report["transport"] = json!({
             "failures":runtime["failures"],"context_refusals":runtime["context_refusals"],"compaction_requests":runtime["compaction_requests"],
             "checkpoint_continuations":runtime["checkpoint_continuations"],
@@ -333,6 +381,7 @@ struct Endpoint {
     model: String,
     verify_checkpoint: bool,
     automatic_checkpoint: bool,
+    tool_result_checkpoint: bool,
 }
 impl Endpoint {
     fn parse(value: Value, model: &str, codec: CatalogCodec) -> Result<Self, &'static str> {
@@ -363,6 +412,7 @@ impl Endpoint {
             model: model.into(),
             verify_checkpoint: value["verify_checkpoint"] == true,
             automatic_checkpoint: value["automatic_checkpoint"] == true,
+            tool_result_checkpoint: value["tool_result_checkpoint"] == true,
         })
     }
 }
@@ -626,7 +676,23 @@ impl Client {
         }
         self.turn = Some(turn.into());
         loop {
-            if endpoint.verify_checkpoint {
+            if endpoint.tool_result_checkpoint {
+                if text_complete(
+                    &self.observations,
+                    &thread,
+                    turn,
+                    crate::native_fixture::READ_ACK,
+                )? {
+                    let fixture = self.fixture.as_ref().ok_or("E_NATIVE_PROBE_ACTION")?;
+                    verify_checkpoint_read(fixture, &self.observations, &thread, turn)?;
+                    verify_checkpoint_file(fixture)?;
+                    save_tool_checkpoint_evidence(cwd, false)?;
+                    let expected = fixture.marker.clone();
+                    self.verify_checkpoint(&thread, &expected).await?;
+                    verify_checkpoint_file(self.fixture.as_ref().ok_or("E_NATIVE_PROBE_ACTION")?)?;
+                    return save_tool_checkpoint_evidence(cwd, true);
+                }
+            } else if endpoint.verify_checkpoint {
                 if let Some(seed) = checkpoint_seed(&self.observations, &thread, turn)? {
                     return self.verify_checkpoint(&thread, &seed).await;
                 }
@@ -969,6 +1035,61 @@ fn read_result(fixture: &crate::native_fixture::Fixture, item: &Value) -> bool {
             .is_some_and(|s| s.trim() == fixture.marker)
 }
 
+fn verify_checkpoint_read(
+    fixture: &crate::native_fixture::Fixture,
+    events: &[Value],
+    thread: &str,
+    turn: &str,
+) -> Result<(), &'static str> {
+    if events.iter().any(|event| {
+        event["method"] == "item/completed"
+            && matches!(
+                event["params"]["item"]["type"].as_str(),
+                Some("commandExecution" | "fileChange")
+            )
+            && (event["params"]["threadId"] != thread || event["params"]["turnId"] != turn)
+    }) {
+        return Err("E_NATIVE_PROBE_TOOL_RESULT");
+    }
+    let items: Vec<_> = events
+        .iter()
+        .filter(|event| {
+            event["method"] == "item/completed"
+                && event["params"]["threadId"] == thread
+                && event["params"]["turnId"] == turn
+        })
+        .map(|event| &event["params"]["item"])
+        .collect();
+    let commands: Vec<_> = items
+        .iter()
+        .filter(|item| item["type"] == "commandExecution")
+        .collect();
+    if commands.len() != 1
+        || !read_result(fixture, commands[0])
+        || items.iter().any(|item| item["type"] == "fileChange")
+    {
+        return Err("E_NATIVE_PROBE_TOOL_RESULT");
+    }
+    // The answer must acknowledge the read without repeating the marker.
+    if !text_complete(events, thread, turn, crate::native_fixture::READ_ACK)? {
+        return Err("E_NATIVE_PROBE_TOOL_RESULT");
+    }
+    Ok(())
+}
+
+fn verify_checkpoint_file(fixture: &crate::native_fixture::Fixture) -> Result<(), &'static str> {
+    let input = fixture.cwd.join("probe-input.txt");
+    let _guard =
+        TargetPathGuard::capture(&input, false).map_err(|_| "E_NATIVE_PROBE_TOOL_RESULT")?;
+    if std::fs::read(input).map_err(|_| "E_NATIVE_PROBE_TOOL_RESULT")?
+        != format!("{}\n", fixture.marker).as_bytes()
+        || fixture.cwd.join("probe-output.txt").exists()
+    {
+        return Err("E_NATIVE_PROBE_TOOL_RESULT");
+    }
+    Ok(())
+}
+
 fn test_result(fixture: &crate::native_fixture::Fixture, item: &Value, passed: bool) -> bool {
     item["type"] == "commandExecution"
         && (item["status"] == "completed" || (!passed && item["status"] == "failed"))
@@ -1071,6 +1192,47 @@ fn verify_tools(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checkpoint_read_requires_attributed_real_output_without_answer_leakage() {
+        let fixture =
+            crate::native_fixture::Fixture::new(std::env::temp_dir(), "private-marker".into());
+        let read = json!({"method":"item/completed","params":{"threadId":"t","turnId":"r","item":{"type":"commandExecution","status":"completed","exitCode":0,"cwd":fixture.cwd,"command":crate::native_fixture::READ,"aggregatedOutput":"private-marker\n"}}});
+        let answer = json!({"method":"item/completed","params":{"threadId":"t","turnId":"r","item":{"type":"agentMessage","text":crate::native_fixture::READ_ACK}}});
+        let done = json!({"method":"turn/completed","params":{"threadId":"t","turn":{"id":"r","status":"completed"}}});
+        let valid = vec![read.clone(), answer.clone(), done.clone()];
+        assert_eq!(verify_checkpoint_read(&fixture, &valid, "t", "r"), Ok(()));
+        assert!(
+            verify_checkpoint_read(&fixture, &[answer.clone(), done.clone()], "t", "r").is_err()
+        );
+        for (key, value) in [
+            ("exitCode", json!(1)),
+            ("status", json!("declined")),
+            ("aggregatedOutput", json!("different")),
+            ("command", json!("Get-ChildItem")),
+        ] {
+            let mut bad = read.clone();
+            bad["params"]["item"][key] = value;
+            assert!(
+                verify_checkpoint_read(&fixture, &[bad, answer.clone(), done.clone()], "t", "r")
+                    .is_err()
+            );
+        }
+        let mut leaked = answer.clone();
+        leaked["params"]["item"]["text"] = json!(fixture.marker);
+        assert!(
+            verify_checkpoint_read(&fixture, &[read.clone(), leaked, done.clone()], "t", "r")
+                .is_err()
+        );
+        let mut extra = valid.clone();
+        extra.push(read.clone());
+        assert!(verify_checkpoint_read(&fixture, &extra, "t", "r").is_err());
+        let mut foreign = read;
+        foreign["params"]["turnId"] = json!("other");
+        let mut extra = valid;
+        extra.push(foreign);
+        assert!(verify_checkpoint_read(&fixture, &extra, "t", "r").is_err());
+    }
 
     #[test]
     fn catalog_identity_accepts_native_path_normalization_but_not_other_files() {

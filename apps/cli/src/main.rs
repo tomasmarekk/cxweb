@@ -25,6 +25,9 @@ enum Command {
         /// Exercise a real local context refusal and native next-turn recovery.
         #[arg(long, requires = "client")]
         automatic: bool,
+        /// Verify exact recall of a real native tool result after compaction.
+        #[arg(long, requires = "client", conflicts_with = "automatic")]
+        tool_result: bool,
     },
     /// Qualify every observed reasoning choice in the installed family. Uses ChatGPT allowance.
     RuntimeQualifyReasoning {
@@ -147,6 +150,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             websocket,
             capture_failure,
             automatic,
+            tool_result,
         } => {
             #[cfg(windows)]
             {
@@ -159,6 +163,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         websocket,
                         capture_failure,
                         automatic,
+                        tool_result,
                     }),
                 )
                 .await?;
@@ -166,7 +171,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             #[cfg(not(windows))]
             {
-                let _ = (installation, client, websocket, capture_failure, automatic);
+                let _ = (
+                    installation,
+                    client,
+                    websocket,
+                    capture_failure,
+                    automatic,
+                    tool_result,
+                );
                 return Err("runtime verification requires Windows".into());
             }
         }

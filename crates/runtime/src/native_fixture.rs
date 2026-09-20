@@ -11,6 +11,7 @@ use std::{
 
 pub(crate) const READ: &str = "Get-Content -LiteralPath './probe-input.txt'";
 pub(crate) const DENIED: &str = "cxweb native read was denied";
+pub(crate) const READ_ACK: &str = "cxweb tool result recorded";
 pub(crate) const TEST_PASSED: &str = "cxweb fixture tests passed";
 pub(crate) const TEST_FAILED: &str = "cxweb fixture tests failed";
 pub(crate) const BROKEN_OUTPUT: &str = "incorrect fixture output";
@@ -18,6 +19,7 @@ pub(crate) const TEST: &str = "if ((Get-Content -LiteralPath './probe-output.txt
 const ERROR: &str = "E_NATIVE_PROBE_ACTION";
 
 pub(crate) struct Fixture {
+    pub checkpoint: bool,
     pub denial: bool,
     pub test: bool,
     pub repair: bool,
@@ -48,6 +50,7 @@ impl Fixture {
             }
         }
         Self {
+            checkpoint: false,
             denial: false,
             test: false,
             repair: false,
@@ -58,7 +61,9 @@ impl Fixture {
         }
     }
     pub fn expected(&self) -> &str {
-        if self.denial {
+        if self.checkpoint {
+            READ_ACK
+        } else if self.denial {
             DENIED
         } else if self.test {
             TEST_PASSED
@@ -67,6 +72,11 @@ impl Fixture {
         }
     }
     pub fn prompt(&self) -> String {
+        if self.checkpoint {
+            return format!(
+                "Use exec_command exactly once with cmd exactly {READ:?}, login=false and the current working directory. Remember the exact line returned by this tool as task-critical state for a later question; preserve it verbatim in any checkpoint. Wait for the successful tool result, then return exactly {READ_ACK:?}. Do not include the line in your answer. Do not run other commands, change files, request elevated permissions or access the network."
+            );
+        }
         if self.denial {
             return format!(
                 "Use exec_command exactly once with cmd exactly {READ:?}, login=false and the current working directory. The user will deny this test command. Wait for the actual tool result. If the command is denied, return exactly: {DENIED}. Do not retry, run a different command, modify files, request elevated permissions or claim you read the file."
@@ -120,47 +130,69 @@ impl Fixture {
             .filter(|v| v.len() == 1)
             .ok_or(ERROR)?;
         let item = &output[0];
-        let valid = match delivered.len() {
-            0 => {
-                item["type"] == "function_call"
-                    && item["name"] == "exec_command"
-                    && namespace(item)
-                    && item["arguments"]
-                        .as_str()
-                        .is_some_and(|a| self.command_arguments(a, READ))
+        let valid = if self.checkpoint {
+            match delivered.len() {
+                0 => {
+                    item["type"] == "function_call"
+                        && item["name"] == "exec_command"
+                        && namespace(item)
+                        && item["arguments"]
+                            .as_str()
+                            .is_some_and(|a| self.command_arguments(a, READ))
+                }
+                1 => final_text(item, READ_ACK),
+                2 => {
+                    item["type"] == "compaction"
+                        && item["encrypted_content"]
+                            .as_str()
+                            .is_some_and(|s| s.starts_with("wbr1:") && s.len() > 5)
+                }
+                3 => final_text(item, &self.marker),
+                _ => false,
             }
-            1 if self.repair => self.test_delivery(item),
-            step if !self.denial && step == if self.repair { 2 } else { 1 } => {
-                item["type"] == "custom_tool_call"
-                    && item["name"] == "apply_patch"
-                    && namespace(item)
-                    && item["input"]
-                        .as_str()
-                        .is_some_and(|s| s == self.patch() || s == self.patch() + "\n")
+        } else {
+            match delivered.len() {
+                0 => {
+                    item["type"] == "function_call"
+                        && item["name"] == "exec_command"
+                        && namespace(item)
+                        && item["arguments"]
+                            .as_str()
+                            .is_some_and(|a| self.command_arguments(a, READ))
+                }
+                1 if self.repair => self.test_delivery(item),
+                step if !self.denial && step == if self.repair { 2 } else { 1 } => {
+                    item["type"] == "custom_tool_call"
+                        && item["name"] == "apply_patch"
+                        && namespace(item)
+                        && item["input"]
+                            .as_str()
+                            .is_some_and(|s| s == self.patch() || s == self.patch() + "\n")
+                }
+                step if self.test && !self.denial && step == if self.repair { 3 } else { 2 } => {
+                    self.test_delivery(item)
+                }
+                step if step
+                    == if self.denial {
+                        1
+                    } else if self.repair {
+                        4
+                    } else if self.test {
+                        3
+                    } else {
+                        2
+                    } =>
+                {
+                    item["type"] == "message"
+                        && item["role"] == "assistant"
+                        && item["content"].as_array().is_some_and(|content| {
+                            content.len() == 1
+                                && content[0]["type"] == "output_text"
+                                && content[0]["text"] == self.expected()
+                        })
+                }
+                _ => false,
             }
-            step if self.test && !self.denial && step == if self.repair { 3 } else { 2 } => {
-                self.test_delivery(item)
-            }
-            step if step
-                == if self.denial {
-                    1
-                } else if self.repair {
-                    4
-                } else if self.test {
-                    3
-                } else {
-                    2
-                } =>
-            {
-                item["type"] == "message"
-                    && item["role"] == "assistant"
-                    && item["content"].as_array().is_some_and(|content| {
-                        content.len() == 1
-                            && content[0]["type"] == "output_text"
-                            && content[0]["text"] == self.expected()
-                    })
-            }
-            _ => false,
         };
         if response["status"] != "completed" || !valid {
             return Err(ERROR);
@@ -270,6 +302,16 @@ impl Fixture {
         })
     }
 }
+
+fn final_text(item: &Value, expected: &str) -> bool {
+    item["type"] == "message"
+        && item["role"] == "assistant"
+        && item["content"].as_array().is_some_and(|content| {
+            content.len() == 1
+                && content[0]["type"] == "output_text"
+                && content[0]["text"] == expected
+        })
+}
 fn namespace(item: &Value) -> bool {
     item.get("namespace")
         .is_none_or(|v| v.is_null() || v == "functions")
@@ -352,6 +394,51 @@ mod tests {
     fn read(args: Value) -> Value {
         json!({"type":"function_call","name":"exec_command","arguments":args.to_string()})
     }
+    #[test]
+    fn checkpoint_allows_only_read_ack_checkpoint_and_exact_recall() {
+        let mut fixture = fixture();
+        fixture.checkpoint = true;
+        let first = response("read", read(json!({"cmd":READ,"login":false})));
+        let message = |id, text: &str| {
+            response(
+                id,
+                json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":text}]}),
+            )
+        };
+        let ack = message("ack", READ_ACK);
+        let recall = message("recall", &fixture.marker);
+        let checkpoint = response(
+            "checkpoint",
+            json!({"type":"compaction","encrypted_content":"wbr1:synthetic"}),
+        );
+        assert!(fixture.check_delivery(&recall).is_err());
+        fixture.check_delivery(&first).unwrap();
+        assert!(fixture.check_delivery(&recall).is_err());
+        assert!(fixture.check_delivery(&checkpoint).is_err());
+        fixture.check_delivery(&ack).unwrap();
+        assert!(
+            fixture
+                .check_delivery(&first.replace("\"read\"", "\"read-again\""))
+                .is_err()
+        );
+        assert!(fixture.check_delivery(&recall).is_err());
+        assert!(
+            fixture
+                .check_delivery(&checkpoint.replace("wbr1:synthetic", "foreign"))
+                .is_err()
+        );
+        fixture.check_delivery(&checkpoint).unwrap();
+        assert!(
+            fixture
+                .check_delivery(&message("wrong", "wrong marker"))
+                .is_err()
+        );
+        fixture.check_delivery(&recall).unwrap();
+        for value in [&first, &ack, &checkpoint, &recall] {
+            fixture.check_delivery(value).unwrap();
+        }
+    }
+
     #[test]
     fn delivery_policy_binds_exact_order_content_and_replay_identity() {
         let fixture = fixture();

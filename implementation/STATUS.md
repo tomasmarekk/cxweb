@@ -23,6 +23,75 @@ English. The complete installed CLI and App-backend read/patch/final scenarios
 now pass. A fixed message sent from the actual GUI also passed with the owned
 model and effort corroborated by the native turn context.
 
+## Native tool-result checkpoint qualification (2026-09-20)
+
+- Added opt-in `runtime-verify-compaction --client <reviewed-executable>
+  --tool-result`, optionally over WebSocket. It is mutually exclusive with the
+  automatic-history exercise and uses the existing exclusive installed-browser
+  lease, disposable signed-out native home and unpublished checkpoint codec.
+- The diagnostic creates one random line in its own protected fixture directory.
+  Actual Codex must execute exactly the permitted file read and return a fixed
+  acknowledgement that excludes the line. The client then manually compacts and
+  must recall the exact line from the tool result. No user message supplies it.
+- A buffered delivery policy rejects every model response except the exact read,
+  acknowledgement, authenticated checkpoint item and exact final recall, in that
+  order. Replays require an identical response ID/body. No patch, alternate
+  command, second read or network access is admitted to the native client.
+- Native evidence must show one attributed completed command, exit code zero,
+  exact actual output, the fixed acknowledgement and unchanged fixture bytes.
+  Missing/duplicate/foreign tool events, fabricated success, incorrect output and
+  an answer that leaks the line fail regressions. The usual one-compaction,
+  no-plaintext-continuation and confirmed-cleanup checks remain mandatory.
+- App backend 0.155.0-alpha.9.2 passed at 18:27:32 UTC using the installed
+  authenticated background browser: one actual read, one manual compaction and
+  exact tool-result recall. Four WebSocket requests completed with no runtime
+  failure, native-upstream model frame or original assistant/tool plaintext in
+  continuation. Cleanup was confirmed. Report:
+  `app-0.155.0-alpha.9.2.installed-tool-result-checkpoint-websocket.json`.
+- Two CLI attempts at 18:22:52 and 18:31:52 UTC failed with
+  `E_CHECKPOINT_SUMMARY`; no continuation was submitted and cleanup was confirmed.
+  Both public reports are retained. The second confirms the actual read and
+  shows valid outer JSON containing an invalid inner summary JSON string.
+- Reports now expose the existing content-free output-shape diagnostics and
+  preserve completed-read evidence separately from recall success. A typed
+  progress file in the protected fixture directory records these facts and
+  contains no marker or tool output.
+- The compaction prompt now explicitly separates the two JSON encoding stages.
+  Its executable example preserves quotes within values, a Windows path and a
+  newline. A regression decodes both layers and rejects missing inner escapes.
+  Strict parsing is unchanged; this does not reconstruct malformed model output.
+- The revised prompt passed the CLI 0.155.1 live exercise at 18:37:43 UTC:
+  one actual native read, one compaction, exact recall, four WebSocket requests,
+  no original assistant/tool plaintext in continuation, no runtime failure and
+  confirmed cleanup. Report:
+  `cli-0.155.1.installed-tool-result-checkpoint-websocket.json`.
+  Daemon SHA-256:
+  `2dd71c983519632697bbd3c8dfce3141c85bfbba3d8e22c868d8fe6c7a5cdd40`.
+  This controlled pass does not establish a first-pass reliability rate or prove
+  the exact escaping defect in either earlier failure without its raw response.
+- App's revised-prompt exercise at 18:39:15 UTC reached the confirmed native read
+  but stopped before summary submission on `E_BROWSER_RATE_LIMITED`. A private
+  screenshot confirms ChatGPT's `Too many requests` dialog instructing a wait of
+  a few minutes. There was no automatic retry, route substitution or continuation;
+  cleanup was confirmed. Report:
+  `app-0.155.0-alpha.9.2.tool-result-checkpoint-rate-limited.json`.
+  App's earlier pass remains tied to the preceding daemon hash. Revised-prompt
+  App completion and ordinary installed text checks remain unverified for this
+  build; catalog-only checks do not consume additional ChatGPT generations.
+- The installed CLI and App-backend catalog checks passed at 18:40:42 and
+  18:40:55 UTC with all five choices: Instant, Medium, High, Extra High and Pro.
+  Both retained native model entries and unchanged configuration/executable
+  hashes. See `*.post-tool-checkpoint-catalog.json`. These checks do not claim a
+  new GUI observation or a successful generation after the rate-limit dialog.
+- This exercise concerns completed tool results. It does not claim an unresolved
+  call or a late result crossing a checkpoint works, and does not publish any
+  production capability. Only Extra High is exercised. The first App pass used
+  diagnostic daemon SHA-256
+  `218a7527d4f50d002897240c2907c995d854fd711be5e41b2dde7cd49206055c`.
+- Validation: 295 workspace tests passed (18 opt-in tests ignored), Clippy with
+  warnings denied and formatting passed. The preexisting fixture tool policies
+  remain covered by the workspace suite.
+
 ## Live native automatic checkpoint result (2026-09-20)
 
 - CLI 0.155.1 passed at 18:04:46 UTC using the installed authenticated background
@@ -91,7 +160,7 @@ model and effort corroborated by the native turn context.
   explains its unusual workload, but does not establish the cause of its runtime.
 - Replaced the repeated-asterisk fixture with frozen `technical-prose.v1`: a fresh
   model-generated marker followed by about 1,000 words of technical explanation.
-  Admission requires 4–16 KiB of actual returned history, at least 1,024 alphabetic
+  Admission requires 4â€“16 KiB of actual returned history, at least 1,024 alphabetic
   bytes, and no unexpected control characters. It still requires the same real
   local refusal, attributed native automatic compaction, exact marker recall,
   absence of plaintext checkpoint history and confirmed cleanup. No failure is

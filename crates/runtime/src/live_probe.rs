@@ -366,9 +366,9 @@ pub(crate) async fn serve_installed_checkpoint(
     output: &Path,
     driver: &ManagedDriver,
     binding: &Binding,
-    websocket: bool,
     codec: cxweb_codex_adapter::catalog_codec::CatalogCodec,
-    automatic: bool,
+    selected: &crate::native_probe::CheckpointTarget,
+    fixture: Option<Arc<crate::native_fixture::Fixture>>,
     stop: impl Future<Output = ()> + Send + 'static,
 ) -> Result<Value, &'static str> {
     let route = binding
@@ -376,6 +376,7 @@ pub(crate) async fn serve_installed_checkpoint(
         .first()
         .filter(|_| binding.routes.len() == 1)
         .ok_or("E_MODEL_UNAVAILABLE")?;
+    let coding = fixture.is_some();
     run_probe(
         output,
         ProbeSession {
@@ -390,12 +391,12 @@ pub(crate) async fn serve_installed_checkpoint(
             label: route.label.clone(),
             effort: route.effort.clone().ok_or("E_MODEL_UNAVAILABLE")?,
             consumer: None,
-            fixture: None,
+            fixture,
         },
-        websocket,
+        selected.websocket,
         codec,
-        false,
-        Some(if automatic {
+        coding,
+        Some(if selected.automatic {
             cxweb_codex_adapter::context_budget::LocalContextBudget::new(96 * 1024, 256 * 1024)?
         } else {
             cxweb_codex_adapter::context_budget::LocalContextBudget::DIAGNOSTIC

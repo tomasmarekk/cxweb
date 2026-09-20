@@ -1023,6 +1023,7 @@ mod tests {
                         websocket: true,
                         capture_failure: false,
                         automatic: false,
+                        tool_result: false,
                     }),
                 }
             ),
