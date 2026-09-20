@@ -23,6 +23,36 @@ English. The complete installed CLI and App-backend read/patch/final scenarios
 now pass. A fixed message sent from the actual GUI also passed with the owned
 model and effort corroborated by the native turn context.
 
+## Late tool-result validation after checkpoint restoration (2026-09-20)
+
+- Found and reproduced a real gap in authenticated checkpoint continuation:
+  restored pending calls were validated inside the token, but subsequent client
+  results were not matched against the restored call sequence before generation.
+  The integration regression failed before the fix because an unknown result ID
+  was accepted and reached the synthetic browser.
+- After authentication and expansion, the runtime now checks the complete call
+  and result sequence. An unknown result, duplicate result, wrong function/custom
+  result kind, repeated call ID or result appearing before its call is rejected
+  with `E_CHECKPOINT_PENDING_TOOLS` before any browser send.
+- The same integration regression passes all five rejection cases and the
+  existing valid custom-call denial, exact restored arguments, replay and second
+  compaction checks. Normal requests without checkpoints retain their existing
+  behavior. This is deterministic runtime evidence, not qualification of an
+  actual native client's still-running command across compaction.
+- Validation: all 295 workspace tests passed (18 opt-in tests ignored), Clippy
+  with warnings denied, formatting, diff checks and the Windows release build
+  passed. The installed daemon is
+  `f76a831482b32b76ed662a113d58fc13be0de2a15dc50470b966b30575c59d01`.
+- After more than six minutes without a generation since the previous browser
+  rate-limit failure, one new App tool-result exercise completed the actual read
+  and compaction but failed at continuation with `E_BROWSER_RATE_LIMITED` at
+  18:47:54 UTC. A private screenshot confirms the same `Too many requests`
+  dialog. Four WebSocket requests, one compaction, one continuation, no original
+  assistant/tool plaintext and confirmed cleanup were recorded, but exact final
+  recall was not verified. The separate report is
+  `app-0.155.0-alpha.9.2.tool-result-checkpoint-continuation-rate-limited.json`.
+  No further generation was attempted in this batch. This is not a new App pass.
+
 ## Native tool-result checkpoint qualification (2026-09-20)
 
 - Added opt-in `runtime-verify-compaction --client <reviewed-executable>

@@ -715,6 +715,33 @@ mod tests {
             .await;
         assert_eq!(invalid_task.err(), Some("E_NONPORTABLE_CONTEXT"));
         assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
+        // Restoring an authenticated call must not make arbitrary late results
+        // valid. Reject mismatched, repeated or wrong-kind results before send.
+        for (case, items) in [
+            (
+                "unknown-result",
+                json!([item, {"type":"custom_tool_call_output","call_id":"unknown","output":"SUCCESS"}]),
+            ),
+            ("duplicate-result", json!([item, output, output])),
+            (
+                "wrong-result-kind",
+                json!([item, {"type":"function_call_output","call_id":"pending","output":"SUCCESS"}]),
+            ),
+            ("duplicate-call", json!([item, pending, output])),
+            ("result-before-call", json!([output, item])),
+        ] {
+            let mut invalid = continuation.clone();
+            invalid["input"] = items;
+            assert_eq!(
+                provider
+                    .execute(make_request(invalid, case, "new", "task"))
+                    .await
+                    .err(),
+                Some("E_CHECKPOINT_PENDING_TOOLS"),
+                "{case}"
+            );
+            assert_eq!(browser.sends.load(Ordering::SeqCst), 1, "{case}");
+        }
         provider
             .execute(make_request(
                 continuation.clone(),

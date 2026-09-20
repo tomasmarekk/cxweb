@@ -87,6 +87,10 @@ impl BoundCheckpoint {
         ];
         restored.extend(checkpoint.pending_calls);
         input.splice(index..=index, restored);
+        // Authenticate the token first, then validate the complete restored
+        // sequence. A late result must resolve exactly one earlier call of the
+        // same kind; duplicate or unknown results must never reach the model.
+        pending_calls(input)?;
         Ok(())
     }
 }
