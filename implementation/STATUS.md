@@ -23,6 +23,64 @@ English. The complete installed CLI and App-backend read/patch/final scenarios
 now pass. A fixed message sent from the actual GUI also passed with the owned
 model and effort corroborated by the native turn context.
 
+## Buffered WebSocket idle recovery (2026-09-20)
+
+- A live automatic-checkpoint attempt was cancelled before its first long response
+  completed. Its retained report does not establish the cancellation cause.
+  A separate controlled regression reproduced a native WebSocket idle failure:
+  with a 20-second watchdog and a 35-second synthetic provider delay, CLI 0.155.1
+  abandoned WebSocket and retried over HTTP. The final turn completed, but the
+  transport assertion correctly failed (one request on each transport).
+- During owned buffered work, the gateway now emits a local `cxweb.keepalive`
+  text event every 15 seconds. Native clients consume and ignore the unknown
+  event; ping/pong alone is filtered before their application idle watchdog.
+  This event contains no output, usage, progress, response identity or completion.
+  It never reaches the native upstream and does not extend browser generation
+  or no-progress deadlines. The outer transport ceiling now allows the existing
+  30-minute generation bound plus preparation and cleanup.
+- The same delayed-response test passed with both reviewed actual backends:
+  CLI 0.155.1 and App 0.155.0-alpha.9.2 each completed with exactly one WebSocket
+  request, zero HTTP retries, one browser-stub submission, no runtime errors and
+  unchanged executable hashes. Only the isolated synthetic test home uses a
+  custom provider to shorten the watchdog; installed configuration is untouched.
+  Reports: `*.buffered-websocket.json`, with the CLI negative control retained
+  as `cli-0.155.1.buffered-websocket-before.json`.
+- A socket regression independently verifies the exact claim-free keepalive and
+  cancellation/cleanup behavior after disconnect. The live checkpoint diagnostic
+  now retains only allowlisted native error categories on failure.
+- Validation: 291 workspace Rust tests passed (18 opt-in tests ignored), both
+  explicit native delayed-response probes passed, Clippy with warnings denied
+  and formatting passed, and the release CLI/daemon build succeeded. Installed
+  daemon SHA-256: `72064c91b9d79a5351083bb6fcaae20453fae21b98335d595fe7c081a146a112`.
+
+## Native automatic context-boundary verification (2026-09-20)
+
+- Added opt-in `runtime-verify-compaction --client <reviewed-executable> --automatic`,
+  optionally with `--websocket`, under the same exclusive installed-browser lease.
+  It uses an isolated native home and a fixed diagnostic 96 KiB normal encoded
+  prompt ceiling with 256 KiB summary headroom. Both the diagnostic catalog and
+  execution use that budget; no production capacity or usage claim is published.
+- The model supplies real history: a fresh fixed-shape marker and a bounded line
+  of literal Markdown-significant padding. Native history is never injected or
+  edited. Up to eight distinct user turns may grow that history; an invalid,
+  abbreviated or reused fixture stops the diagnostic. No tools are authorized.
+- Success requires an actual runtime byte-budget refusal and attributed native
+  `contextWindowExceeded` failure, then one native automatic compaction before
+  the next explicit diagnostic user turn and exact recall of the last successful
+  model marker. There is no `thread/compact/start` call in this mode. This is
+  next-turn recovery, not an automatic resend of the rejected request. The marker
+  is absent from every user message. Transport counters independently require one
+  refusal, one checkpoint continuation without original assistant/tool plaintext,
+  and confirmed cleanup. No token-usage data is manufactured.
+- Added deterministic regressions for strict fixture bounds, refusal attribution
+  and compaction-before-answer ordering. All 290 workspace tests passed with 17
+  opt-in tests ignored; Clippy with warnings denied, formatting and diff checks
+  passed before the transport follow-up. The first live attempt stopped before
+  the context boundary with `E_CANCELLED_STOP_UNCONFIRMED` and a rejected retry
+  (`E_REQUEST_ALREADY_ADMITTED`); cleanup was confirmed. See the retained
+  `cli-0.155.1.installed-automatic-checkpoint-incomplete.json`. Live automatic
+  recovery remains unqualified until a complete run succeeds.
+
 ## Native checkpoint transport using the installed browser (2026-09-20)
 
 - Extended the explicit checkpoint diagnostic with `--client <reviewed-executable>`

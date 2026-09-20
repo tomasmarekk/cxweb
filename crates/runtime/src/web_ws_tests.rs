@@ -296,6 +296,48 @@ async fn one_socket_preserves_native_bytes_and_dispatches_owned_warmup_and_conti
 }
 
 #[tokio::test]
+async fn buffered_keepalive_has_no_response_claim_and_preserves_cancellation() {
+    let fixture = Fixture::start(true).await;
+    let mut socket = fixture.connect().await;
+    socket
+        .send(Message::Text(frame("buffered").to_string().into()))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(3), fixture.provider.started.notified())
+        .await
+        .unwrap();
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(16)).await;
+    tokio::time::resume();
+    let received = tokio::time::timeout(Duration::from_secs(3), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap()
+        .into_text()
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&received).unwrap(),
+        json!({"type":"cxweb.keepalive","buffered":true})
+    );
+    assert_eq!(fixture.provider.calls.load(Ordering::SeqCst), 1);
+    assert!(fixture.native.lock().unwrap().is_empty());
+    socket.close(None).await.unwrap();
+    tokio::time::timeout(
+        Duration::from_secs(3),
+        fixture.provider.cancelled.notified(),
+    )
+    .await
+    .unwrap();
+    fixture.provider.release.notify_one();
+    fixture
+        .gateway
+        .disconnect_web(Duration::from_secs(3))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn closed_socket_cancels_generation_but_drain_waits_for_cleanup() {
     let fixture = Fixture::start(true).await;
     let mut socket = fixture.connect().await;

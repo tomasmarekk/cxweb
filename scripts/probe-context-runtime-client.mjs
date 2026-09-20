@@ -16,6 +16,7 @@ assert.ok([
   'bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226',
 ].includes(fingerprint), 'only a reviewed native backend may run');
 const descriptor = JSON.parse(await readFile(descriptorPath, 'utf8'));
+const delayed = descriptor.delayed_response === true;
 const terminalRefusal = descriptor.terminal_refusal === true;
 const expectedError = descriptor.expected_error ?? null;
 assert.ok(!terminalRefusal || ['E_MODEL_FIDELITY', 'E_SUBMISSION_UNCERTAIN'].includes(expectedError));
@@ -26,13 +27,18 @@ await mkdir(home); await mkdir(cwd);
 const catalogPath = join(home, 'catalog.json');
 await writeFile(catalogPath, JSON.stringify(descriptor.catalog));
 await writeFile(join(home, 'config.toml'), `openai_base_url = ${JSON.stringify(descriptor.base_url)}\nmodel_catalog_json = ${JSON.stringify(catalogPath.replaceAll('\\', '/'))}\n`);
+// The built-in provider cannot be overridden. This isolated synthetic probe
+// uses a custom provider solely to shorten the native stream watchdog.
+if (delayed) {
+  await writeFile(join(home, 'config.toml'), `openai_base_url = ${JSON.stringify(descriptor.base_url)}\nmodel_catalog_json = ${JSON.stringify(catalogPath)}\nmodel_provider = "cxweb_delay_fixture"\n[model_providers.cxweb_delay_fixture]\nname = "Local delay fixture"\nsupports_websockets = true\nbase_url = ${JSON.stringify(descriptor.base_url)}\nwire_api = "responses"\nstream_idle_timeout_ms = 20000\nstream_max_retries = 0\nrequest_max_retries = 0\n`);
+}
 const env = { ...process.env };
 for (const key of Object.keys(env)) if (/^(CODEX_|OPENAI_|CHATGPT_)/i.test(key)) delete env[key];
 env.CODEX_HOME = home;
 env.OPENAI_API_KEY = 'cxweb-synthetic-runtime-context-probe';
 const client = spawn(executable, ['app-server', '--listen', 'stdio://'], { env, cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
 const exited = new Promise(resolve => client.once('exit', resolve));
-const pending = new Map(); const notifications = []; let id = 0;
+const pending = new Map(); const notifications = []; let id = 0; let phase = 'initialize';
 createInterface({ input: client.stdout }).on('line', line => {
   let message; try { message = JSON.parse(line); } catch { return; }
   if (pending.has(message.id)) {
@@ -49,25 +55,44 @@ const rpc = (method, params) => new Promise((resolve, reject) => {
   pending.set(key, { resolve, reject, timer });
   client.stdin.write(JSON.stringify({ id: key, method, params }) + '\n');
 });
-const report = { synthetic: true, real_browser: false, executable_sha256: fingerprint, expected_local_error: expectedError, turns: [], context_errors: 0, local_error_visible: false, result: 'INCOMPLETE' };
+const report = { synthetic: true, real_browser: false, executable_sha256: fingerprint, expected_local_error: expectedError, turns: [], native_errors: [], delayed_response: delayed, configured_idle_ms: delayed ? 20000 : null, simulated_response_delay_ms: delayed ? 35000 : null, context_errors: 0, local_error_visible: false, result: 'INCOMPLETE' };
 try {
   await rpc('initialize', { clientInfo: { name: 'cxweb_runtime_context_probe', version: '0.1.0' }, capabilities: { experimentalApi: true } });
   client.stdin.write(JSON.stringify({ method: 'initialized', params: {} }) + '\n');
+  phase = 'config';
+  if (delayed) {
+    const { config } = await rpc('config/read', { includeLayers: false, cwd });
+    assert.equal(config.model_provider, 'cxweb_delay_fixture');
+    const provider = config.model_providers?.cxweb_delay_fixture;
+    assert.equal(provider?.stream_idle_timeout_ms, 20000);
+    assert.equal(provider?.stream_max_retries, 0);
+    assert.equal(provider?.supports_websockets, true);
+  }
+  phase = 'thread_start';
   const thread = await rpc('thread/start', { cwd, model: 'webbridge/test', ephemeral: true });
-  for (let index = 0; index < (terminalRefusal ? 2 : 4); index++) {
+  phase = 'turns';
+  for (let index = 0; index < (delayed ? 1 : terminalRefusal ? 2 : 4); index++) {
     const turn = await rpc('turn/start', { threadId: thread.thread.id, input: [{ type: 'text', text: `Synthetic runtime context turn ${index}.`, text_elements: [] }] });
     let completed;
-    for (let poll = 0; poll < 600; poll++) {
+    for (let poll = 0; poll < 1200; poll++) {
       completed = notifications.find(n => n.method === 'turn/completed' && n.params?.turn?.id === turn.turn.id);
       if (completed) break;
       await delay(50);
     }
     assert.ok(completed, 'native turn reaches a terminal notification');
     report.turns.push(completed.params.turn.status);
+    const nativeError = completed.params.turn.error?.codexErrorInfo;
+    if (nativeError) {
+      const tag = typeof nativeError === 'string' ? nativeError : Object.keys(nativeError)[0];
+      report.native_errors.push(['contextWindowExceeded','badRequest','responseStreamDisconnected','responseTooManyFailedAttempts'].includes(tag) ? tag : 'other');
+    }
     if (completed.params.turn.error?.codexErrorInfo === 'contextWindowExceeded') report.context_errors++;
     if (expectedError && completed.params.turn.error?.message?.includes(expectedError)) report.local_error_visible = true;
   }
-  if (terminalRefusal) {
+  if (delayed) {
+    assert.deepEqual(report.turns, ['completed'], 'buffered response survives a shorter native stream idle limit');
+    assert.equal(report.context_errors, 0);
+  } else if (terminalRefusal) {
     assert.deepEqual(report.turns, ['failed', 'completed'], 'terminal refusal then a new successful turn');
     assert.equal(report.context_errors, 0, 'a terminal local failure does not pretend context is full');
     assert.equal(report.local_error_visible, true, 'native failure preserves the specific local error');
@@ -79,7 +104,7 @@ try {
   assert.ok(!notifications.some(n => n.method === 'item/started' && ['commandExecution', 'fileChange'].includes(n.params?.item?.type)), 'no native tools executed');
   report.result = 'PASS actual native client through cxweb runtime';
 } catch (error) {
-  report.result = 'FAIL';
+  report.result = 'FAIL'; report.failed_phase = phase;
   report.error = error.code === 'ERR_ASSERTION' ? error.message.split('\n')[0] : 'E_RUNTIME_CONTEXT_PROBE';
   process.exitCode = 1;
 } finally {

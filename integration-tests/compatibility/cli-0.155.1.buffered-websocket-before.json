@@ -1,0 +1,49 @@
+{
+  "client": "0.155.1",
+  "configured_idle_ms": 20000,
+  "context_errors": 0,
+  "delayed_response": true,
+  "executable_sha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+  "executable_unchanged": true,
+  "expected_local_error": null,
+  "fixture_limits": {
+    "browser_answer_bytes": 0,
+    "estimated_context_tokens": 24576,
+    "normal_prompt_bytes": 98304,
+    "summary_prompt_bytes": 262144
+  },
+  "local_error_visible": false,
+  "native_errors": [],
+  "real_browser": false,
+  "result": "FAIL runtime verification",
+  "runtime": {
+    "browser_stub_submissions": 1,
+    "compactions": 0,
+    "encrypted_continuations": 0,
+    "errors": [
+      "E_CANCELLED"
+    ],
+    "http_requests": 1,
+    "native_upstream_frames": 0,
+    "summary_restored": false,
+    "websocket_requests": 1
+  },
+  "runtime_verified": false,
+  "schema": "cxweb.native-buffered-websocket-probe.v1",
+  "simulated_response_delay_ms": 35000,
+  "synthetic": true,
+  "transport": "websocket",
+  "turns": [
+    "completed"
+  ],
+  "limitations": [
+    "Synthetic browser and isolated custom provider allow a controlled shorter idle timeout.",
+    "Before the keepalive fix, the native client abandons WebSocket and falls back to HTTP. A completed native turn alone is not a transport pass."
+  ],
+  "evidence_level": "mock_integration",
+  "runtime_version": "0.1.0",
+  "os_version": "10.0.26100",
+  "observed_at": "2026-09-20T17:23:16.458766+00:00",
+  "timestamp_basis": "sanitized test report file modification time",
+  "command": "cargo test --locked -p cxweb-runtime actual_backend_waits_for_buffered_websocket_response -- --ignored --nocapture"
+}

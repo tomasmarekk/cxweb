@@ -11,6 +11,8 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+mod automatic_checkpoint;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Exercise {
@@ -29,6 +31,8 @@ pub struct CheckpointTarget {
     pub websocket: bool,
     #[serde(default)]
     pub capture_failure: bool,
+    #[serde(default)]
+    pub automatic: bool,
 }
 
 /// Uses an already leased installed browser, but a disposable signed-out native
@@ -73,6 +77,7 @@ pub(crate) async fn qualify_installed_checkpoint(
         binding,
         selected.websocket,
         codec,
+        selected.automatic,
         stop.clone().cancelled_owned(),
     );
     let client = async {
@@ -88,6 +93,7 @@ pub(crate) async fn qualify_installed_checkpoint(
                 }) => result.map_err(|_| "E_NATIVE_PROBE_ENDPOINT")?,
             };
             connection["verify_checkpoint"] = json!(true);
+            connection["automatic_checkpoint"] = json!(selected.automatic);
             let route = binding.routes.first().ok_or("E_MODEL_UNAVAILABLE")?;
             let endpoint = Endpoint::parse(connection, &route.id, codec)?;
             let marker = format!("CXWEB_NATIVE_CHECKPOINT_{:032x}", rand::random::<u128>());
@@ -97,17 +103,31 @@ pub(crate) async fn qualify_installed_checkpoint(
         result
     };
     let (runtime, client) = tokio::join!(server, client);
+    report["automatic_requested"] = json!(selected.automatic);
+    if selected.automatic {
+        report["diagnostic_budget"] = json!({"normal_encoded_bytes":96 * 1024,"summary_encoded_bytes":256 * 1024,"production_capacity_qualified":false});
+        if let Ok(bytes) =
+            tokio::fs::read(directory.join("workspace/automatic-checkpoint-report.json")).await
+            && let Ok(progress) = serde_json::from_slice::<automatic_checkpoint::Report>(&bytes)
+        {
+            report["automatic_checkpoint"] = serde_json::to_value(progress).unwrap_or(Value::Null);
+        }
+    }
     let result = async {
         let runtime = runtime?;
         // ScopeDiagnostic contains only bounded structural observations and
         // fixed UI labels; ScopeSurface's account/workspace IDs are excluded.
         report["browser_scope"] = runtime["diagnostic"]["scope"].clone();
         report["transport"] = json!({
-            "failures":runtime["failures"],"compaction_requests":runtime["compaction_requests"],
+            "failures":runtime["failures"],"context_refusals":runtime["context_refusals"],"compaction_requests":runtime["compaction_requests"],
             "checkpoint_continuations":runtime["checkpoint_continuations"],
             "checkpoint_continuations_with_plaintext_assistant_or_tools":runtime["checkpoint_continuations_with_plaintext_assistant_or_tools"],
             "websocket_requests":runtime["websocket_requests"],"native_websocket_frames":runtime["native_websocket_frames"]});
         client?;
+        if selected.automatic {
+            if report["automatic_checkpoint"]["completed"] != true { return Err("E_NATIVE_PROBE_AUTOMATIC_REPORT"); }
+            if runtime["context_refusals"] != 1 { return Err("E_NATIVE_PROBE_AUTOMATIC_REFUSAL"); }
+        }
         if runtime["failures"] != json!([]) || runtime["compaction_requests"] != 1
             || runtime["checkpoint_continuations"] != 1
             || runtime["checkpoint_continuations_with_plaintext_assistant_or_tools"] != 0
@@ -312,6 +332,7 @@ struct Endpoint {
     catalog: Value,
     model: String,
     verify_checkpoint: bool,
+    automatic_checkpoint: bool,
 }
 impl Endpoint {
     fn parse(value: Value, model: &str, codec: CatalogCodec) -> Result<Self, &'static str> {
@@ -341,6 +362,7 @@ impl Endpoint {
             catalog: value["catalog"].clone(),
             model: model.into(),
             verify_checkpoint: value["verify_checkpoint"] == true,
+            automatic_checkpoint: value["automatic_checkpoint"] == true,
         })
     }
 }
@@ -583,6 +605,9 @@ impl Client {
             .ok_or("E_NATIVE_PROBE_RPC")?
             .to_owned();
         self.thread = Some(thread.clone());
+        if endpoint.automatic_checkpoint {
+            return self.verify_automatic_checkpoint(cwd, &thread).await;
+        }
         let prompt = self
             .fixture
             .as_ref()
@@ -849,9 +874,14 @@ async fn run_client(
         tests_approved: 0,
         compacting: false,
     };
+    let verification_timeout = Duration::from_secs(if endpoint.automatic_checkpoint {
+        3600
+    } else {
+        600
+    });
     let result = tokio::select! {
         () = cancellation.cancelled() => Err("E_NATIVE_PROBE_CANCELLED"),
-        result = tokio::time::timeout(Duration::from_secs(600), client.verify(&cwd, endpoint, &catalog, expected)) => result.map_err(|_| "E_NATIVE_PROBE_TIMEOUT").and_then(|result| result),
+        result = tokio::time::timeout(verification_timeout, client.verify(&cwd, endpoint, &catalog, expected)) => result.map_err(|_| "E_NATIVE_PROBE_TIMEOUT").and_then(|result| result),
     };
     job.terminate_and_wait()
         .await

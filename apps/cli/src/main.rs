@@ -22,6 +22,9 @@ enum Command {
         /// Save one failed browser surface privately for local development inspection.
         #[arg(long, requires = "client")]
         capture_failure: bool,
+        /// Exercise a real local context refusal and native next-turn recovery.
+        #[arg(long, requires = "client")]
+        automatic: bool,
     },
     /// Qualify every observed reasoning choice in the installed family. Uses ChatGPT allowance.
     RuntimeQualifyReasoning {
@@ -143,6 +146,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             client,
             websocket,
             capture_failure,
+            automatic,
         } => {
             #[cfg(windows)]
             {
@@ -154,6 +158,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         client,
                         websocket,
                         capture_failure,
+                        automatic,
                     }),
                 )
                 .await?;
@@ -161,7 +166,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             #[cfg(not(windows))]
             {
-                let _ = (installation, client, websocket, capture_failure);
+                let _ = (installation, client, websocket, capture_failure, automatic);
                 return Err("runtime verification requires Windows".into());
             }
         }

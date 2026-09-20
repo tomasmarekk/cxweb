@@ -7,6 +7,7 @@ struct ObservedProvider {
     continuations: AtomicUsize,
     failures: Arc<Mutex<Vec<&'static str>>>,
     repair_fixture: Option<Arc<Browser>>,
+    response_delay: std::time::Duration,
 }
 impl WebProvider for ObservedProvider {
     fn validate_warmup(&self, request: &WebRequest) -> Result<(), &'static str> {
@@ -37,7 +38,9 @@ impl WebProvider for ObservedProvider {
         let provider = self.inner.clone();
         let failures = self.failures.clone();
         let repair_fixture = self.repair_fixture.clone();
+        let response_delay = self.response_delay;
         Box::pin(async move {
+            tokio::time::sleep(response_delay).await;
             match provider.execute(request).await {
                 Ok(response) => response,
                 Err(code) => {
@@ -56,18 +59,24 @@ impl WebProvider for ObservedProvider {
 #[tokio::test]
 #[ignore = "requires CXWEB_CONTEXT_PROBE_BACKEND pointing to a reviewed executable; uses synthetic content only"]
 async fn actual_backend_compacts_through_runtime_http_and_websocket() {
-    run_actual_backend_probe(None).await;
+    run_actual_backend_probe(None, false).await;
 }
 
 #[tokio::test]
 #[ignore = "requires CXWEB_CONTEXT_PROBE_BACKEND pointing to a reviewed executable; uses synthetic content only"]
 async fn actual_backend_stops_retrying_terminal_refusals() {
     for code in ["E_MODEL_FIDELITY", "E_SUBMISSION_UNCERTAIN"] {
-        run_actual_backend_probe(Some(code)).await;
+        run_actual_backend_probe(Some(code), false).await;
     }
 }
 
-async fn run_actual_backend_probe(expected_error: Option<&'static str>) {
+#[tokio::test]
+#[ignore = "requires CXWEB_CONTEXT_PROBE_BACKEND; 35-second local response with a 20-second native stream idle limit"]
+async fn actual_backend_waits_for_buffered_websocket_response() {
+    run_actual_backend_probe(None, true).await;
+}
+
+async fn run_actual_backend_probe(expected_error: Option<&'static str>, delayed: bool) {
     use cxweb_codex_adapter::{
         catalog_codec::{CatalogCodec, CatalogRoute},
         context_budget::LocalContextBudget,
@@ -101,10 +110,15 @@ async fn run_actual_backend_probe(expected_error: Option<&'static str>) {
     ));
     cxweb_platform::state::protected_directory(&root).unwrap();
     for websocket in [false, true] {
+        if delayed && !websocket {
+            continue;
+        }
         let directory = root.join(if websocket { "websocket" } else { "http" });
         cxweb_platform::state::protected_directory(&directory).unwrap();
         let (provider, browser) = provider_fixture(false);
-        browser.answer_bytes.store(64 * 1024, Ordering::SeqCst);
+        browser.answer_bytes.store(
+            if delayed { 0 } else { 64 * 1024 }, Ordering::SeqCst,
+        );
         browser
             .mismatched_effort
             .store(expected_error == Some("E_MODEL_FIDELITY"), Ordering::SeqCst);
@@ -132,6 +146,7 @@ async fn run_actual_backend_probe(expected_error: Option<&'static str>) {
             continuations: AtomicUsize::new(0),
             failures: Arc::default(),
             repair_fixture: terminal_refusal.then(|| browser.clone()),
+            response_delay: Duration::from_secs(if delayed { 35 } else { 0 }),
         });
         let native_frames = Arc::new(AtomicUsize::new(0));
         let observed_frames = native_frames.clone();
@@ -201,7 +216,7 @@ async fn run_actual_backend_probe(expected_error: Option<&'static str>) {
         let descriptor = directory.join("descriptor.json");
         std::fs::write(
             &descriptor,
-            json!({"base_url":gateway.base_url(),"catalog":{"models":[catalog]},"terminal_refusal":terminal_refusal,"expected_error":expected_error}).to_string(),
+            json!({"base_url":gateway.base_url(),"catalog":{"models":[catalog]},"terminal_refusal":terminal_refusal,"expected_error":expected_error,"delayed_response":delayed}).to_string(),
         )
         .unwrap();
         servers.spawn(axum::serve(listener, gateway.clone().router()).into_future());
@@ -226,17 +241,30 @@ async fn run_actual_backend_probe(expected_error: Option<&'static str>) {
         let summary_restored = browser.prompt.lock().unwrap()["history"]
             .to_string()
             .contains("Preserve fixture goal");
-        report["schema"] = json!(if terminal_refusal {
+        report["schema"] = json!(if delayed {
+            "cxweb.native-buffered-websocket-probe.v1"
+        } else if terminal_refusal {
             "cxweb.native-terminal-refusal-probe.v1"
         } else {
             "cxweb.native-runtime-context-probe.v1"
         });
         report["client"] = json!(build);
         report["transport"] = json!(if websocket { "websocket" } else { "http" });
-        report["fixture_limits"] = json!({"normal_prompt_bytes":budget.normal_bytes(),"summary_prompt_bytes":budget.summary_bytes(),"estimated_context_tokens":budget.estimated_tokens(),"browser_answer_bytes":64 * 1024});
+        report["fixture_limits"] = json!({"normal_prompt_bytes":budget.normal_bytes(),"summary_prompt_bytes":budget.summary_bytes(),"estimated_context_tokens":budget.estimated_tokens(),"browser_answer_bytes":if delayed { 0 } else { 64 * 1024 }});
         report["runtime"] = json!({"http_requests":provider.http.load(Ordering::SeqCst),"websocket_requests":provider.websocket.load(Ordering::SeqCst),"compactions":provider.compactions.load(Ordering::SeqCst),"encrypted_continuations":provider.continuations.load(Ordering::SeqCst),"browser_stub_submissions":browser.sends.load(Ordering::SeqCst),"native_upstream_frames":native_frames.load(Ordering::SeqCst),"summary_restored":summary_restored,"errors":*provider.failures.lock().unwrap()});
-        let expected_requests = if terminal_refusal { 2 } else { 5 };
-        let outcome_verified = if terminal_refusal {
+        let expected_requests = if delayed {
+            1
+        } else if terminal_refusal {
+            2
+        } else {
+            5
+        };
+        let outcome_verified = if delayed {
+            provider.compactions.load(Ordering::SeqCst) == 0
+                && provider.continuations.load(Ordering::SeqCst) == 0
+                && browser.sends.load(Ordering::SeqCst) == 1
+                && provider.failures.lock().unwrap().is_empty()
+        } else if terminal_refusal {
             provider.compactions.load(Ordering::SeqCst) == 0
                 && provider.continuations.load(Ordering::SeqCst) == 0
                 && browser.sends.load(Ordering::SeqCst)

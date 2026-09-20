@@ -74,6 +74,10 @@ fn context_failure(id: &str) -> Value {
     }})
 }
 
+/// In-process evidence of a byte-budget refusal before browser preparation.
+#[derive(Clone)]
+pub(crate) struct LocalContextRefusal;
+
 #[cfg(any(windows, test))]
 pub(crate) fn failure_response() -> axum::response::Response {
     let event = context_failure(&format!(
@@ -81,6 +85,7 @@ pub(crate) fn failure_response() -> axum::response::Response {
         rand::random::<u128>()
     ));
     axum::response::Response::builder()
+        .extension(LocalContextRefusal)
         .header("content-type", "text/event-stream")
         .header("cache-control", "no-store")
         .body(axum::body::Body::from(format!(

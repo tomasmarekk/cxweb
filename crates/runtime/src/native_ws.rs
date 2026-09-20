@@ -169,10 +169,11 @@ async fn relay(
 ) {
     let mut native_pending = 0usize;
     loop {
-        // Owned work can consume the coordinator's 600-second deadline plus
-        // cleanup. Realtime keeps its existing native idle bound.
+        // Leave room for the coordinator's 30-minute generation ceiling,
+        // preparation, submission, completion verification and cleanup.
+        // Buffered keepalives do not extend either coordinator deadline.
         let seconds = if route == SocketRoute::Responses {
-            660
+            2100
         } else {
             300
         };
@@ -266,8 +267,19 @@ async fn serve_owned(
     };
     let delivery = web.deliver(prepared);
     tokio::pin!(delivery);
+    // Native clients discard WebSocket ping/pong before their stream-idle
+    // watchdog. An ignored, namespaced text event keeps buffered transport
+    // alive without claiming model output, progress, usage, or completion.
+    let period = Duration::from_secs(15);
+    let mut heartbeat = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
+            _ = heartbeat.tick() => {
+                if local.send(LocalMessage::Text(r#"{"type":"cxweb.keepalive","buffered":true}"#.into())).await.is_err() {
+                    return false;
+                }
+            }
             result = &mut delivery => {
                 match result {
                     Ok(delivery) => {

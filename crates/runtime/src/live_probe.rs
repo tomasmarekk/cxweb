@@ -35,6 +35,7 @@ struct ProbeProvider {
     websocket_requests: Arc<AtomicUsize>,
     warmups: Arc<AtomicUsize>,
     compaction_requests: Arc<AtomicUsize>,
+    context_refusals: Arc<AtomicUsize>,
     checkpoint_continuations: Arc<AtomicUsize>,
     checkpoint_plaintext_history: Arc<AtomicUsize>,
 }
@@ -92,9 +93,19 @@ impl crate::gateway::WebProvider for ProbeProvider {
         }
         let provider = self.provider.clone();
         let failures = self.failures.clone();
+        let context_refusals = self.context_refusals.clone();
         Box::pin(async move {
             match provider.execute(request).await {
-                Ok(response) => response,
+                Ok(response) => {
+                    if response
+                        .extensions()
+                        .get::<crate::context_budget::LocalContextRefusal>()
+                        .is_some()
+                    {
+                        context_refusals.fetch_add(1, Ordering::Relaxed);
+                    }
+                    response
+                }
                 Err(code) => {
                     if let Ok(mut failures) = failures.lock()
                         && failures.len() < 32
@@ -265,7 +276,7 @@ pub async fn serve(
         websocket,
         codec,
         coding,
-        compaction,
+        compaction.then_some(cxweb_codex_adapter::context_budget::LocalContextBudget::DIAGNOSTIC),
         stop,
     )
     .await;
@@ -305,7 +316,7 @@ pub async fn serve_generation(
         websocket,
         codec,
         coding,
-        compaction,
+        compaction.then_some(cxweb_codex_adapter::context_budget::LocalContextBudget::DIAGNOSTIC),
         stop,
     )
     .await?;
@@ -340,7 +351,7 @@ pub(crate) async fn serve_generation_fixture(
         false,
         codec,
         true,
-        false,
+        None,
         stop,
     )
     .await?;
@@ -357,6 +368,7 @@ pub(crate) async fn serve_installed_checkpoint(
     binding: &Binding,
     websocket: bool,
     codec: cxweb_codex_adapter::catalog_codec::CatalogCodec,
+    automatic: bool,
     stop: impl Future<Output = ()> + Send + 'static,
 ) -> Result<Value, &'static str> {
     let route = binding
@@ -383,7 +395,11 @@ pub(crate) async fn serve_installed_checkpoint(
         websocket,
         codec,
         false,
-        true,
+        Some(if automatic {
+            cxweb_codex_adapter::context_budget::LocalContextBudget::new(96 * 1024, 256 * 1024)?
+        } else {
+            cxweb_codex_adapter::context_budget::LocalContextBudget::DIAGNOSTIC
+        }),
         stop,
     )
     .await
@@ -414,7 +430,7 @@ async fn run_probe(
     websocket: bool,
     codec: cxweb_codex_adapter::catalog_codec::CatalogCodec,
     coding: bool,
-    compaction: bool,
+    budget: Option<cxweb_codex_adapter::context_budget::LocalContextBudget>,
     stop: impl Future<Output = ()> + Send + 'static,
 ) -> Result<Value, &'static str> {
     let directory = validate_output(output)?;
@@ -434,7 +450,7 @@ async fn run_probe(
         Some(lease) => coordinator.with_consumer(lease),
         None => coordinator,
     };
-    let key = if compaction {
+    let key = if budget.is_some() {
         Some(Arc::new(crate::checkpoint::Codec::load_or_create(
             &directory.join("checkpoint-key.dpapi"),
             &installation,
@@ -446,8 +462,7 @@ async fn run_probe(
     if let Some(fixture) = fixture {
         provider = provider.with_native_fixture(fixture);
     }
-    let budget = cxweb_codex_adapter::context_budget::LocalContextBudget::DIAGNOSTIC;
-    if let Some(key) = key {
+    if let (Some(key), Some(budget)) = (key, budget) {
         provider = provider
             .with_checkpoints(key, codec)?
             .with_context_budget(budget)?;
@@ -509,6 +524,7 @@ async fn run_probe(
     let websocket_requests = Arc::new(AtomicUsize::new(0));
     let warmups = Arc::new(AtomicUsize::new(0));
     let compaction_requests = Arc::new(AtomicUsize::new(0));
+    let context_refusals = Arc::new(AtomicUsize::new(0));
     let checkpoint_continuations = Arc::new(AtomicUsize::new(0));
     let checkpoint_plaintext_history = Arc::new(AtomicUsize::new(0));
     let provider: Arc<dyn crate::gateway::WebProvider> = Arc::new(ProbeProvider {
@@ -519,6 +535,7 @@ async fn run_probe(
         websocket_requests: websocket_requests.clone(),
         warmups: warmups.clone(),
         compaction_requests: compaction_requests.clone(),
+        context_refusals: context_refusals.clone(),
         checkpoint_continuations: checkpoint_continuations.clone(),
         checkpoint_plaintext_history: checkpoint_plaintext_history.clone(),
     });
@@ -539,7 +556,7 @@ async fn run_probe(
         reasoning: vec![],
         coding,
     };
-    let model = if compaction {
+    let model = if let Some(budget) = budget {
         codec.encode_with_context_budget(&catalog_route, budget)?
     } else {
         codec.encode(&catalog_route)?
@@ -566,7 +583,7 @@ async fn run_probe(
     }
     let diagnostic = driver.diagnostic().await?;
     Ok(
-        json!({"live":true,"route":route,"browser_label":label,"native_upstream":"local rejection stub","routing_installed":false,"diagnostic":diagnostic,"optional_web_search_requests":search_requests.load(Ordering::Relaxed),"output_formats":output_formats.lock().map_err(|_| "E_PROBE_STATE")?.clone(),"failures":failures.lock().map_err(|_| "E_PROBE_STATE")?.clone(),"websocket_enabled":websocket,"websocket_upgrades":socket_upgrades.load(Ordering::Relaxed),"native_websocket_frames":socket_frames.load(Ordering::Relaxed),"websocket_requests":websocket_requests.load(Ordering::Relaxed),"websocket_warmups":warmups.load(Ordering::Relaxed),"compaction_requests":compaction_requests.load(Ordering::Relaxed),"checkpoint_continuations":checkpoint_continuations.load(Ordering::Relaxed),"checkpoint_continuations_with_plaintext_assistant_or_tools":checkpoint_plaintext_history.load(Ordering::Relaxed)}),
+        json!({"live":true,"route":route,"browser_label":label,"native_upstream":"local rejection stub","routing_installed":false,"diagnostic":diagnostic,"optional_web_search_requests":search_requests.load(Ordering::Relaxed),"output_formats":output_formats.lock().map_err(|_| "E_PROBE_STATE")?.clone(),"failures":failures.lock().map_err(|_| "E_PROBE_STATE")?.clone(),"websocket_enabled":websocket,"websocket_upgrades":socket_upgrades.load(Ordering::Relaxed),"native_websocket_frames":socket_frames.load(Ordering::Relaxed),"websocket_requests":websocket_requests.load(Ordering::Relaxed),"websocket_warmups":warmups.load(Ordering::Relaxed),"context_refusals":context_refusals.load(Ordering::Relaxed),"compaction_requests":compaction_requests.load(Ordering::Relaxed),"checkpoint_continuations":checkpoint_continuations.load(Ordering::Relaxed),"checkpoint_continuations_with_plaintext_assistant_or_tools":checkpoint_plaintext_history.load(Ordering::Relaxed)}),
     )
 }
 

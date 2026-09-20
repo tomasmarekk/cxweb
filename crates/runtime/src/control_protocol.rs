@@ -1022,6 +1022,7 @@ mod tests {
                         client: "C:/fixture/codex.exe".into(),
                         websocket: true,
                         capture_failure: false,
+                        automatic: false,
                     }),
                 }
             ),
