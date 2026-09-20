@@ -6,6 +6,7 @@
 // --unicode verifies exact non-BMP text, accents, quotes and a literal path.
 // --denial refuses one exact read and verifies the model receives that refusal.
 // --repair observes a failing test, approves one exact correction, then retests.
+// --coding=<id> repairs one bounded arithmetic function and runs native tests.
 // No auth files, routing overrides, model catalogs or client binaries are changed.
 import { spawn, execFileSync } from 'node:child_process';
 import { readFile, readdir, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
@@ -15,10 +16,15 @@ import { createInterface } from 'node:readline';
 import assert from 'node:assert/strict';
 import { approveFixtureRead, approveFixturePatch, completedFixtureRead, completedFixtureDenial, fixtureReadCommand } from './probe-client-approval.mjs';
 import { approveFixtureTest, approveFixtureRepair, fixtureRepairProgress, fixtureTestCommand, fixtureTestPassed, fixtureTestFailed, fixtureBrokenOutput } from './probe-client-approval.mjs';
+import { approveFixtureCommand } from './probe-client-approval.mjs';
+import { cases as codingCases, fixtureFiles, fingerprint as codingFingerprint, version as codingVersion } from './coding-fixture.mjs';
+import codingRunner from './coding-fixture-runner.cjs';
+import * as codingApproval from './coding-fixture-approval.mjs';
 
 const [client, home, model, option] = process.argv.slice(2);
+const codingCase = option?.startsWith('--coding=') ? codingCases.find(fixture => fixture.id === option.slice(9)) : undefined;
 assert.ok(client && home && model?.startsWith('webbridge/') && isAbsolute(client) && isAbsolute(home));
-assert.ok(process.argv.length <= 6 && (!option || ['--text', '--unicode', '--coexistence', '--tools', '--reasoning', '--denial', '--repair'].includes(option)));
+assert.ok(process.argv.length <= 6 && (!option || codingCase || ['--text', '--unicode', '--coexistence', '--tools', '--reasoning', '--denial', '--repair'].includes(option)));
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const builds = new Map([
   ['eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316', '0.155.1'],
@@ -32,7 +38,7 @@ const configBefore = sha256(await readFile(configPath));
 await mkdir(resolve('.local/probes'), { recursive: true });
 const cwd = await mkdtemp(resolve('.local/probes/installed-'));
 const shells = [];
-if (['--tools', '--denial', '--repair'].includes(option)) for (const name of ['pwsh.exe', 'powershell.exe']) {
+if (codingCase || ['--tools', '--denial', '--repair'].includes(option)) for (const name of ['pwsh.exe', 'powershell.exe']) {
   try { shells.push(...execFileSync('where.exe', [name], { encoding: 'utf8', windowsHide: true }).trim().split(/\r?\n/)); } catch { /* optional shell absent */ }
 }
 const child = spawn(client, ['app-server'], { cwd, env: { ...process.env, CODEX_HOME: home }, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
@@ -53,7 +59,18 @@ lines.on('line', line => {
     const params = message.params;
     const scoped = toolRun?.turn && params?.threadId === toolRun.thread && params?.turnId === toolRun.turn;
     let accepted = false, intentionalDenial = false;
-    if (scoped && toolRun.repair) {
+    if (scoped && toolRun.coding) {
+      const progress = codingApproval.completedProgress(events, toolRun, cwd, shells);
+      if (progress >= 0 && progress < 4 && !toolRun.approvedSteps.has(progress)) {
+        if (command && [0, 1, 3].includes(progress)) {
+          accepted = approveFixtureCommand(params, cwd, shells, progress === 0 ? codingApproval.readCommand : toolRun.testCommand);
+        } else if (patch && progress === 2) {
+          const started = events.findLast(event => event.method === 'item/started' && event.params?.item?.id === params.itemId);
+          accepted = codingApproval.approvePatch(params, started, cwd, toolRun.initial);
+        }
+        if (accepted) toolRun.approvedSteps.add(progress);
+      }
+    } else if (scoped && toolRun.repair) {
       const progress = fixtureRepairProgress(events, toolRun.thread, toolRun.turn, cwd, toolRun.marker, shells);
       if (progress >= 0 && progress < 4 && !toolRun.approvedSteps.has(progress)) {
         if (command && progress === 0) accepted = approveFixtureRead(params, cwd, shells);
@@ -176,6 +193,54 @@ async function verifyTools(selectedModel) {
   evidence.nativeTools = { ...evidence.nativeTools, result: 'passed', exactRead: true, exactPatch: true, realFileVerified: true, exactFinalAnswer: true, readApprovalObserved: toolRun.readApproved, patchApprovalObserved: toolRun.patchApproved };
   toolRun = undefined;
 }
+async function verifyCoding(selectedModel) {
+  const files = fixtureFiles(codingCase);
+  files['tests.cjs'] = await readFile(new URL('./coding-fixture-runner.cjs', import.meta.url), 'utf8');
+  for (const [name, contents] of Object.entries(files)) await writeFile(join(cwd, name), contents, { flag: 'wx' });
+  const testCommand = codingApproval.testCommand(process.execPath);
+  const before = codingRunner.check(files['solve.cjs'], codingCase.tests);
+  assert.ok(before.failed > 0, 'E_FIXTURE_NOT_BROKEN');
+  evidence.nativeCoding = { result: 'started', case: codingCase.id, corpusVersion: codingVersion,
+    corpusSha256: codingFingerprint, testRunnerSha256: sha256(Buffer.from(files['tests.cjs'])),
+    nodeVersion: process.version, nodeExecutableSha256: sha256(await readFile(process.execPath)),
+    harnessExecutedNativeTools: false, actualNativeProcess: true, before };
+  const started = await rpc('thread/start', { cwd, model, ephemeral: true, approvalPolicy: 'untrusted', sandbox: 'read-only' });
+  assert.equal(started.model, model, 'E_SELECTED_MODEL');
+  assert.equal(started.modelProvider, 'openai', 'E_NATIVE_PROVIDER');
+  toolRun = { thread: started.thread.id, coding: true, initial: files['solve.cjs'], caseJson: files['cases.json'],
+    testCommand, before, approvedSteps: new Set() };
+  const prompt = `Repair the arithmetic function solve(a, b) in solve.cjs. ${codingCase.instruction} First use exec_command with cmd exactly ${JSON.stringify(codingApproval.readCommand)}, login=false and the current working directory. Next use exec_command with cmd exactly ${JSON.stringify(testCommand)}, login=false and the current working directory. Observe its actual failing result before editing. Use apply_patch once to replace only the return expression in solve.cjs, preserving the three-line wrapper. The expression may contain only a, b, integer literals, spaces, parentheses and arithmetic, comparison, logical or conditional operators; no other identifiers, calls, strings, property access, assignments, comments or additional statements. Do not change cases.json or tests.cjs. After the patch succeeds, run the identical test command and observe exit code 0 with all cases passed. Only then return exactly ${codingApproval.passedMessage}. Wait for every actual tool result. Do not run other commands, edit other files, request elevated permissions or access the network.`;
+  const turn = (await rpc('turn/start', { threadId: toolRun.thread, effort: selectedModel.defaultReasoningEffort, input: [{ type: 'text', text: prompt, text_elements: [] }] })).turn.id;
+  assert.ok(!toolRun.turn || toolRun.turn === turn, 'E_TURN_IDENTITY');
+  toolRun.turn = turn;
+  console.log(JSON.stringify({ phase: 'native arithmetic repair', case: codingCase.id, model }));
+  const deadline = Date.now() + 600000;
+  let done;
+  while (Date.now() < deadline) {
+    assert.ok(!failure, failure);
+    done = events.find(event => event.method === 'turn/completed' && event.params?.threadId === toolRun.thread && event.params?.turn?.id === turn);
+    if (done) break;
+    assert.equal(child.exitCode, null, 'E_CLIENT_EXIT');
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  assert.equal(done?.params?.turn?.status, 'completed', 'E_TURN_FAILED');
+  assert.equal(codingApproval.completedProgress(events, toolRun, cwd, shells), 4, 'E_CODING_SEQUENCE');
+  const completed = events.filter(event => event.method === 'item/completed' && event.params?.threadId === toolRun.thread && event.params?.turnId === turn);
+  const answers = completed.filter(event => event.params.item.type === 'agentMessage');
+  assert.equal(answers.length, 1, 'E_ANSWER_COUNT');
+  assert.equal(answers[0].params.item.text, codingApproval.passedMessage, 'E_ANSWER_TEXT');
+  assert.equal(codingApproval.completedProgress(completed.slice(0, completed.indexOf(answers[0])), toolRun, cwd, shells), 4, 'E_CODING_ANSWER_ORDER');
+  const patch = completed.find(event => event.params.item.type === 'fileChange').params.item;
+  const actualSource = await readFile(join(cwd, 'solve.cjs'), 'utf8');
+  assert.equal(actualSource.replaceAll('\r\n', '\n'), codingApproval.changedSource(patch, cwd, toolRun.initial), 'E_CODING_FILE');
+  for (const name of ['cases.json', 'tests.cjs']) assert.equal(await readFile(join(cwd, name), 'utf8'), files[name], 'E_TESTS_CHANGED');
+  assert.deepEqual((await readdir(cwd)).sort(), Object.keys(files).sort(), 'E_UNEXPECTED_FILE');
+  assert.equal(sha256(await readFile(process.execPath)), evidence.nativeCoding.nodeExecutableSha256, 'E_NODE_CHANGED');
+  evidence.nativeCoding = { ...evidence.nativeCoding, result: 'passed', actualRead: true, realTestFailed: true,
+    boundedPatch: true, realRetestPassed: true, finalAfterRetest: true, testInputsUnchanged: true,
+    finalSourceSha256: sha256(Buffer.from(actualSource)), approvedSteps: [...toolRun.approvedSteps] };
+  toolRun = undefined;
+}
 async function verifyRepair(selectedModel) {
   evidence.nativeRepair = { result: 'started', harnessExecutedTools: false, fixtureMarkerInPrompt: false };
   const marker = `CXWEB_REPAIR_${randomBytes(16).toString('hex')}`;
@@ -292,6 +357,8 @@ try {
     evidence.text = 'started';
     for (const [effort] of expected) await verifyText(selectedModel, effort);
     evidence.text = 'passed';
+  } else if (codingCase) {
+    await verifyCoding(selectedModel);
   } else if (option === '--repair') {
     await verifyRepair(selectedModel);
   } else if (option === '--denial') {
@@ -322,7 +389,10 @@ try {
     const info = event.params?.turn?.error?.codexErrorInfo ?? event.params?.error?.codexErrorInfo;
     return typeof info === 'string' && /^[A-Za-z]{1,64}$/.test(info) ? [info] : info && typeof info === 'object' ? Object.keys(info).filter(key => /^[A-Za-z]{1,64}$/.test(key)) : [];
   }))];
-  if (toolRun?.repair) {
+  if (toolRun?.coding) {
+    evidence.nativeCoding = { ...evidence.nativeCoding, result: 'failed',
+      completedPrefix: codingApproval.completedProgress(events, toolRun, cwd, shells), approvedSteps: [...toolRun.approvedSteps] };
+  } else if (toolRun?.repair) {
     evidence.nativeRepair = { ...evidence.nativeRepair, result: 'failed', completedPrefix: fixtureRepairProgress(events, toolRun.thread, toolRun.turn, cwd, toolRun.marker, shells), approvedSteps: [...toolRun.approvedSteps] };
   } else if (toolRun?.denial) {
     evidence.nativeDenial = { ...evidence.nativeDenial, result: 'failed', denialObserved: toolRun.readDenied };

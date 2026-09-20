@@ -39,12 +39,12 @@ function words(value) {
 }
 
 export function approveFixtureRead(params, cwd, hostShellExecutables = []) {
-  return approveCommand(params, cwd, hostShellExecutables, fixtureReadCommand);
+  return approveFixtureCommand(params, cwd, hostShellExecutables, fixtureReadCommand);
 }
 export function approveFixtureTest(params, cwd, hostShellExecutables = []) {
-  return approveCommand(params, cwd, hostShellExecutables, fixtureTestCommand);
+  return approveFixtureCommand(params, cwd, hostShellExecutables, fixtureTestCommand);
 }
-function approveCommand(params, cwd, hostShellExecutables, expected) {
+export function approveFixtureCommand(params, cwd, hostShellExecutables, expected) {
   if (typeof params?.command !== 'string' || typeof params.cwd !== 'string'
       || resolve(params.cwd).toLowerCase() !== resolve(cwd).toLowerCase()
       || (params.kind != null && params.kind !== 'command')
