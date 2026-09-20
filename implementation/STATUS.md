@@ -23,6 +23,36 @@ English. The complete installed CLI and App-backend read/patch/final scenarios
 now pass. A fixed message sent from the actual GUI also passed with the owned
 model and effort corroborated by the native turn context.
 
+## Installed catalog readiness (2026-09-20)
+
+- Reviewed CLI/App catalog responses now produce independent client handshake
+  evidence only after successful native-body validation and owned catalog merge.
+  Locally generated conditional 304 responses retain this evidence; upstream
+  rejection, malformed catalogs and unknown client codecs cannot manufacture it.
+  Snapshot scope/generation changes invalidate earlier catalog observations.
+  Reported codec metadata is compatibility evidence, not process authentication.
+- Idle runtime health becomes Ready when configuration, browser, account, models,
+  native transport and both client dimensions are healthy. A failed web request,
+  stale/failed catalog, active turn or incomplete cleanup prevents this result.
+  Desktop labels distinguish Catalog available from an actual verified request.
+  Operational readiness is separate from coding qualification and release gates.
+- Validation: 319 workspace tests passed, 21 opt-in tests ignored; all-target
+  Clippy with warnings denied, formatting and diff checks passed. All 22 installed
+  panel tests passed after the final label change. Release daemon, CLI and desktop
+  builds passed; the desktop was explicitly rebuilt with the final embedded UI.
+- Installed daemon 91f7d554fcadd04f927899fe70178289a04434c1fae5b9230f72afaf1c8cd4df
+  recovered the saved session. Actual CLI 0.155.1 and App backend 0.155.0-alpha.9.2
+  catalog reads passed with native models and all five reasoning choices intact.
+  Private health reports Ready with all eight components healthy. Windows Computer
+  Use verified the actual cxweb Connected heading and Catalog available labels;
+  its accessibility tree contains Instant, Medium, High, Extra High and Pro with
+  the native Low/Light and Max mapping. Native config and executables were unchanged.
+  Reports: both catalog-readiness.json client files and installed-catalog-readiness.json.
+- No model generation was requested in this interval; the earlier rate-limited
+  arithmetic attempt remains a failure. No new native GUI picker claim is made.
+  Both client observations are currently required; single-client discovery and
+  broader lifecycle, coding, protocol and release qualification remain open.
+
 ## Passive native subscription health (2026-09-20)
 
 - Native HTTP forwarding now records successful transport only after body EOF;

@@ -1,0 +1,95 @@
+{
+  "evidence_level": "account_live",
+  "account_generation": false,
+  "actual_installed_runtime": true,
+  "source_commit": "d1d90ca",
+  "runtime_sha256": "91f7d554fcadd04f927899fe70178289a04434c1fae5b9230f72afaf1c8cd4df",
+  "desktop_sha256": "80712214d9a997a084517a3e41b64377eb701162bf8fadec7cd7e7a5cd32af5a",
+  "observed_at": "2026-09-20T21:46:37.8041188+00:00",
+  "os": "10.0.26100.0",
+  "procedure": "Both reviewed native app-server clients read their installed catalog without a generation option. Inspect private runtime health and the actual cxweb desktop through Windows Computer Use.",
+  "health": {
+    "active_web_turns": 0,
+    "components": {
+      "browser": {
+        "code": null,
+        "evidence": "passive_browser",
+        "observed_at": "2026-09-20T21:41:23.102Z",
+        "state": "healthy"
+      },
+      "codex_app": {
+        "code": null,
+        "evidence": "client_handshake",
+        "observed_at": "2026-09-20T21:42:12.625Z",
+        "state": "healthy"
+      },
+      "codex_cli": {
+        "code": null,
+        "evidence": "client_handshake",
+        "observed_at": "2026-09-20T21:44:05.950Z",
+        "state": "healthy"
+      },
+      "config": {
+        "code": null,
+        "evidence": "local_probe",
+        "observed_at": "2026-09-20T21:46:37.776Z",
+        "state": "healthy"
+      },
+      "native_upstream": {
+        "code": null,
+        "evidence": "local_probe",
+        "observed_at": "2026-09-20T21:44:05.948Z",
+        "state": "healthy"
+      },
+      "runtime": {
+        "code": null,
+        "evidence": "local_probe",
+        "observed_at": "2026-09-20T21:46:37.776Z",
+        "state": "healthy"
+      },
+      "web_auth": {
+        "code": null,
+        "evidence": "passive_browser",
+        "observed_at": "2026-09-20T21:41:23.102Z",
+        "state": "healthy"
+      },
+      "web_models": {
+        "code": null,
+        "evidence": "passive_browser",
+        "observed_at": "2026-09-20T21:41:23.102Z",
+        "state": "healthy"
+      }
+    },
+    "overall": "ready",
+    "revision": 24,
+    "schema_version": "webbridge.health.v1",
+    "suggested_action": "none"
+  },
+  "desktop_observation": {
+    "method": "Windows Computer Use accessibility tree and foreground screenshot",
+    "heading": "Connected",
+    "chatgpt": "Verified",
+    "codex_app": "Catalog available",
+    "codex_cli": "Catalog available",
+    "reasoning": [
+      "Instant — Low in CLI, Light in App",
+      "Medium",
+      "High",
+      "Extra High",
+      "Pro — Max in Codex"
+    ],
+    "generation_requested": false
+  },
+  "client_reports": [
+    "cli-0.155.1.catalog-readiness.json",
+    "app-backend-0.155.0-alpha.9.2.catalog-readiness.json"
+  ],
+  "result": "PASS",
+  "limits": [
+    "Operational Ready describes the installed connection, not completion of PRD release gates or model-task qualification.",
+    "Client catalog evidence uses reviewed reported codec metadata; it does not authenticate the client process.",
+    "No new Codex GUI picker or account model generation was tested in this interval.",
+    "A changed qualified model snapshot invalidates the previous catalog evidence.",
+    "Readiness currently requires observations from both supported clients."
+  ]
+}
