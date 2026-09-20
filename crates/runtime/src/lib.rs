@@ -50,6 +50,8 @@ pub mod scheduler;
 pub mod setup_owner;
 pub mod turn;
 pub mod web_provider;
+#[cfg(windows)]
+mod web_recovery;
 mod web_ws;
 #[cfg(test)]
 mod web_ws_tests;

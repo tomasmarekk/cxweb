@@ -10,7 +10,8 @@ use cxweb_domain::SessionKey;
 use std::collections::HashMap;
 use tokio::sync::{mpsc, oneshot};
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Route {
     pub id: String,
     pub identity: String,
@@ -18,6 +19,8 @@ pub struct Route {
     pub effort: Option<String>,
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Binding {
     pub installation: String,
     pub account: String,

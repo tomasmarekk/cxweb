@@ -95,6 +95,17 @@ impl PreparedInstallation {
         {
             return Err("E_ACTIVATION_CATALOG");
         }
+        let receipt = crate::web_recovery::Receipt::new(
+            session,
+            &qualified
+                .iter()
+                .map(|(codec, _)| *codec)
+                .collect::<Vec<_>>(),
+        );
+        receipt.validate(
+            self.installation_id(),
+            std::slice::from_ref(&session.route.id),
+        )?;
         let consumer = session.claim()?;
         let ledger = Ledger::open(&self.directory.join("turns.sqlite")).await?;
         let coordinator =
@@ -109,6 +120,7 @@ impl PreparedInstallation {
             Arc::new(provider),
             vec![session.route.id.clone()],
             native_models,
+            Some(receipt),
         )
         .map_err(|_| "E_ACTIVATION_PREPARE")
     }
@@ -118,8 +130,12 @@ impl PreparedInstallation {
         provider: Arc<dyn WebProvider>,
         published: Vec<String>,
         native_models: Vec<String>,
+        recovery: Option<crate::web_recovery::Receipt>,
     ) -> io::Result<(Host, ActivationHandle)> {
         self.journal.record_catalog(published, native_models)?;
+        if let Some(receipt) = recovery {
+            self.journal.record_web(receipt)?;
+        }
         let (port, capability, _) = self.journal.runtime_route();
         let gateway = Gateway::prepared(port, capability, self.native, provider);
         Host::prepared(self.listener, self.journal, gateway)
@@ -210,6 +226,7 @@ mod tests {
                     Arc::new(FixtureProvider),
                     vec!["webbridge/fixture".into()],
                     vec!["native-fixture".into()],
+                    None,
                 )
                 .unwrap();
             assert_eq!(
@@ -341,6 +358,7 @@ mod tests {
                     Arc::new(FixtureProvider),
                     vec!["webbridge/fixture".into()],
                     vec!["native-fixture".into()],
+                    None,
                 )
                 .unwrap();
             assert_eq!(activation.apply().await, Err("E_RUNTIME_NOT_READY"));

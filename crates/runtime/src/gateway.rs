@@ -125,6 +125,28 @@ impl WebAdmission {
 }
 
 impl Gateway {
+    /// Recovery owns a drain lease just like a request. Disconnect waits for
+    /// its non-generative browser checks and cleanup before restoring config.
+    #[cfg(windows)]
+    pub(crate) async fn recover_web<F, Fut>(&self, work: F) -> Result<(), &'static str>
+    where
+        F: FnOnce(CancellationToken) -> Fut,
+        Fut: Future<Output = Result<(), &'static str>>,
+    {
+        let Some(_lease) = self.admission.acquire() else {
+            return Ok(());
+        };
+        let result = work(self.admission.cancel.child_token()).await;
+        if result.is_err() {
+            self.admission
+                .state
+                .lock()
+                .map_err(|_| "E_GATEWAY_STATE")?
+                .cleanup_failed = true;
+        }
+        result
+    }
+
     /// Both transports retain the drain lease until provider cleanup completes.
     /// Dropping this delivery future cancels work without dropping its worker.
     pub(crate) async fn dispatch_web(

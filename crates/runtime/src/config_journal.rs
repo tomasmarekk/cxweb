@@ -67,6 +67,8 @@ struct Record {
     catalog: Option<CatalogReceipt>,
     #[serde(default)]
     scheduler: Option<SchedulerRecord>,
+    #[serde(default)]
+    web: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -174,6 +176,7 @@ impl ConfigJournal {
             undo: None,
             catalog: None,
             scheduler: None,
+            web: None,
         };
         replace(
             &journal,
@@ -262,6 +265,10 @@ impl ConfigJournal {
         self.record.phase
     }
 
+    pub(crate) fn directory(&self) -> &Path {
+        self.journal.path().parent().expect("journal directory")
+    }
+
     pub fn installation_id(&self) -> &str {
         &self.record.id
     }
@@ -339,6 +346,49 @@ impl ConfigJournal {
         let mut next = self.record.clone();
         next.catalog = Some(catalog);
         self.store(next)
+    }
+
+    /// Only the live activation owner records previously qualified browser and
+    /// client bindings. This record contains hashes, never account credentials.
+    pub(crate) fn record_web(&mut self, receipt: crate::web_recovery::Receipt) -> io::Result<()> {
+        if self.record.phase != Phase::Prepared
+            || self.prepared.is_none()
+            || self.record.web.is_some()
+        {
+            return Err(invalid());
+        }
+        let (published, _) = self.catalog_receipt()?;
+        receipt
+            .validate(&self.record.id, &published)
+            .map_err(io::Error::other)?;
+        let mut next = self.record.clone();
+        next.web = Some(serde_json::to_value(receipt).map_err(|_| invalid())?);
+        self.store(next)
+    }
+
+    /// Malformed or obsolete web evidence cannot stop native forwarding or undo.
+    /// Reopening a prepared/interrupted install never authorizes web activation.
+    pub(crate) fn web_recovery(&self) -> io::Result<Option<crate::web_recovery::Receipt>> {
+        self.journal.verify_unchanged()?;
+        if self.record.phase != Phase::ConfigApplied {
+            return Ok(None);
+        }
+        let Some(raw) = self.record.web.clone() else {
+            return Ok(None);
+        };
+        let Ok(receipt) = serde_json::from_value::<crate::web_recovery::Receipt>(raw) else {
+            return Ok(None);
+        };
+        let (published, _) = self.catalog_receipt()?;
+        if receipt.validate(&self.record.id, &published).is_err() {
+            return Ok(None);
+        }
+        let current = Snapshot::capture(&self.record.target)?;
+        let text = std::str::from_utf8(current.original()).map_err(|_| invalid())?;
+        if !plan_record(&self.record)?.0.can_resume(text) {
+            return Ok(None);
+        }
+        Ok(Some(receipt))
     }
 
     pub(crate) fn catalog_receipt(&self) -> io::Result<(Vec<String>, Vec<String>)> {
@@ -559,6 +609,61 @@ mod tests {
         fn drop(&mut self) {
             std::fs::remove_dir_all(&self.root).unwrap();
         }
+    }
+    #[test]
+    fn web_recovery_requires_applied_unchanged_ownership_and_valid_private_evidence() {
+        let f = Fixture::new();
+        let mut journal = ConfigJournal::prepare(&f.state, &f.target, 12345, CAP).unwrap();
+        journal
+            .record_catalog(
+                vec!["webbridge/fixture".into()],
+                vec!["native-fixture".into()],
+            )
+            .unwrap();
+        let receipt = crate::web_recovery::Receipt::fixture(journal.installation_id());
+        assert!(
+            journal
+                .record_web(crate::web_recovery::Receipt::fixture("other"))
+                .is_err()
+        );
+        journal.record_web(receipt.clone()).unwrap();
+        assert!(journal.record_web(receipt.clone()).is_err());
+        assert!(journal.web_recovery().unwrap().is_none());
+        journal.apply().unwrap();
+        assert!(journal.web_recovery().unwrap().is_some());
+        let installed = std::fs::read_to_string(&f.target).unwrap();
+        drop(journal);
+        let mut journal = ConfigJournal::reopen(&f.state, &f.target).unwrap();
+        assert!(journal.web_recovery().unwrap().is_some());
+        assert!(journal.record_web(receipt).is_err());
+        std::fs::write(
+            &f.target,
+            format!("{installed}# unrelated edit\ntheme = 'dark'\n"),
+        )
+        .unwrap();
+        assert!(journal.web_recovery().unwrap().is_some());
+        std::fs::write(
+            &f.target,
+            installed.replace(CAP, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+        )
+        .unwrap();
+        assert!(journal.web_recovery().unwrap().is_none());
+        std::fs::write(&f.target, &installed).unwrap();
+        let path = f.state.join("integration.json");
+        let mut raw: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        drop(journal);
+        raw["web"]["builds"] = serde_json::json!(["unreviewed-build"]);
+        std::fs::write(&path, raw.to_string()).unwrap();
+        let mut journal = ConfigJournal::reopen(&f.state, &f.target).unwrap();
+        assert!(journal.web_recovery().unwrap().is_none());
+        // Invalid web evidence does not prevent safe native-only recovery/undo.
+        assert_eq!(journal.recovery().unwrap(), Recovery::Candidate);
+        journal
+            .disconnect(&["webbridge/fixture".into()], &["native-fixture".into()])
+            .unwrap();
+        assert!(journal.web_recovery().unwrap().is_none());
+        assert!(!f.target.exists());
     }
     #[test]
     fn prepared_is_durable_before_config_and_cannot_resume_without_preflight() {

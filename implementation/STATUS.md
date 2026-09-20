@@ -21,6 +21,41 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Installed web-session recovery after runtime restart (2026-09-20)
+
+- Connected the activation owner to durable web recovery metadata in the private
+  integration journal: installation-bound account/workspace hashes, one exact
+  observed route, browser build, protocol evidence and reviewed client codecs.
+  These are recorded before configuration apply. This records the caller's
+  existing qualification decision; it does not certify new clients or routes.
+- Host recovery retains its original loopback route and starts native forwarding
+  immediately. An applied installation with valid metadata and a still-owned
+  config route receives a pending web provider. Its one background recovery
+  attempt rechecks browser build, English authenticated UI, account/workspace,
+  route identity/label, empty composer and Temporary Chat without sending text.
+  The original scope and turn ledger are reused, preserving replay/uncertainty.
+- A slow initial navigation is reobserved on the same page for up to 45 seconds.
+  Login/verification requirements, observation errors and cancellation terminate
+  the attempt. No visible login window, second browser or model request is used
+  as an automatic retry. A busy profile is refused without disturbing its owner.
+- Native forwarding continues while web recovery is pending or failed. Owned
+  catalogs become available only after recovery succeeds. Prepared installs,
+  changed owned routing, new profile/provider/catalog conflicts, old journals
+  without web evidence and malformed/obsolete web receipts remain native-only.
+  Unrelated configuration edits survive; recovery never rewrites configuration.
+- Recovery holds a gateway drain lease. Disconnect cancels it and waits for its
+  cleanup; a late successful result cannot republish after cancellation. Failed
+  browser cleanup prevents a successful disconnect result. Tests use temporary
+  protected journals, local synthetic upstreams and synthetic readiness results.
+- Validation: workspace 229 passed / 10 opt-in ignored; desktop UI 40 passed;
+  Clippy, formatting, explicit included-file formatting and diff checks passed.
+  Release CLI, daemon and desktop builds passed.
+  Evidence: integration-tests/compatibility/installed-web-recovery-windows.json.
+- NOT RUN: actual authenticated recovery, real browser revalidation and the
+  production desktop activation path. The previous manual-login cxweb process
+  was rechecked and still holds the saved profile. This adds the restart path
+  needed by activation; it does not enable activation or complete G0/G2/G3.
+
 ## Native command denial exercise (2026-09-20)
 
 - Added an explicit Test command denial action to selected-client diagnostics.

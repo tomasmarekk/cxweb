@@ -27,6 +27,11 @@ pub struct Host {
     control: Service,
     installation: String,
     serving: Arc<AtomicBool>,
+    recovery: Option<(
+        crate::web_recovery::PendingProvider,
+        crate::web_recovery::Receipt,
+        std::path::PathBuf,
+    )>,
 }
 
 /// In-process activation receipt. The daemon retains Host independently of this
@@ -85,8 +90,8 @@ impl Drop for Serving {
 }
 impl Host {
     /// The selected configuration must be independently selected by the owner.
-    /// Exact model IDs come from its validated journal. A recovered route stays native-only
-    /// until a separate, complete activation flow qualifies browser integration.
+    /// Exact bindings come from its private journal. Native forwarding starts
+    /// first; web routes resume only after non-generative browser revalidation.
     pub fn recover(directory: &Path, config: &Path) -> io::Result<Self> {
         let journal = ConfigJournal::reopen(directory, config)?;
         Self::bind(
@@ -103,7 +108,16 @@ impl Host {
         let (port, capability, installation) = journal.runtime_route();
         let installation = installation.to_owned();
         let listener = loopback::bind(port)?;
-        let gateway = Gateway::recover_native(port, capability, native);
+        let (gateway, recovery) = if let Some(receipt) = journal.web_recovery()? {
+            let pending = crate::web_recovery::PendingProvider::default();
+            let gateway = Gateway::prepared(port, capability, native, Arc::new(pending.clone()));
+            (
+                gateway,
+                Some((pending, receipt, journal.directory().to_owned())),
+            )
+        } else {
+            (Gateway::recover_native(port, capability, native), None)
+        };
         let controller =
             DisconnectController::new(gateway.clone(), journal, published, native_models)
                 .map_err(io::Error::other)?;
@@ -116,6 +130,7 @@ impl Host {
             control,
             installation,
             serving: Arc::new(AtomicBool::new(false)),
+            recovery,
         })
     }
 
@@ -149,6 +164,7 @@ impl Host {
                 control: Service::new(Arc::new(controller)),
                 installation,
                 serving,
+                recovery: None,
             },
             handle,
         ))
@@ -165,6 +181,7 @@ impl Host {
             control,
             installation,
             serving,
+            recovery,
         } = self;
         let _serving = Serving(serving.clone());
         serving.store(true, Ordering::Release);
@@ -180,7 +197,17 @@ impl Host {
                 pending = control_pipe::listen(&installation).ok();
             }
         };
+        let recovery_gateway = gateway.clone();
+        let recover = async {
+            if let Some((pending, receipt, directory)) = recovery {
+                let _ = recovery_gateway
+                    .recover_web(|cancel| pending.restore(receipt, directory, cancel))
+                    .await;
+            }
+            std::future::pending::<()>().await;
+        };
         tokio::select! {
+            () = recover => unreachable!("recovery remains owned by the host"),
             result = axum::serve(listener, gateway.router()).into_future() => result,
             () = control_loop => unreachable!("control admission loop never returns"),
         }
@@ -201,6 +228,61 @@ mod tests {
             std::fs::remove_dir_all(&self.0).unwrap();
         }
     }
+    #[tokio::test]
+    async fn installed_web_receipt_reconstitutes_pending_provider_without_opening_browser_in_bind()
+    {
+        let fixture = Fixture(
+            std::env::temp_dir().join(format!("cxweb-host-web-{:032x}", rand::random::<u128>())),
+        );
+        protected_directory(&fixture.0).unwrap();
+        let config = fixture.0.join("config.toml");
+        let directory = fixture.0.join("journal");
+        let reservation = loopback::bind(0).unwrap();
+        let port = reservation.local_addr().unwrap().port();
+        let mut journal =
+            ConfigJournal::prepare(&directory, &config, port, &"a".repeat(43)).unwrap();
+        journal
+            .record_catalog(vec!["webbridge/fixture".into()], vec!["native".into()])
+            .unwrap();
+        journal
+            .record_web(crate::web_recovery::Receipt::fixture(
+                journal.installation_id(),
+            ))
+            .unwrap();
+        journal.apply().unwrap();
+        let applied = std::fs::read(&config).unwrap();
+        drop(journal);
+        drop(reservation);
+        let host = Host::bind(
+            ConfigJournal::reopen(&directory, &config).unwrap(),
+            NativeTransport::new("http://127.0.0.1:1".into()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(host.listener.local_addr().unwrap().port(), port);
+        assert!(host.recovery.is_some());
+        let response = host
+            .gateway
+            .dispatch_web(
+                serde_json::json!({"model":"webbridge/fixture"}),
+                None,
+                false,
+                false,
+                crate::gateway::WebTransport::Http,
+            )
+            .await;
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        assert!(
+            std::str::from_utf8(&bytes)
+                .unwrap()
+                .contains("E_WEB_RECOVERING")
+        );
+        assert_eq!(std::fs::read(&config).unwrap(), applied);
+        // serve owns the later browser launch; binding alone does not run it.
+        drop(host);
+    }
+
     #[tokio::test]
     async fn restarted_host_keeps_original_route_and_restores_over_private_control() {
         let fixture = Fixture(

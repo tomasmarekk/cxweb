@@ -81,6 +81,21 @@ fn remove_preserving_comments(doc: &mut DocumentMut, name: &str) {
 }
 
 impl RoutePatch {
+    /// A saved route may resume after unrelated edits, but never after its key
+    /// or effective provider/profile/catalog was replaced by the user.
+    pub fn can_resume(&self, current: &str) -> bool {
+        let Ok(mut doc) = current.parse::<DocumentMut>() else {
+            return false;
+        };
+        if doc.get("openai_base_url").and_then(|item| item.as_str())
+            != Some(self.installed.as_str())
+        {
+            return false;
+        }
+        doc.remove("openai_base_url");
+        inspect(&doc.to_string()).is_ok_and(|result| result.can_plan)
+    }
+
     pub fn plan(
         original: &str,
         port: u16,
@@ -184,6 +199,27 @@ impl RoutePatch {
 mod tests {
     use super::*;
     const CAP: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    #[test]
+    fn recovery_requires_owned_route_and_no_new_provider_or_profile_conflict() {
+        let (patch, installed) = RoutePatch::plan("model = 'native'\n", 43127, CAP).unwrap();
+        assert!(patch.can_resume(&installed));
+        assert!(patch.can_resume(&(installed.clone() + "# user comment\ntheme = 'dark'\n")));
+        assert!(!patch.can_resume(""));
+        assert!(
+            !patch
+                .can_resume(&installed.replace(CAP, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"))
+        );
+        for conflict in [
+            "model_provider = 'other'",
+            "profile = 'other'",
+            "[profiles.other]",
+            "model_catalog_json = 'user.json'",
+            "chatgpt_base_url = 'http://example.invalid'",
+        ] {
+            assert!(!patch.can_resume(&(installed.clone() + conflict)));
+        }
+        assert!(!patch.can_resume("invalid ["));
+    }
     #[test]
     fn new_routes_keep_subscription_shape_and_legacy_undo_remains_exact() {
         let (current, candidate) = RoutePatch::plan("", 43127, CAP).unwrap();

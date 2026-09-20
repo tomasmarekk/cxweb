@@ -14,6 +14,7 @@ pub struct GenerationSession {
     pub driver: ManagedDriver,
     pub route: Route,
     pub protocol_evidence: String,
+    pub(crate) browser_version: String,
     scope: ProviderScope,
     consumer: std::sync::Arc<tokio::sync::Mutex<()>>,
 }
@@ -84,6 +85,7 @@ pub(crate) struct PreparedHandoff {
     binding: Binding,
     route: Route,
     evidence: String,
+    browser_version: String,
 }
 
 fn selected_route<'a>(
@@ -182,7 +184,12 @@ impl PreparedHandoff {
             label: model.label.clone(),
             effort: Some(effort.into()),
         };
+        let browser_version = browser.version().map_err(|_| "E_BROWSER_OBSERVATION")?["product"]
+            .as_str()
+            .ok_or("E_BROWSER_OBSERVATION")?
+            .to_owned();
         let prepared = Self {
+            browser_version,
             binding: Binding {
                 installation: installation.into(),
                 account: scope.account,
@@ -231,6 +238,7 @@ impl PreparedHandoff {
             driver: ManagedDriver::start(browser, self.binding, ownership)?,
             route: self.route,
             protocol_evidence: self.evidence,
+            browser_version: self.browser_version,
             scope,
             consumer: std::sync::Arc::default(),
         })
@@ -346,6 +354,7 @@ mod tests {
                 },
                 route,
                 evidence: "a".repeat(64),
+                browser_version: "Chrome/fixture".into(),
             };
             let receipt = std::sync::Arc::new(prepared.start(browser, ownership).unwrap());
             assert!(paths.lock().is_err());
@@ -436,6 +445,7 @@ mod tests {
             },
             route,
             evidence: "a".repeat(64),
+            browser_version: "Chrome/fixture".into(),
         }
         .start(browser, paths.lock().unwrap())
         .unwrap();

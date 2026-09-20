@@ -1,0 +1,48 @@
+{
+  "schema": "cxweb.installed-web-recovery.v1",
+  "date": "2026-09-20",
+  "result": "PASS synthetic journal, host, gateway, cancellation and readiness checks; live authenticated recovery NOT RUN",
+  "verification": {
+    "workspace": {
+      "passed": 229,
+      "ignored": 10
+    },
+    "desktop_ui": {
+      "passed": 40
+    },
+    "clippy": "PASS",
+    "format": "PASS",
+    "release_builds": [
+      "CLI",
+      "daemon",
+      "desktop"
+    ]
+  },
+  "checks": {
+    "applied_journal_reopens_exact_web_binding": true,
+    "prepared_journal_does_not_activate_on_reopen": true,
+    "changed_owned_route_or_provider_profile_catalog_conflict_blocks_recovery": true,
+    "unrelated_config_changes_survive": true,
+    "obsolete_web_receipt_preserves_native_only_recovery_and_undo": true,
+    "host_reconstructs_pending_provider_on_original_port_without_config_mutation": true,
+    "native_http_passes_while_recovery_pending_and_after_cancel": true,
+    "web_requests_fail_until_provider_ready": true,
+    "late_result_after_cancel_does_not_publish": true,
+    "disconnect_waits_for_recovery_cleanup": true,
+    "unconfirmed_cleanup_blocks_successful_disconnect": true,
+    "loading_page_is_reobserved_until_ready_or_deadline": true,
+    "login_or_verification_challenge_is_not_automatically_retried": true,
+    "pre_cancelled_recovery_does_not_open_browser_or_profile": true
+  },
+  "not_run": [
+    "Actual authenticated background recovery and browser account/model/language revalidation",
+    "Actual Codex App picker",
+    "Native subscription coexistence",
+    "Desktop production activation and supervised crash recovery"
+  ],
+  "limits": [
+    "Synthetic readiness results do not prove live browser compatibility.",
+    "Existing complete coding/picker qualification is still required before activation.",
+    "The saved browser profile remains owned by the previous manual-login process."
+  ]
+}
