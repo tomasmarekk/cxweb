@@ -32,6 +32,8 @@ test('repair admits only the exact file update and denies moves, expanded scope 
   assert.equal(approveFixtureRepair(params, event, cwd, 'marker'), true);
   assert.equal(approveFixtureRepair({ ...params, grantRoot: cwd }, event, cwd, 'marker'), false);
   assert.equal(approveFixtureRepair({ ...params, turnId: 'foreign' }, event, cwd, 'marker'), false);
+  const moved = structuredClone(event); moved.params.item.changes[0].kind.move_path = resolve(cwd, 'other.txt');
+  assert.equal(approveFixtureRepair(params, moved, cwd, 'marker'), false);
   for (const override of [{ kind: { type: 'add' } }, { kind: { type: 'update', movePath: resolve(cwd, 'other.txt') } }, { path: '../probe-output.txt' }, { diff: '+marker\n' }]) {
     const altered = structuredClone(event); Object.assign(altered.params.item.changes[0], override);
     assert.equal(approveFixtureRepair(params, altered, cwd, 'marker'), false);
@@ -116,6 +118,8 @@ test('fixture commands refuse extra permissions and non-default execution contex
       { additionalPermissions: { fileSystem: { write: [resolve(cwd, '..')] } } },
       { additionalPermissions: { fileSystem: { read: [resolve(cwd, '..')] } } },
       { environmentId: 'foreign-environment' },
+      { environmentId: 'LOCAL' },
+      { environmentId: ' local' },
       { environmentId: '' },
       { approvalId: 'subcommand-or-stdin-approval' },
       { approvalId: '' },
@@ -132,6 +136,7 @@ test('ordinary one-command acceptance remains valid with null scope and display 
     const params = { command, cwd, kind: 'command', additionalPermissions: null,
       environmentId: null, approvalId: null, availableDecisions: null, networkApprovalContext: null };
     assert.equal(approve(params, cwd), true);
+    assert.equal(approve({ ...params, environmentId: 'local' }, cwd), true);
     assert.equal(approve({ ...params, availableDecisions: ['accept', 'decline', 'cancel'],
       reason: 'Run the exact fixture command', commandActions: [], startedAtMs: 123,
       proposedExecpolicyAmendment: ['pwsh'],

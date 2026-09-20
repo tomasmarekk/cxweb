@@ -61,11 +61,40 @@ lines.on('line', line => {
     let accepted = false, intentionalDenial = false;
     if (scoped && toolRun.coding) {
       const progress = codingApproval.completedProgress(events, toolRun, cwd, shells);
+      (toolRun.approvalDiagnostics ??= []).push({
+        phase: progress, command, patch,
+        exactRead: approveFixtureCommand(params, cwd, shells, codingApproval.readCommand),
+        exactTest: approveFixtureCommand(params, cwd, shells, toolRun.testCommand),
+        kindIsCommand: params.kind == null || params.kind === 'command',
+        extraPermissions: params.additionalPermissions != null,
+        explicitLocalEnvironment: params.environmentId === 'local',
+        alternateEnvironment: params.environmentId != null && params.environmentId !== 'local',
+        alternateApproval: params.approvalId != null,
+        networkContext: params.networkApprovalContext != null,
+        ordinaryAcceptOffered: params.availableDecisions == null || (Array.isArray(params.availableDecisions) && params.availableDecisions.includes('accept')),
+      });
       if (progress >= 0 && progress < 4 && !toolRun.approvedSteps.has(progress)) {
         if (command && [0, 1, 3].includes(progress)) {
           accepted = approveFixtureCommand(params, cwd, shells, progress === 0 ? codingApproval.readCommand : toolRun.testCommand);
         } else if (patch && progress === 2) {
           const started = events.findLast(event => event.method === 'item/started' && event.params?.item?.id === params.itemId);
+          const candidate = started?.params?.item;
+          toolRun.patchDiagnostic = { rootGrant: params.grantRoot != null, itemPresent: !!candidate,
+            itemInProgress: candidate?.status === 'inProgress',
+            sameThread: started?.params?.threadId === params.threadId, sameTurn: started?.params?.turnId === params.turnId,
+            admissibleSource: codingApproval.changedSource(candidate, cwd, toolRun.initial) !== null,
+            changes: candidate?.changes?.map(change => ({
+              update: change.kind?.type === 'update', move: change.kind?.move_path != null || change.kind?.movePath != null,
+              targetMatches: typeof change.path === 'string' && resolve(cwd, change.path).toLowerCase() === resolve(cwd, 'solve.cjs').toLowerCase(),
+              diffLines: typeof change.diff === 'string' ? change.diff.split('\n').length : null,
+              boundedHunk: typeof change.diff === 'string' && /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@\n/.test(change.diff),
+            })) ?? [] };
+          // Only this synthetic fixture's own source proposal is retained for
+          // local diagnosis. Never archive native events or account data.
+          toolRun.sourceProposal = candidate?.changes?.length === 1
+            && toolRun.patchDiagnostic.changes[0].targetMatches
+            && typeof candidate.changes[0].diff === 'string' && candidate.changes[0].diff.length <= 4096
+            ? candidate.changes[0].diff : undefined;
           accepted = codingApproval.approvePatch(params, started, cwd, toolRun.initial);
         }
         if (accepted) toolRun.approvedSteps.add(progress);
@@ -391,7 +420,19 @@ try {
   }))];
   if (toolRun?.coding) {
     evidence.nativeCoding = { ...evidence.nativeCoding, result: 'failed',
-      completedPrefix: codingApproval.completedProgress(events, toolRun, cwd, shells), approvedSteps: [...toolRun.approvedSteps] };
+      completedPrefix: codingApproval.completedProgress(events, toolRun, cwd, shells), approvedSteps: [...toolRun.approvedSteps],
+      approvalDiagnostics: toolRun.approvalDiagnostics ?? [],
+      patchDiagnostic: toolRun.patchDiagnostic ?? null,
+      completedItems: events.filter(event => event.method === 'item/completed' && event.params?.threadId === toolRun.thread && event.params?.turnId === toolRun.turn)
+        .map(event => event.params.item).filter(item => !['userMessage', 'agentMessage', 'reasoning'].includes(item.type))
+        .map(item => ({ type: ['commandExecution', 'fileChange'].includes(item.type) ? item.type : 'other',
+          status: ['completed', 'failed', 'declined'].includes(item.status) ? item.status : 'other',
+          exitCode: Number.isInteger(item.exitCode) ? item.exitCode : null,
+          exactRead: approveFixtureCommand(item, cwd, shells, codingApproval.readCommand),
+          exactTest: approveFixtureCommand(item, cwd, shells, toolRun.testCommand),
+          exactReadOutput: typeof item.aggregatedOutput === 'string' && item.aggregatedOutput.replaceAll('\r\n', '\n').trim() === (toolRun.initial + toolRun.caseJson).trim(),
+          outputLength: typeof item.aggregatedOutput === 'string' ? item.aggregatedOutput.length : null,
+        })) };
   } else if (toolRun?.repair) {
     evidence.nativeRepair = { ...evidence.nativeRepair, result: 'failed', completedPrefix: fixtureRepairProgress(events, toolRun.thread, toolRun.turn, cwd, toolRun.marker, shells), approvedSteps: [...toolRun.approvedSteps] };
   } else if (toolRun?.denial) {
@@ -415,6 +456,7 @@ try {
   evidence.configUnchanged = sha256(await readFile(configPath)) === configBefore;
   evidence.executableUnchanged = sha256(await readFile(client)) === hash;
   evidence.observedAt = new Date().toISOString();
+  if (toolRun?.sourceProposal) await writeFile(cwd + '.patch.txt', toolRun.sourceProposal, { flag: 'wx' });
   if (!evidence.configUnchanged || !evidence.executableUnchanged) { evidence.result = 'FAIL'; process.exitCode = 1; }
   await writeFile(join(cwd, 'evidence.json'), JSON.stringify(evidence, null, 2) + '\n');
   console.log(JSON.stringify(evidence, null, 2));

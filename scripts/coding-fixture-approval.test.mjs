@@ -33,7 +33,8 @@ test('native patch approval admits only the attributed solve file without wider 
     assert.equal(approvePatch({ ...params, ...override }, event, cwd, initial), false);
   }
   for (const override of [{ path: '../solve.cjs' }, { path: 'tests.cjs' }, { kind: { type: 'add' } },
-    { kind: { type: 'update', movePath: 'other.cjs' } }, { diff: diff.replace('b + a', 'require(1)') }]) {
+    { kind: { type: 'update', movePath: 'other.cjs' } }, { kind: { type: 'update', move_path: 'other.cjs' } },
+    { diff: diff.replace('b + a', 'require(1)') }]) {
     const altered = structuredClone(item); Object.assign(altered.changes[0], override);
     assert.equal(changedSource(altered, cwd, initial), null);
   }

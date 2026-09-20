@@ -50,11 +50,12 @@ export function approveFixtureCommand(params, cwd, hostShellExecutables, expecte
       || (params.kind != null && params.kind !== 'command')
       || params.networkApprovalContext != null
       || params.additionalPermissions != null
-      || params.environmentId != null
+      || (params.environmentId != null && params.environmentId !== 'local')
       || params.approvalId != null
       || (params.availableDecisions != null && (!Array.isArray(params.availableDecisions)
         || !params.availableDecisions.includes('accept')))) return false;
-  // These fixtures admit only ordinary commands in the default environment,
+  // Reviewed native builds reserve "local" for their host-local environment.
+  // These fixtures admit only ordinary commands in that environment,
   // without a permission overlay or subcommand/stdin approval. The caller uses
   // one-command "accept"; policy amendment proposals are never applied.
   if (params.command === expected) return true;
@@ -73,7 +74,7 @@ function exactRepair(item, cwd, marker) {
   const changes = item?.changes;
   if (item?.type !== 'fileChange' || !Array.isArray(changes) || changes.length !== 1) return false;
   const change = changes[0];
-  return change.kind?.type === 'update' && change.kind.movePath == null
+  return change.kind?.type === 'update' && change.kind.movePath == null && change.kind.move_path == null
     && typeof change.path === 'string'
     && resolve(cwd, change.path).toLowerCase() === resolve(cwd, 'probe-output.txt').toLowerCase()
     && change.diff === `@@ -1 +1 @@\n-${fixtureBrokenOutput}\n+${marker}\n`;

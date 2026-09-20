@@ -1,0 +1,185 @@
+{
+  "schema": "cxweb.installed-client.v1",
+  "startedAt": "2026-09-20T20:30:47.456Z",
+  "build": "0.155.0-alpha.9.2",
+  "executableSha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+  "synthetic": false,
+  "configurationOverride": false,
+  "actualGuiPicker": "not observed",
+  "text": "not requested",
+  "installedLoopbackRoute": true,
+  "subscriptionAuthentication": true,
+  "models": [
+    {
+      "id": "gpt-6-astra",
+      "name": "GPT-6-Astra"
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "name": "GPT-5.6-Sol"
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "name": "GPT-5.6-Terra"
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "name": "GPT-5.6-Luna"
+    },
+    {
+      "id": "gpt-daybreak-blue-latest",
+      "name": "Daybreak Blue"
+    },
+    {
+      "id": "gpt-5.5",
+      "name": "GPT-5.5"
+    },
+    {
+      "id": "webbridge/402f0b19d5610fcbee25b681",
+      "name": "ChatGPT Web · Latest"
+    }
+  ],
+  "selectedEffort": "xhigh",
+  "reasoningChoices": [
+    {
+      "reasoningEffort": "low",
+      "description": "Instant"
+    },
+    {
+      "reasoningEffort": "medium",
+      "description": "Medium"
+    },
+    {
+      "reasoningEffort": "high",
+      "description": "High"
+    },
+    {
+      "reasoningEffort": "xhigh",
+      "description": "Extra High"
+    },
+    {
+      "reasoningEffort": "max",
+      "description": "Pro"
+    }
+  ],
+  "ownedAndNativeCatalog": true,
+  "nativeCoding": {
+    "result": "failed",
+    "case": "sum",
+    "corpusVersion": "cxweb.arithmetic-repairs.v1",
+    "corpusSha256": "b073abc6cc040afaf32f3b72621c5aaf8ec73c07682a086ec774744e05291af5",
+    "testRunnerSha256": "85ad59dbf5cd368c311390303692bbb09485440583e28356d54a79f2694042d9",
+    "nodeVersion": "v26.2.0",
+    "nodeExecutableSha256": "96f768b95e8e9d443f5eead1cb2d199744923320bb8240d2c3129362e7ae2a5d",
+    "harnessExecutedNativeTools": false,
+    "actualNativeProcess": true,
+    "before": {
+      "total": 4,
+      "passed": 1,
+      "failed": 3
+    },
+    "completedPrefix": -1,
+    "approvedSteps": [
+      0,
+      1
+    ],
+    "approvalDiagnostics": [
+      {
+        "phase": 0,
+        "command": true,
+        "patch": false,
+        "exactRead": true,
+        "exactTest": false,
+        "kindIsCommand": true,
+        "extraPermissions": false,
+        "explicitLocalEnvironment": true,
+        "alternateEnvironment": false,
+        "alternateApproval": false,
+        "networkContext": false,
+        "ordinaryAcceptOffered": true
+      },
+      {
+        "phase": 1,
+        "command": true,
+        "patch": false,
+        "exactRead": false,
+        "exactTest": true,
+        "kindIsCommand": true,
+        "extraPermissions": false,
+        "explicitLocalEnvironment": true,
+        "alternateEnvironment": false,
+        "alternateApproval": false,
+        "networkContext": false,
+        "ordinaryAcceptOffered": true
+      },
+      {
+        "phase": 2,
+        "command": false,
+        "patch": true,
+        "exactRead": false,
+        "exactTest": false,
+        "kindIsCommand": true,
+        "extraPermissions": false,
+        "explicitLocalEnvironment": false,
+        "alternateEnvironment": false,
+        "alternateApproval": false,
+        "networkContext": false,
+        "ordinaryAcceptOffered": true
+      }
+    ],
+    "patchDiagnostic": {
+      "rootGrant": false,
+      "itemPresent": true,
+      "itemInProgress": true,
+      "sameThread": true,
+      "sameTurn": true,
+      "admissibleSource": false,
+      "changes": [
+        {
+          "update": true,
+          "move": false,
+          "targetMatches": true,
+          "diffLines": 6,
+          "boundedHunk": true
+        }
+      ]
+    },
+    "completedItems": [
+      {
+        "type": "commandExecution",
+        "status": "completed",
+        "exitCode": 0,
+        "exactRead": true,
+        "exactTest": false,
+        "exactReadOutput": true,
+        "outputLength": 206
+      },
+      {
+        "type": "commandExecution",
+        "status": "failed",
+        "exitCode": 1,
+        "exactRead": false,
+        "exactTest": true,
+        "exactReadOutput": false,
+        "outputLength": 34
+      },
+      {
+        "type": "fileChange",
+        "status": "declined",
+        "exitCode": null,
+        "exactRead": false,
+        "exactTest": false,
+        "exactReadOutput": false,
+        "outputLength": null
+      }
+    ]
+  },
+  "result": "FAIL",
+  "error": "E_UNEXPECTED_ACTION",
+  "providerErrorCodes": [],
+  "turnStatuses": [],
+  "errorKinds": [],
+  "configUnchanged": true,
+  "executableUnchanged": true,
+  "observedAt": "2026-09-20T20:32:16.800Z"
+}

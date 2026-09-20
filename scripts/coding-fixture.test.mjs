@@ -4,7 +4,12 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import runner from './coding-fixture-runner.cjs';
-import { cases, source, editableSource, fixtureFiles } from './coding-fixture.mjs';
+import { cases, source, editableSource, fixtureFiles, version, fingerprint } from './coding-fixture.mjs';
+
+test('live repair inputs retain their frozen version and fingerprint', () => {
+  assert.equal(version, 'cxweb.arithmetic-repairs.v1');
+  assert.equal(fingerprint, 'b073abc6cc040afaf32f3b72621c5aaf8ec73c07682a086ec774744e05291af5');
+});
 
 test('every repair starts with real failing cases and admits a passing reference', () => {
   for (const fixture of cases) {

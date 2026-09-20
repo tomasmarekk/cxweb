@@ -1,0 +1,14 @@
+{
+  "schema": "cxweb.native-patch-fixture.v1",
+  "evidence_level": "mock_integration",
+  "syntheticModel": true,
+  "actualNativeClient": true,
+  "accountGeneration": false,
+  "build": "0.155.1",
+  "executableSha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+  "result": "PASS",
+  "exactNativePatch": true,
+  "observedAt": "2026-09-20T20:32:50.028Z",
+  "modelRequests": 2,
+  "approvedPatches": 1
+}

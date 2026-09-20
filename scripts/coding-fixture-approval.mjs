@@ -43,7 +43,7 @@ export function changedSource(item, cwd, initial) {
   const changes = item?.changes;
   if (item?.type !== 'fileChange' || !Array.isArray(changes) || changes.length !== 1) return null;
   const change = changes[0];
-  if (change.kind?.type !== 'update' || change.kind.movePath != null || typeof change.path !== 'string'
+  if (change.kind?.type !== 'update' || change.kind.movePath != null || change.kind.move_path != null || typeof change.path !== 'string'
       || resolve(cwd, change.path).toLowerCase() !== resolve(cwd, 'solve.cjs').toLowerCase()) return null;
   return patchedSource(change.diff, initial);
 }
