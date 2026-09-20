@@ -23,6 +23,36 @@ English. The complete installed CLI and App-backend read/patch/final scenarios
 now pass. A fixed message sent from the actual GUI also passed with the owned
 model and effort corroborated by the native turn context.
 
+## Installed failed-test repair exercise (2026-09-20)
+
+- Added `--repair` to the installed-client probe. The disposable workspace starts
+  with a random input line and deliberately incorrect output. Actual Codex must
+  read the input, execute the exact equality test and observe exit code 1, apply
+  the exact single-file correction, execute the test again and observe exit code
+  0 before reporting success. The random input is not supplied in the prompt.
+- Approval admission follows the completed, attributed native event prefix.
+  A patch cannot be approved before a real failing test, a retest cannot run
+  before the completed patch, and duplicate approvals or different commands are
+  refused. A moved file, expanded grant root, extra tool or mismatched turn cannot
+  qualify the exercise. The product still executes no model-generated tools.
+- CLI 0.155.1 passed the complete authenticated scenario at 15:27:57 UTC. All
+  four exact approvals were observed, both files were checked independently,
+  the final answer followed the successful retest, and native configuration and
+  executable hashes remained unchanged. See `cli-0.155.1.installed-repair.json`.
+  App backend 0.155.0-alpha.9.2 passed the same complete exercise at 15:30:23 UTC,
+  including all four approvals and unchanged native hashes; see
+  `app-backend-0.155.0-alpha.9.2.installed-repair.json`. No browser window was
+  required. The installed runtime returned to zero active turns with verified
+  browser scope and request evidence for both clients.
+- Validation: all seven approval harness tests passed, including wrong order,
+  fabricated success, incorrect exit codes, extra calls, foreign-turn evidence,
+  file moves and altered test commands. JavaScript syntax and diff checks passed.
+- Next functional gap: the installed recovery provider does not yet enable its
+  checkpoint codec/context budget. Existing synthetic context tests and earlier
+  incomplete live compaction reports do not establish long-task support. Finish
+  authenticated compaction and continuation qualification before enabling that
+  path; retain all pending tool results and native compatibility boundaries.
+
 ## Installed approval-denial exercise (2026-09-20)
 
 - The installed-client probe now has a `--denial` exercise. It starts an

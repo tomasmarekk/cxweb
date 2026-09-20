@@ -2,8 +2,44 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { approveFixtureRead, approveFixturePatch, completedFixtureRead, completedFixtureDenial, fixtureReadCommand } from './probe-client-approval.mjs';
+import { approveFixtureTest, approveFixtureRepair, fixtureRepairProgress, fixtureTestCommand, fixtureTestPassed, fixtureTestFailed, fixtureBrokenOutput } from './probe-client-approval.mjs';
 
 const cwd = resolve('.local/probes/approval-fixture/workspace');
+function repairEvents() {
+  return [
+    { type: 'commandExecution', command: fixtureReadCommand, cwd, status: 'completed', exitCode: 0, aggregatedOutput: 'marker\r\n' },
+    { type: 'commandExecution', command: fixtureTestCommand, cwd, status: 'failed', exitCode: 1, aggregatedOutput: fixtureTestFailed + '\r\n' },
+    { id: 'patch', type: 'fileChange', status: 'completed', changes: [{ path: resolve(cwd, 'probe-output.txt'), kind: { type: 'update', movePath: null }, diff: `@@ -1 +1 @@\n-${fixtureBrokenOutput}\n+marker\n` }] },
+    { type: 'commandExecution', command: fixtureTestCommand, cwd, status: 'completed', exitCode: 0, aggregatedOutput: fixtureTestPassed + '\r\n' },
+  ].map(item => ({ method: 'item/completed', params: { threadId: 'thread', turnId: 'turn', item } }));
+}
+test('repair progression requires the exact attributed read, failure, patch and successful retest in order', () => {
+  const events = repairEvents();
+  const verify = events => fixtureRepairProgress(events, 'thread', 'turn', cwd, 'marker');
+  for (let count = 0; count <= 4; count++) assert.equal(verify(events.slice(0, count)), count);
+  assert.equal(verify([...events, events[3]]), -1);
+  assert.equal(verify([events[0], events[2], events[1], events[3]]), -1);
+  assert.equal(verify([events[0], events[0]]), -1);
+  assert.equal(verify([...events.slice(0, 1), { ...events[1], params: { ...events[1].params, turnId: 'foreign' } }, ...events.slice(2)]), -1);
+  for (const [step, override] of [[0, { aggregatedOutput: 'invented' }], [1, { exitCode: 0 }], [1, { aggregatedOutput: fixtureTestPassed }], [2, { status: 'failed' }], [3, { exitCode: 1 }], [3, { status: 'failed' }], [3, { aggregatedOutput: fixtureTestFailed }], [3, { command: 'other' }], [3, { type: 'mcpToolCall' }]]) {
+    const altered = structuredClone(events); Object.assign(altered[step].params.item, override);
+    assert.equal(verify(altered), -1);
+  }
+});
+test('repair admits only the exact file update and denies moves, expanded scope or modified test commands', () => {
+  const event = repairEvents()[2]; event.method = 'item/started'; event.params.item.status = 'inProgress';
+  const params = { itemId: 'patch', threadId: 'thread', turnId: 'turn' };
+  assert.equal(approveFixtureRepair(params, event, cwd, 'marker'), true);
+  assert.equal(approveFixtureRepair({ ...params, grantRoot: cwd }, event, cwd, 'marker'), false);
+  assert.equal(approveFixtureRepair({ ...params, turnId: 'foreign' }, event, cwd, 'marker'), false);
+  for (const override of [{ kind: { type: 'add' } }, { kind: { type: 'update', movePath: resolve(cwd, 'other.txt') } }, { path: '../probe-output.txt' }, { diff: '+marker\n' }]) {
+    const altered = structuredClone(event); Object.assign(altered.params.item.changes[0], override);
+    assert.equal(approveFixtureRepair(params, altered, cwd, 'marker'), false);
+  }
+  assert.equal(approveFixtureTest({ command: fixtureTestCommand, cwd }, cwd), true);
+  assert.equal(approveFixtureTest({ command: `'C:\\Program Files\\PowerShell\\7\\pwsh.exe' -NoProfile -Command '${fixtureTestCommand.replaceAll("'", "'\"'\"'")}'`, cwd }, cwd), true);
+  for (const command of [fixtureReadCommand, fixtureTestCommand + '; exit 0', fixtureTestCommand.replace('exit 1', 'exit 0')]) assert.equal(approveFixtureTest({ command, cwd }, cwd), false);
+});
 test('denial evidence requires exactly one attributed declined command without execution output', () => {
   const event = { method: 'item/completed', params: { threadId: 'thread', turnId: 'turn', item: { type: 'commandExecution', command: fixtureReadCommand, cwd, status: 'declined', exitCode: null, aggregatedOutput: null, processId: null } } };
   const verify = events => completedFixtureDenial(events, 'thread', 'turn', cwd, 'private-marker');

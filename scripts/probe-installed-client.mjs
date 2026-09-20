@@ -4,6 +4,7 @@
 // --tools runs one exact native read/patch exercise in a disposable workspace.
 // --reasoning verifies all five qualified choices through actual native turns.
 // --denial refuses one exact read and verifies the model receives that refusal.
+// --repair observes a failing test, approves one exact correction, then retests.
 // No auth files, routing overrides, model catalogs or client binaries are changed.
 import { spawn, execFileSync } from 'node:child_process';
 import { readFile, readdir, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
@@ -12,10 +13,11 @@ import { isAbsolute, resolve, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import assert from 'node:assert/strict';
 import { approveFixtureRead, approveFixturePatch, completedFixtureRead, completedFixtureDenial, fixtureReadCommand } from './probe-client-approval.mjs';
+import { approveFixtureTest, approveFixtureRepair, fixtureRepairProgress, fixtureTestCommand, fixtureTestPassed, fixtureTestFailed, fixtureBrokenOutput } from './probe-client-approval.mjs';
 
 const [client, home, model, option] = process.argv.slice(2);
 assert.ok(client && home && model?.startsWith('webbridge/') && isAbsolute(client) && isAbsolute(home));
-assert.ok(process.argv.length <= 6 && (!option || ['--text', '--coexistence', '--tools', '--reasoning', '--denial'].includes(option)));
+assert.ok(process.argv.length <= 6 && (!option || ['--text', '--coexistence', '--tools', '--reasoning', '--denial', '--repair'].includes(option)));
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const builds = new Map([
   ['eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316', '0.155.1'],
@@ -29,7 +31,7 @@ const configBefore = sha256(await readFile(configPath));
 await mkdir(resolve('.local/probes'), { recursive: true });
 const cwd = await mkdtemp(resolve('.local/probes/installed-'));
 const shells = [];
-if (['--tools', '--denial'].includes(option)) for (const name of ['pwsh.exe', 'powershell.exe']) {
+if (['--tools', '--denial', '--repair'].includes(option)) for (const name of ['pwsh.exe', 'powershell.exe']) {
   try { shells.push(...execFileSync('where.exe', [name], { encoding: 'utf8', windowsHide: true }).trim().split(/\r?\n/)); } catch { /* optional shell absent */ }
 }
 const child = spawn(client, ['app-server'], { cwd, env: { ...process.env, CODEX_HOME: home }, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
@@ -50,7 +52,18 @@ lines.on('line', line => {
     const params = message.params;
     const scoped = toolRun?.turn && params?.threadId === toolRun.thread && params?.turnId === toolRun.turn;
     let accepted = false, intentionalDenial = false;
-    if (scoped && toolRun.denial) {
+    if (scoped && toolRun.repair) {
+      const progress = fixtureRepairProgress(events, toolRun.thread, toolRun.turn, cwd, toolRun.marker, shells);
+      if (progress >= 0 && progress < 4 && !toolRun.approvedSteps.has(progress)) {
+        if (command && progress === 0) accepted = approveFixtureRead(params, cwd, shells);
+        else if (command && [1, 3].includes(progress)) accepted = approveFixtureTest(params, cwd, shells);
+        else if (patch && progress === 2) {
+          const started = events.findLast(event => event.method === 'item/started' && event.params?.item?.id === params.itemId);
+          accepted = approveFixtureRepair(params, started, cwd, toolRun.marker);
+        }
+        if (accepted) toolRun.approvedSteps.add(progress);
+      }
+    } else if (scoped && toolRun.denial) {
       if (command && !toolRun.readDenied && approveFixtureRead(params, cwd, shells)) {
         intentionalDenial = toolRun.readDenied = true;
       }
@@ -157,6 +170,42 @@ async function verifyTools(selectedModel) {
   evidence.nativeTools = { ...evidence.nativeTools, result: 'passed', exactRead: true, exactPatch: true, realFileVerified: true, exactFinalAnswer: true, readApprovalObserved: toolRun.readApproved, patchApprovalObserved: toolRun.patchApproved };
   toolRun = undefined;
 }
+async function verifyRepair(selectedModel) {
+  evidence.nativeRepair = { result: 'started', harnessExecutedTools: false, fixtureMarkerInPrompt: false };
+  const marker = `CXWEB_REPAIR_${randomBytes(16).toString('hex')}`;
+  await writeFile(join(cwd, 'probe-input.txt'), marker + '\n', { flag: 'wx' });
+  await writeFile(join(cwd, 'probe-output.txt'), fixtureBrokenOutput + '\n', { flag: 'wx' });
+  const started = await rpc('thread/start', { cwd, model, ephemeral: true, approvalPolicy: 'untrusted', sandbox: 'read-only' });
+  assert.equal(started.model, model, 'E_SELECTED_MODEL');
+  assert.equal(started.modelProvider, 'openai', 'E_NATIVE_PROVIDER');
+  toolRun = { thread: started.thread.id, repair: true, marker, approvedSteps: new Set() };
+  const prompt = `Use exec_command with cmd exactly ${JSON.stringify(fixtureReadCommand)}, login=false and the current working directory. Then use exec_command with cmd exactly ${JSON.stringify(fixtureTestCommand)}, login=false and the current working directory. The existing probe-output.txt contains the single incorrect line ${JSON.stringify(fixtureBrokenOutput)}. Wait for the actual test failure: exit code 1 and output ${JSON.stringify(fixtureTestFailed)}. Only after observing that failure, use apply_patch exactly once to update probe-output.txt, replacing the incorrect line with the exact line read from probe-input.txt, followed by a newline. Wait for the patch result, then run the same test command again. Return exactly ${JSON.stringify(fixtureTestPassed)} only after the second test exits 0 and prints that text. Wait for every actual tool result. Do not run other commands, edit other files, request elevated permissions or access the network.`;
+  const turn = (await rpc('turn/start', { threadId: toolRun.thread, effort: selectedModel.defaultReasoningEffort, input: [{ type: 'text', text: prompt, text_elements: [] }] })).turn.id;
+  assert.ok(!toolRun.turn || toolRun.turn === turn, 'E_TURN_IDENTITY');
+  toolRun.turn = turn;
+  console.log(JSON.stringify({ phase: 'native failing test and repair', model }));
+  const deadline = Date.now() + 600000;
+  let done;
+  while (Date.now() < deadline) {
+    assert.ok(!failure, failure);
+    done = events.find(event => event.method === 'turn/completed' && event.params?.threadId === toolRun.thread && event.params?.turn?.id === turn);
+    if (done) break;
+    assert.equal(child.exitCode, null, 'E_CLIENT_EXIT');
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  assert.equal(done?.params?.turn?.status, 'completed', 'E_TURN_FAILED');
+  assert.equal(fixtureRepairProgress(events, toolRun.thread, turn, cwd, marker, shells), 4, 'E_REPAIR_SEQUENCE');
+  const completed = events.filter(event => event.method === 'item/completed' && event.params?.threadId === toolRun.thread && event.params?.turnId === turn);
+  const answers = completed.filter(event => event.params.item.type === 'agentMessage');
+  assert.equal(answers.length, 1, 'E_ANSWER_COUNT');
+  assert.equal(answers[0].params.item.text, fixtureTestPassed, 'E_ANSWER_TEXT');
+  assert.equal(fixtureRepairProgress(completed.slice(0, completed.indexOf(answers[0])), toolRun.thread, turn, cwd, marker, shells), 4, 'E_REPAIR_ANSWER_ORDER');
+  assert.equal(await readFile(join(cwd, 'probe-input.txt'), 'utf8'), marker + '\n', 'E_INPUT_CHANGED');
+  assert.equal(await readFile(join(cwd, 'probe-output.txt'), 'utf8'), marker + '\n', 'E_REPAIR_CONTENT');
+  assert.deepEqual((await readdir(cwd)).sort(), ['probe-input.txt', 'probe-output.txt'], 'E_UNEXPECTED_FILE');
+  evidence.nativeRepair = { ...evidence.nativeRepair, result: 'passed', exactRead: true, realTestFailed: true, exactRepair: true, realRetestPassed: true, finalAfterRetest: true, inputUnchanged: true, outputCorrect: true, approvedSteps: [...toolRun.approvedSteps] };
+  toolRun = undefined;
+}
 async function verifyDenial(selectedModel) {
   evidence.nativeDenial = { result: 'started', harnessExecutedTools: false, fixtureMarkerInPrompt: false };
   const marker = `CXWEB_UNREAD_${randomBytes(16).toString('hex')}`;
@@ -237,6 +286,8 @@ try {
     evidence.text = 'started';
     for (const [effort] of expected) await verifyText(selectedModel, effort);
     evidence.text = 'passed';
+  } else if (option === '--repair') {
+    await verifyRepair(selectedModel);
   } else if (option === '--denial') {
     await verifyDenial(selectedModel);
   } else if (option === '--tools') {
@@ -265,7 +316,9 @@ try {
     const info = event.params?.turn?.error?.codexErrorInfo ?? event.params?.error?.codexErrorInfo;
     return typeof info === 'string' && /^[A-Za-z]{1,64}$/.test(info) ? [info] : info && typeof info === 'object' ? Object.keys(info).filter(key => /^[A-Za-z]{1,64}$/.test(key)) : [];
   }))];
-  if (toolRun?.denial) {
+  if (toolRun?.repair) {
+    evidence.nativeRepair = { ...evidence.nativeRepair, result: 'failed', completedPrefix: fixtureRepairProgress(events, toolRun.thread, toolRun.turn, cwd, toolRun.marker, shells), approvedSteps: [...toolRun.approvedSteps] };
+  } else if (toolRun?.denial) {
     evidence.nativeDenial = { ...evidence.nativeDenial, result: 'failed', denialObserved: toolRun.readDenied };
   } else if (toolRun) {
     const completed = events.filter(event => event.method === 'item/completed' && event.params?.threadId === toolRun.thread && event.params?.turnId === toolRun.turn);
