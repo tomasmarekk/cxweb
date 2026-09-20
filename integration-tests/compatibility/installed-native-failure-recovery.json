@@ -1,0 +1,135 @@
+{
+  "evidence_level": "account_live",
+  "source_commit": "a0d8b07",
+  "runtime_sha256": "662981e53a81e25de68b06bc04422870a9068393ca4278a5a8348f02bf6d3529",
+  "observed_at": "2026-09-20T21:53:14.1374546+00:00",
+  "account_generation": false,
+  "actual_installed_runtime": true,
+  "health": {
+    "active_web_turns": 0,
+    "components": {
+      "browser": {
+        "code": null,
+        "evidence": "passive_browser",
+        "observed_at": "2026-09-20T21:52:29.768Z",
+        "state": "healthy"
+      },
+      "codex_app": {
+        "code": null,
+        "evidence": "client_handshake",
+        "observed_at": "2026-09-20T21:52:43.599Z",
+        "state": "healthy"
+      },
+      "codex_cli": {
+        "code": null,
+        "evidence": "client_handshake",
+        "observed_at": "2026-09-20T21:53:06.343Z",
+        "state": "healthy"
+      },
+      "config": {
+        "code": null,
+        "evidence": "local_probe",
+        "observed_at": "2026-09-20T21:53:14.060Z",
+        "state": "healthy"
+      },
+      "native_upstream": {
+        "code": null,
+        "evidence": "local_probe",
+        "observed_at": "2026-09-20T21:53:06.342Z",
+        "state": "healthy"
+      },
+      "runtime": {
+        "code": null,
+        "evidence": "local_probe",
+        "observed_at": "2026-09-20T21:53:14.060Z",
+        "state": "healthy"
+      },
+      "web_auth": {
+        "code": null,
+        "evidence": "passive_browser",
+        "observed_at": "2026-09-20T21:52:29.768Z",
+        "state": "healthy"
+      },
+      "web_models": {
+        "code": null,
+        "evidence": "passive_browser",
+        "observed_at": "2026-09-20T21:52:29.768Z",
+        "state": "healthy"
+      }
+    },
+    "overall": "ready",
+    "revision": 9,
+    "schema_version": "webbridge.health.v1",
+    "suggested_action": "none"
+  },
+  "client_catalogs": [
+    {
+      "build": "0.155.0-alpha.9.2",
+      "executableSha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+      "startedAt": "2026-09-20T21:52:43.259Z",
+      "observedAt": "2026-09-20T21:52:44.110Z",
+      "result": "PASS",
+      "configUnchanged": true,
+      "executableUnchanged": true,
+      "reasoningChoices": [
+        {
+          "reasoningEffort": "low",
+          "description": "Instant"
+        },
+        {
+          "reasoningEffort": "medium",
+          "description": "Medium"
+        },
+        {
+          "reasoningEffort": "high",
+          "description": "High"
+        },
+        {
+          "reasoningEffort": "xhigh",
+          "description": "Extra High"
+        },
+        {
+          "reasoningEffort": "max",
+          "description": "Pro"
+        }
+      ]
+    },
+    {
+      "build": "0.155.1",
+      "executableSha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+      "startedAt": "2026-09-20T21:52:35.996Z",
+      "observedAt": "2026-09-20T21:52:36.600Z",
+      "result": "PASS",
+      "configUnchanged": true,
+      "executableUnchanged": true,
+      "reasoningChoices": [
+        {
+          "reasoningEffort": "low",
+          "description": "Instant"
+        },
+        {
+          "reasoningEffort": "medium",
+          "description": "Medium"
+        },
+        {
+          "reasoningEffort": "high",
+          "description": "High"
+        },
+        {
+          "reasoningEffort": "xhigh",
+          "description": "Extra High"
+        },
+        {
+          "reasoningEffort": "max",
+          "description": "Pro"
+        }
+      ]
+    }
+  ],
+  "result": "PASS",
+  "limits": [
+    "The healthy installed route was checked after deployment; native service failures were tested with controlled fixtures, not by altering account authentication.",
+    "No fresh GUI picker or account generation test was performed.",
+    "Ready describes operational connection evidence, not full PRD certification."
+  ]
+}

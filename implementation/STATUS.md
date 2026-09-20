@@ -23,6 +23,37 @@ English. The complete installed CLI and App-backend read/patch/final scenarios
 now pass. A fixed message sent from the actual GUI also passed with the owned
 model and effort corroborated by the native turn context.
 
+## Native failure presentation (2026-09-20)
+
+- Known native authentication, limit and transport failures now leave Preflight
+  or Busy and surface an actionable overall state. A native auth failure directs
+  the user to Codex details, never to the separate managed ChatGPT login flow.
+  Concrete browser failures retain precedence; configuration conflicts, cleanup
+  and removal states continue to override connection status.
+- The installed panel identifies native Codex sign-in, service limits and
+  connection failures separately from ChatGPT. Configuration observation and
+  runtime cleanup errors also identify their actual component. Refresh remains
+  passive and does not generate a message, retry a request or open a login window.
+- Regression checks failed before the fix: native auth remained Preflight and
+  the panel incorrectly requested ChatGPT sign-in. After the fix, 320 workspace
+  tests passed with 21 opt-in tests ignored; all 69 desktop UI tests passed.
+  All-target Clippy with denied warnings and formatting checks passed.
+- Release daemon, CLI and desktop builds passed. Deployed idle daemon
+  662981e53a81e25de68b06bc04422870a9068393ca4278a5a8348f02bf6d3529 and restarted
+  the desktop. Saved-session recovery completed at 21:52:29 UTC. Actual CLI and
+  App-backend catalog reads passed at 21:52:36 and 21:52:44 UTC, retaining all
+  five reasoning choices and leaving native config/executables unchanged.
+  Runtime health returned Ready. Evidence: installed-native-failure-recovery.json.
+  Failure injection was confined to controlled fixtures; no account generation,
+  authentication mutation or fresh GUI picker verification occurred.
+- Single-client presence is still incomplete. PRD UX section 2 requires an
+  absent client not to block an installed one, and an installed but unobserved
+  client to show Awaiting launch. Current native_discovery is a candidate
+  inventory, including stale desktop caches and bounded/permission diagnostics;
+  an empty or incomplete inventory must not be treated as proof of absence.
+  Integration still needs a trustworthy installed-client observation alongside
+  the current catalog handshake before this readiness rule can be enabled.
+
 ## Installed catalog readiness (2026-09-20)
 
 - Reviewed CLI/App catalog responses now produce independent client handshake
