@@ -1,6 +1,6 @@
 //! Existing local target paths, inspected before canonicalization.
-//! This guards object identity during a read-only preflight, not ancestor ACLs
-//! or a future configuration transaction. Reparse points are never qualified.
+//! This guards object identity during preflight and individual configuration
+//! operations, not ancestor ACLs. Reparse points are never qualified.
 use std::{
     fs::{File, OpenOptions},
     io,
@@ -11,7 +11,8 @@ use std::{
 use windows_sys::Win32::Storage::FileSystem::{
     BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
     FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
-    FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, GetFileInformationByHandle,
+    FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    GetFileInformationByHandle,
 };
 
 fn invalid() -> io::Error {
@@ -72,7 +73,9 @@ fn identity(file: &File, directory: bool) -> io::Result<Identity> {
 fn open(path: &Path, directory: bool) -> io::Result<File> {
     OpenOptions::new()
         .access_mode(if directory {
-            FILE_READ_ATTRIBUTES
+            // Attribute-only opens do not establish the sharing restriction.
+            // Request directory read access without enumerating its contents.
+            FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES
         } else {
             FILE_GENERIC_READ
         })

@@ -67,6 +67,7 @@ fn wide(path: &Path) -> io::Result<Vec<u16>> {
 }
 
 pub struct Snapshot {
+    selected_path: PathBuf,
     path: PathBuf,
     identity: Option<Identity>,
     bytes: Vec<u8>,
@@ -74,27 +75,32 @@ pub struct Snapshot {
     parent_access: crate::config_access::AccessSnapshot,
 }
 impl Snapshot {
-    /// Uses a canonical parent and refuses reparse points and hard-linked files.
+    /// Inspect the selected path before canonicalization, refusing reparse
+    /// points in every ancestor as well as reparse/hard-linked destination files.
     /// Caller must separately qualify the selected Codex home and its ownership.
     pub fn capture(path: &Path) -> io::Result<Self> {
-        let parent = path
+        let selected_path = path.to_path_buf();
+        let selected_parent = path
             .parent()
-            .ok_or_else(|| io::Error::other("E_CONFIG_PATH"))?
-            .canonicalize()?;
+            .ok_or_else(|| io::Error::other("E_CONFIG_PATH"))?;
+        let ancestors = crate::target_path::TargetPathGuard::capture(selected_parent, true)?;
+        let parent = selected_parent.canonicalize()?;
         let name = path
             .file_name()
             .ok_or_else(|| io::Error::other("E_CONFIG_PATH"))?;
-        if name.to_string_lossy().contains(':') {
+        let name_text = name.to_string_lossy();
+        if name_text.contains([':', '\0']) || name_text.ends_with(['.', ' ']) {
             return Err(io::Error::other("E_CONFIG_PATH"));
         }
         let path = parent.join(name);
         let parent_access = crate::config_access::AccessSnapshot::directory(&parent)?;
-        match open(&path) {
+        let snapshot = match open(&path) {
             Ok(mut file) => {
                 let identity = identity(&file)?;
                 let access = crate::config_access::AccessSnapshot::capture(&file, false)?;
                 let bytes = read(&mut file)?;
                 Ok(Self {
+                    selected_path,
                     path,
                     identity: Some(identity),
                     bytes,
@@ -103,6 +109,7 @@ impl Snapshot {
                 })
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Self {
+                selected_path,
                 path,
                 identity: None,
                 bytes: Vec::new(),
@@ -110,7 +117,9 @@ impl Snapshot {
                 parent_access,
             }),
             Err(error) => Err(error),
-        }
+        }?;
+        ancestors.verify_unchanged()?;
+        Ok(snapshot)
     }
     pub fn original(&self) -> &[u8] {
         &self.bytes
@@ -122,8 +131,9 @@ impl Snapshot {
         self.identity.is_some()
     }
     pub fn verify_unchanged(&self) -> io::Result<()> {
-        let current = Self::capture(&self.path)?;
-        if current.identity != self.identity
+        let current = Self::capture(&self.selected_path)?;
+        if current.path != self.path
+            || current.identity != self.identity
             || current.bytes != self.bytes
             || current.access != self.access
             || current.parent_access != self.parent_access
@@ -133,11 +143,24 @@ impl Snapshot {
         Ok(())
     }
 
+    /// Retain rename/delete exclusion through each mutation, without pinning
+    /// user directories for the entire lifetime of a configuration journal.
+    /// Ancestor ACL qualification and in-place reparse races remain separate.
+    fn guard_parent(&self) -> io::Result<crate::target_path::TargetPathGuard> {
+        let parent = self
+            .selected_path
+            .parent()
+            .ok_or_else(|| io::Error::other("E_CONFIG_PATH"))?;
+        let ancestors = crate::target_path::TargetPathGuard::capture(parent, true)?;
+        self.verify_unchanged()?;
+        Ok(ancestors)
+    }
+
     /// Deletes only the verified file through its handle. While the handle is
     /// open, writers and renames are denied; a replacement at this path is never
     /// selected by a later path-based delete. Caller proves semantic ownership.
     pub fn remove(&self) -> io::Result<()> {
-        self.verify_unchanged()?;
+        let ancestors = self.guard_parent()?;
         let expected = self
             .identity
             .as_ref()
@@ -154,6 +177,7 @@ impl Snapshot {
             return Err(io::Error::other("E_CONFIG_CHANGED"));
         }
         let disposition = FILE_DISPOSITION_INFO { DeleteFile: true };
+        ancestors.verify_unchanged()?;
         // SAFETY: valid exclusively mutable file handle and correctly sized POD
         // input. Deletion applies to this checked file object upon handle close.
         if unsafe {
@@ -173,7 +197,7 @@ impl Snapshot {
     /// Creates a caller-named same-directory private file with create-new semantics.
     /// Caller records its exact path and candidate hash in the durable journal.
     pub fn stage(&self, name: &str, candidate: &[u8]) -> io::Result<PathBuf> {
-        self.verify_unchanged()?;
+        let ancestors = self.guard_parent()?;
         if !name.starts_with(".cxweb-")
             || !name.ends_with(".tmp")
             || !name
@@ -190,6 +214,7 @@ impl Snapshot {
         )?;
         file.write_all(candidate)?;
         file.sync_all()?;
+        ancestors.verify_unchanged()?;
         Ok(path)
     }
 
@@ -198,7 +223,7 @@ impl Snapshot {
     /// Another writer can still rename it in the final check/replace interval;
     /// full editor qualification and post-commit journal verification are required.
     pub fn commit(&self, staged: &Path, candidate: &[u8]) -> io::Result<()> {
-        self.verify_unchanged()?;
+        let ancestors = self.guard_parent()?;
         if staged.parent() != self.path.parent()
             || !staged
                 .file_name()
@@ -231,6 +256,7 @@ impl Snapshot {
         };
         let destination = wide(&self.path)?;
         let source = wide(staged)?;
+        ancestors.verify_unchanged()?;
         // SAFETY: live NUL-terminated paths. No ignore-ACL flags and no replace
         // flag for a previously absent file. Any API error requires recovery.
         let success = unsafe {
@@ -267,6 +293,7 @@ impl Snapshot {
         if read(&mut committed)? != candidate {
             return Err(io::Error::other("E_CONFIG_POST_COMMIT_CHANGED"));
         }
+        ancestors.verify_unchanged()?;
         Ok(())
     }
 }
@@ -333,13 +360,15 @@ mod tests {
     struct Fixture(PathBuf);
     impl Fixture {
         fn new() -> Self {
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let path = std::env::temp_dir().join(format!(
-                "cxweb-atomic-{}-{}",
+                "cxweb-atomic-{}-{}-{}",
                 std::process::id(),
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
-                    .as_nanos()
+                    .as_nanos(),
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             ));
             crate::state::protected_directory(&path).unwrap();
             Self(path)
@@ -364,6 +393,100 @@ mod tests {
             }
             std::fs::remove_dir_all(&self.0).unwrap();
         }
+    }
+
+    struct Junction(PathBuf);
+    impl Junction {
+        fn new(path: &Path, target: &Path) -> Self {
+            use std::os::windows::process::CommandExt;
+            let status = std::process::Command::new("powershell.exe")
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "New-Item -ItemType Junction -Path $env:CXWEB_TEST_LINK -Target $env:CXWEB_TEST_TARGET -ErrorAction Stop | Out-Null",
+                ])
+                .env("CXWEB_TEST_LINK", path)
+                .env("CXWEB_TEST_TARGET", target)
+                .creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW)
+                .status()
+                .unwrap();
+            assert!(status.success());
+            Self(path.to_path_buf())
+        }
+    }
+    impl Drop for Junction {
+        fn drop(&mut self) {
+            // Remove only the test-owned junction itself, never its target.
+            std::fs::remove_dir(&self.0).unwrap();
+        }
+    }
+
+    #[test]
+    fn junction_parents_and_ancestors_are_refused_before_canonicalization() {
+        let fixture = Fixture::new();
+        let target = Fixture::new();
+        let nested = target.0.join("nested");
+        crate::state::protected_directory(&nested).unwrap();
+        std::fs::write(target.config(), b"original").unwrap();
+        let link = fixture.0.join("link");
+        let _junction = Junction::new(&link, &target.0);
+        assert!(Snapshot::capture(&link.join("config.toml")).is_err());
+        assert!(Snapshot::capture(&link.join("nested/config.toml")).is_err());
+        assert_eq!(std::fs::read(target.config()).unwrap(), b"original");
+        assert!(!nested.join("config.toml").exists());
+    }
+
+    #[test]
+    fn a_redirected_selected_parent_cannot_stage_commit_or_remove() {
+        for existed in [false, true] {
+            let fixture = Fixture::new();
+            let parent = fixture.0.join("home");
+            let moved = fixture.0.join("moved");
+            crate::state::protected_directory(&parent).unwrap();
+            let config = parent.join("config.toml");
+            if existed {
+                std::fs::write(&config, b"original").unwrap();
+            }
+            let snapshot = Snapshot::capture(&config).unwrap();
+            let staged = snapshot.stage(".cxweb-before.tmp", b"candidate").unwrap();
+            // Keep the same config/parent objects and ACLs, but redirect the
+            // selected path through a new junction after the initial capture.
+            std::fs::rename(&parent, &moved).unwrap();
+            let _junction = Junction::new(&parent, &moved);
+            assert!(snapshot.verify_unchanged().is_err());
+            assert!(snapshot.stage(".cxweb-after.tmp", b"candidate").is_err());
+            assert!(snapshot.commit(&staged, b"candidate").is_err());
+            assert!(snapshot.remove().is_err());
+            assert!(!moved.join(".cxweb-after.tmp").exists());
+            assert_eq!(
+                std::fs::read(moved.join(".cxweb-before.tmp")).unwrap(),
+                b"candidate"
+            );
+            assert_eq!(moved.join("config.toml").exists(), existed);
+            if existed {
+                assert_eq!(
+                    std::fs::read(moved.join("config.toml")).unwrap(),
+                    b"original"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn operation_guard_pins_ancestors_only_until_the_operation_finishes() {
+        let fixture = Fixture::new();
+        let ancestor = fixture.0.join("ancestor");
+        let parent = ancestor.join("home");
+        std::fs::create_dir(&ancestor).unwrap();
+        crate::state::protected_directory(&parent).unwrap();
+        let snapshot = Snapshot::capture(&parent.join("config.toml")).unwrap();
+        let guard = snapshot.guard_parent().unwrap();
+        assert!(std::fs::rename(&parent, ancestor.join("renamed")).is_err());
+        assert!(std::fs::rename(&ancestor, fixture.0.join("renamed")).is_err());
+        drop(guard);
+        std::fs::rename(&ancestor, fixture.0.join("renamed")).unwrap();
+        assert!(snapshot.verify_unchanged().is_err());
     }
 
     #[test]

@@ -21,6 +21,35 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Configuration ancestor identity during mutations (2026-09-20)
+
+- Configuration snapshots now inspect every component of the original selected
+  parent before canonicalization. Junctions in the parent or an earlier ancestor
+  are refused for existing and absent configuration files. Revalidation retains
+  the original selected path instead of trusting only its canonical destination.
+- Stage, commit and removal retain ancestor handles across their operation and
+  recheck identity before the replacement/deletion boundary. Handles are released
+  after the operation, rather than keeping user directories pinned for the whole
+  lifetime of an installed journal. Existing content/identity/ACL checks remain.
+- A new empty-directory regression exposed that the former attribute-only
+  directory handles did not prevent rename on this Windows installation. The
+  path guard now requests directory read access, without enumerating contents,
+  to establish the intended sharing restriction. The regression proves both
+  immediate-parent and earlier-ancestor renames fail while the guard is held and
+  succeed after release. The older executable test alone did not catch this.
+- Added real Windows junction regressions for initial capture and redirection
+  between capture and mutation. Redirected stage/commit/removal leave the original
+  config and staging bytes unchanged. Test directory names now include a process
+  counter: timestamp-only names collided during parallel fixture creation.
+- Validation: workspace 241 passed / 11 opt-in ignored; desktop UI 50 passed;
+  Clippy with warnings denied, formatting, diff checks and release CLI/daemon/
+  desktop builds passed. These tests use disposable local directories, with no
+  login, user config writes or app launch. The old manual-login process remains
+  live; no competing saved-profile browser or ChatGPT desktop was launched.
+- Remaining: ancestor ACL qualification and in-place reparse mutation races.
+  This change does not claim filesystem CAS or authorize production activation.
+  The selected config/immediate-parent ACL checks remain separate from that work.
+
 ## Native patch-and-test feedback exercise (2026-09-20)
 
 - Extended the selected-client tool exercise with an actual test command after
