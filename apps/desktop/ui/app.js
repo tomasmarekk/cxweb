@@ -16,6 +16,7 @@ function showError(code) {
     E_CONTROL_BUSY: 'Another cxweb window is processing a request. Try again shortly.',
     E_BROWSER_BUSY: 'The sign-in page contains a draft or an active response. Finish or clear it before closing the window.',
     E_BROWSER_OTHER_PAGES: 'Other cxweb browser tabs are still open. Finish or close them before changing browser mode. They have been left open.',
+    E_BROWSER_IN_USE: 'The runtime is using this browser session. Check status instead of opening another sign-in or test session.',
     E_LOGIN_REQUIRED: 'Complete sign-in before continuing in the background.',
     E_BROWSER_RELEASE: 'The browser could not close safely. Check status before trying again.',
     E_BACKGROUND_NAVIGATION: 'The saved session could not load in the background. Check status for sign-in or verification requirements.',
@@ -65,7 +66,7 @@ function render(status) {
   $('models').hidden = true; $('models').replaceChildren();
   $('qualification').hidden = true;
   $('tool-qualification').hidden = true;
-  const sessionDetected = ['awaiting_qualification', 'candidates_observed', 'text_qualified', 'tool_protocol_qualified', 'discovery_failed'].includes(phase);
+  const sessionDetected = ['awaiting_qualification', 'candidates_observed', 'text_qualified', 'tool_protocol_qualified', 'discovery_failed', 'generation_ready'].includes(phase);
   $('background-control').hidden = status.background_session === true || !sessionDetected;
   $('background-status').hidden = status.background_session !== true || !sessionDetected;
   $('codex').textContent = 'Awaiting verification';
@@ -105,6 +106,12 @@ function render(status) {
     $('chatgpt').textContent = 'Tool requests verified';
     $('codex').textContent = 'Awaiting integration';
     $('connect').textContent = 'Refresh model candidates';
+  } else if (phase === 'generation_ready') {
+    $('heading').textContent = 'Background session ready';
+    $('description').textContent = 'The runtime owns the verified browser session. Codex integration still needs activation and client verification.';
+    $('chatgpt').textContent = 'Session ready';
+    $('codex').textContent = 'Awaiting integration';
+    $('connect').textContent = 'Check status';
   } else if (phase === 'discovery_failed') {
     $('heading').textContent = 'Model menu changed';
     $('description').textContent = 'The signed-in page is available, but its current model menu structure is not recognized yet.';

@@ -1,5 +1,7 @@
 //! Login and explicit qualification worker. Browser IPC stays off the reactor.
 use crate::browser_scope::BrowserScope;
+pub use crate::generation_handoff::GenerationSession;
+use crate::generation_handoff::PreparedHandoff;
 use crate::ledger::{Admission, Ledger};
 use crate::qualification::Kind;
 use cxweb_browser_adapter::{
@@ -10,6 +12,7 @@ use cxweb_domain::{SessionKey, TurnState};
 use cxweb_platform::state::{StatePaths, installed_browser};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 
 fn replacement_error(error: &std::io::Error) -> &'static str {
@@ -77,7 +80,7 @@ impl Default for ControlStatus {
 }
 type Reply = oneshot::Sender<Result<ControlStatus, &'static str>>;
 
-fn authenticated_surface(observation: &LoginObservation) -> bool {
+pub(crate) fn authenticated_surface(observation: &LoginObservation) -> bool {
     observation.official_page
         && observation.composer
         && observation.account_surface
@@ -100,6 +103,32 @@ fn qualification_failure_state(submission_intent: bool, error: &str) -> TurnStat
 #[cfg(test)]
 mod qualification_tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn generation_handoff_waits_for_the_owner_and_preserves_requested_identity() {
+        let (commands, mut incoming) = mpsc::channel(8);
+        let control = Control { commands };
+        let task = tokio::spawn(async move {
+            control
+                .take_generation("installation".into(), "webbridge/fixture".into())
+                .await
+        });
+        let WorkerCommand::TakeGeneration {
+            installation,
+            route,
+            reply,
+        } = incoming.recv().await.unwrap()
+        else {
+            panic!("expected handoff")
+        };
+        assert_eq!(installation, "installation");
+        assert_eq!(route, "webbridge/fixture");
+        tokio::time::advance(std::time::Duration::from_secs(400)).await;
+        tokio::task::yield_now().await;
+        assert!(!task.is_finished());
+        assert!(reply.send(Err("E_HANDOFF_UNQUALIFIED")).is_ok());
+        assert!(matches!(task.await.unwrap(), Err("E_HANDOFF_UNQUALIFIED")));
+    }
 
     #[tokio::test(start_paused = true)]
     async fn accepted_browser_operations_wait_for_the_worker_instead_of_fabricating_timeout_receipts()
@@ -131,7 +160,10 @@ mod qualification_tests {
             | WorkerCommand::Connect(reply)
             | WorkerCommand::Status(reply)
             | WorkerCommand::Qualify(reply)
-            | WorkerCommand::QualifyTurn(_, reply)) = command;
+            | WorkerCommand::QualifyTurn(_, reply)) = command
+            else {
+                panic!("unexpected handoff")
+            };
             reply.send(Ok(ControlStatus::default())).unwrap();
         }
         for task in tasks {
@@ -223,6 +255,11 @@ mod qualification_tests {
     }
 }
 enum WorkerCommand {
+    TakeGeneration {
+        installation: String,
+        route: String,
+        reply: oneshot::Sender<Result<Arc<GenerationSession>, &'static str>>,
+    },
     Background(Reply),
     Connect(Reply),
     Status(Reply),
@@ -244,7 +281,8 @@ impl Control {
         std::thread::Builder::new()
             .name("cxweb-browser-control".into())
             .spawn(move || {
-                let _instance_lock = lock;
+                let mut instance_lock = Some(lock);
+                let mut generation: Option<Arc<GenerationSession>> = None;
                 let mut browser: Option<ManagedBrowser> = None;
                 let mut page: Option<ManagedPage> = None;
                 let mut status = ControlStatus::default();
@@ -255,7 +293,74 @@ impl Control {
                     format!("cxweb-qualification-{:032x}", rand::random::<u128>());
                 let mut observed_scope: Option<BrowserScope> = None;
                 while let Some(command) = incoming.blocking_recv() {
+                    let command = match command {
+                        WorkerCommand::TakeGeneration {
+                            installation,
+                            route,
+                            reply,
+                        } => {
+                            if reply.is_closed() {
+                                continue;
+                            }
+                            if let Some(session) = generation.as_ref() {
+                                let _ = reply.send(session.replay(&installation, &route));
+                                continue;
+                            }
+                            let prepared = (|| {
+                                if instance_lock.is_none() {
+                                    return Err("E_CONTROL_CLOSED");
+                                }
+                                PreparedHandoff::prepare(
+                                    browser.as_mut().ok_or("E_LOGIN_REQUIRED")?,
+                                    page.as_ref().ok_or("E_LOGIN_REQUIRED")?,
+                                    &status,
+                                    &observed_routes,
+                                    (
+                                        &scope_installation,
+                                        observed_scope.as_ref().ok_or("E_SESSION_SCOPE")?,
+                                    ),
+                                    &installation,
+                                    &route,
+                                )
+                            })();
+                            let prepared = match prepared {
+                                Ok(value) => value,
+                                Err(code) => {
+                                    let _ = reply.send(Err(code));
+                                    continue;
+                                }
+                            };
+                            // A completed transfer retains a receipt even when the
+                            // requester disappears. Retrying returns the same owner.
+                            let result = prepared
+                                .start(
+                                    browser.take().expect("prepared browser owner"),
+                                    instance_lock.take().expect("prepared installation lock"),
+                                )
+                                .map(Arc::new);
+                            page = None;
+                            observed_routes.clear();
+                            observed_scope = None;
+                            match &result {
+                                Ok(session) => {
+                                    generation = Some(session.clone());
+                                    status.phase = "generation_ready".into();
+                                    status.background_session = true;
+                                }
+                                Err(_) => {
+                                    status = ControlStatus {
+                                        phase: "browser_unavailable".into(),
+                                        ..Default::default()
+                                    }
+                                }
+                            }
+                            let _ = reply.send(result);
+                            continue;
+                        }
+                        command => command,
+                    };
                     let (connect, background, qualify, qualification_kind, reply) = match command {
+                        WorkerCommand::TakeGeneration { .. } => unreachable!("handled above"),
                         WorkerCommand::Connect(reply) => (true, false, false, None, reply),
                         WorkerCommand::Background(reply) => (false, true, false, None, reply),
                         WorkerCommand::Status(reply) => (false, false, false, None, reply),
@@ -266,6 +371,30 @@ impl Control {
                     };
                     if reply.is_closed() {
                         continue;
+                    }
+                    if let Some(session) = generation.as_ref() {
+                        if !session.driver.is_closed() {
+                            let result =
+                                if connect || background || qualify || qualification_kind.is_some()
+                                {
+                                    Err("E_BROWSER_IN_USE")
+                                } else {
+                                    Ok(status.clone())
+                                };
+                            let _ = reply.send(result);
+                            continue;
+                        }
+                        generation = None;
+                        status = ControlStatus::default();
+                    }
+                    if instance_lock.is_none() {
+                        match paths.lock() {
+                            Ok(lock) => instance_lock = Some(lock),
+                            Err(_) => {
+                                let _ = reply.send(Err("E_ALREADY_RUNNING"));
+                                continue;
+                            }
+                        }
                     }
                     // Reconnect never replays a qualification request.
                     if connect && status.phase == "browser_unavailable" {
@@ -886,6 +1015,24 @@ impl Control {
     }
     pub async fn connect(&self) -> Result<ControlStatus, &'static str> {
         self.request(true).await
+    }
+    /// Internal daemon handoff, not a desktop IPC operation or activation grant.
+    /// The selected route must pass protocol qualification in background mode.
+    /// Native coding, picker and configuration gates remain the caller's duty.
+    pub async fn take_generation(
+        &self,
+        installation: String,
+        route: String,
+    ) -> Result<Arc<GenerationSession>, &'static str> {
+        let (reply, receive) = oneshot::channel();
+        self.commands
+            .try_send(WorkerCommand::TakeGeneration {
+                installation,
+                route,
+                reply,
+            })
+            .map_err(|_| "E_CONTROL_BUSY")?;
+        receive.await.map_err(|_| "E_CONTROL_CLOSED")?
     }
     pub async fn background(&self) -> Result<ControlStatus, &'static str> {
         let (reply, receive) = oneshot::channel();

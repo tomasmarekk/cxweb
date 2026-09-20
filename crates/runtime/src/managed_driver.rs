@@ -10,6 +10,7 @@ use cxweb_domain::SessionKey;
 use std::collections::HashMap;
 use tokio::sync::{mpsc, oneshot};
 
+#[derive(Clone)]
 pub struct Route {
     pub id: String,
     pub identity: String,
@@ -42,7 +43,7 @@ impl Binding {
             .find(|route| route.id == session.route)
             .ok_or("E_MODEL_UNAVAILABLE")
     }
-    fn validate(&self) -> Result<(), &'static str> {
+    pub(crate) fn validate(&self) -> Result<(), &'static str> {
         let valid = |value: &str| {
             !value.is_empty() && value.len() <= 512 && !value.chars().any(char::is_control)
         };
@@ -98,6 +99,9 @@ pub struct ManagedDriver {
 }
 
 impl ManagedDriver {
+    pub fn is_closed(&self) -> bool {
+        self.commands.is_closed()
+    }
     /// Takes ownership of the already authenticated browser. Its private pipe
     /// must have exactly one owner; login control cannot keep another handle.
     pub fn start(
@@ -312,6 +316,9 @@ impl ManagedDriver {
                 let closed = browser.close().map_err(|_| "E_BROWSER_RELEASE");
                 drop(browser);
                 drop(_ownership);
+                // Publish channel closure only after browser/profile release,
+                // and before acknowledging shutdown to the control owner.
+                drop(incoming);
                 if let Some(reply) = shutdown_reply {
                     let _ = reply.send(closed);
                 }

@@ -21,6 +21,37 @@ picker still contained native entries only: Default, GPT-6 Astra, GPT-5.6 Sol,
 GPT-5.6 Terra, GPT-5.6 Luna and GPT-5.5, with GPT-5.6 Sol selected. No owned cxweb
 entry was visible, which is the expected evidence while activation remains absent.
 
+## Internal login-to-generation ownership handoff (2026-09-20)
+
+- Added an in-process Control operation that transfers the existing managed browser
+  and its exclusive profile lock into ManagedDriver. No second browser is launched.
+  The operation waits for its worker receipt; a completed receipt remains owned by
+  Control if the requester disappears. The same installation/route request returns
+  the same session, while a conflicting request is refused.
+- Before transfer, require current tool-protocol evidence for the exact selected
+  route, Temporary Chat evidence and a background page. Reobserve authentication,
+  English locale, idle composer, model identity and account/workspace; derive the
+  persistent installation's scope from that fresh surface. Reject other tabs and
+  recheck the composer after account inspection before releasing the setup page.
+  Observation failures retain the browser and profile owner in Control.
+- While the generation owner is live, login control returns status but refuses
+  reconnect, background and qualification mutations. After driver shutdown it
+  reacquires the profile lock before accepting browser work again. The desktop
+  renders `generation_ready` as awaiting integration, with only status available.
+- This API is intentionally not a new private-IPC/desktop activation command.
+  Native coding/picker qualification, production activation and configuration
+  application are not granted by a tool-protocol result. Connecting the activation
+  owner to this operation and verifying the full authenticated UI-to-gateway flow
+  remain open.
+- Verification: 199 workspace tests passed (6 opt-in tests excluded by the default
+  run); all 28 desktop UI tests passed; Clippy with warnings denied, formatting and
+  diff checks passed. Release CLI, daemon and desktop builds succeeded. The new
+  real-Chrome ownership test passed separately with a
+  fresh profile: the receipt replays the same owner, rejects changed identity,
+  retains the exclusive lock across requester/receipt drops and releases it after
+  driver shutdown. It did not log in or submit account messages.
+  Portable evidence: `integration-tests/compatibility/generation-handoff-windows.json`.
+
 ## Browser replacement preserves retained pages (2026-09-20)
 
 - Background/login transitions now check the target inventory before releasing

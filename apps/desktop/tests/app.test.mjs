@@ -51,6 +51,18 @@ test('tool protocol evidence is distinguished from actual Codex execution', asyn
   assert.deepEqual(ui.calls, ['status', 'qualify']);
 });
 
+test('handed-off background session offers status without claiming Codex activation', async () => {
+  const ui = panel(async () => ({ phase: 'generation_ready', background_session: true, routing_installed: false, live_qualified: false }));
+  await flush();
+  assert.equal(ui.nodes.get('heading').textContent, 'Background session ready');
+  assert.equal(ui.nodes.get('codex').textContent, 'Awaiting integration');
+  assert.equal(ui.nodes.get('background-status').hidden, false);
+  for (const id of ['qualification', 'tool-qualification', 'background-control']) assert.equal(ui.nodes.get(id).hidden, true);
+  await ui.nodes.get('connect').click();
+  assert.deepEqual(ui.calls, ['status', 'status']);
+  assert.equal(ui.requests.at(-1).refresh, true);
+});
+
 test('login starts only after explicit action and failed browser can reconnect', async () => {
   let phase = 'disconnected';
   const ui = panel(async () => ({ phase }));

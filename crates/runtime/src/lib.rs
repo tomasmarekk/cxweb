@@ -17,6 +17,8 @@ pub mod control;
 pub mod control_protocol;
 pub mod gateway;
 #[cfg(windows)]
+mod generation_handoff;
+#[cfg(windows)]
 pub mod host;
 pub mod ledger;
 #[cfg(windows)]

@@ -1,0 +1,23 @@
+{
+  "schema": "cxweb.generation-handoff.v1",
+  "date": "2026-09-20",
+  "result": "PASS",
+  "command": "cargo test -p cxweb-runtime generation_receipt_keeps_profile_owned_until_driver_shutdown -- --ignored --nocapture",
+  "fixture": "Fresh protected headless Chrome profile and synthetic runtime binding; no account session",
+  "checks": {
+    "same_receipt_replayed_for_same_identity": true,
+    "changed_installation_refused": true,
+    "changed_route_refused": true,
+    "scope_preserved": true,
+    "lock_retained_after_requester_drop": true,
+    "driver_responsive_after_requester_drop": true,
+    "lock_retained_after_control_receipt_drop": true,
+    "driver_shutdown_completed": true,
+    "lock_available_after_shutdown": true
+  },
+  "limits": [
+    "The test covers transfer ownership and driver lifetime; it does not qualify authentication or exercise the live pre-transfer DOM observations.",
+    "The desktop and activation host do not yet invoke the internal handoff operation.",
+    "No live generation, native coding/picker qualification or configuration activation was performed."
+  ]
+}
