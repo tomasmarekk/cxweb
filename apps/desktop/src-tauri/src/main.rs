@@ -1,6 +1,9 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 #[cfg(windows)]
+mod panel;
+
+#[cfg(windows)]
 mod desktop {
     use cxweb_runtime::{control::ControlStatus, remote_control::RemoteControl};
     use tauri::Manager;
@@ -264,6 +267,9 @@ mod desktop {
 
     pub fn run() {
         tauri::Builder::default()
+            .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+                crate::panel::show(app);
+            }))
             .plugin(tauri_plugin_dialog::init())
             .setup(|app| {
                 app.manage(AppState {
@@ -282,7 +288,18 @@ mod desktop {
                         || (url.scheme() == "http" && url.host_str() == Some("tauri.localhost"))
                 })
                 .build()?;
+                crate::panel::install_tray(app)?;
                 Ok(())
+            })
+            .on_window_event(|window, event| {
+                if window.label() == "main"
+                    && let tauri::WindowEvent::CloseRequested { api, .. } = event
+                {
+                    api.prevent_close();
+                    // The supervised runtime owns generation and survives the
+                    // panel. Keep this window available from the tray/relaunch.
+                    let _ = window.hide();
+                }
             })
             .invoke_handler(tauri::generate_handler![
                 activate_codex,

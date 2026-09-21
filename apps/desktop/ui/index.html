@@ -8,16 +8,16 @@
     <button id="installed-refresh" class="primary">Check status</button>
     <button id="installed-retry" class="secondary" hidden disabled>Retry background verification</button>
     <button id="installed-login" class="secondary" hidden disabled>Open ChatGPT sign-in</button>
-    <section id="installed-reasoning" class="model-results" hidden aria-live="polite">
-      <h2>ChatGPT reasoning</h2>
-      <div id="installed-reasoning-list"></div>
-      <p id="installed-reasoning-help" hidden>Verify the remaining reasoning choices with eight fixed test messages. This uses your ChatGPT allowance. No coding tools run and no project files change. Verification continues if you close this window.</p>
-      <button id="installed-qualify-reasoning" class="secondary" hidden disabled>Verify reasoning choices</button>
-    </section>
-    <button id="installed-remove" class="secondary" disabled>Remove connection</button>
     <details><summary>Connection details</summary><div class="details-body native-form">
       <label for="installed-choice">Connected Codex home</label><select id="installed-choice"></select>
       <div id="installed-components" class="selectable"></div>
+      <section id="installed-reasoning" class="model-results" hidden aria-live="polite">
+        <h2>Models and reasoning</h2>
+        <p>Select a model and reasoning level in Codex App or Codex CLI.</p>
+        <div id="installed-reasoning-list"></div>
+        <p id="installed-reasoning-help" hidden>Verify the remaining reasoning choices with eight fixed test messages. This uses your ChatGPT allowance. No coding tools run and no project files change. Verification continues if you close this window.</p>
+        <button id="installed-qualify-reasoning" class="secondary" hidden disabled>Verify reasoning choices</button>
+      </section>
       <section aria-labelledby="installed-diagnostics-heading">
         <h2 id="installed-diagnostics-heading">Diagnostics</h2>
         <p>Copy or save connection health and the diagnostics collector version. No account details, paths, tokens, conversations or raw logs are included. Nothing is uploaded.</p>
@@ -25,7 +25,8 @@
         <button id="installed-export-diagnostics" class="secondary" disabled>Export safe diagnostics</button>
         <p id="installed-diagnostics-result" role="status" aria-live="polite"></p>
       </section>
-      <p>Closing this window keeps the runtime running. Removing the connection restores owned configuration changes and keeps your saved ChatGPT sign-in. Existing Codex clients may need a restart.</p>
+      <p>Closing this window keeps cxweb in the notification area and leaves your tasks running. Open cxweb again to return here. Removing the connection restores owned configuration changes and keeps your saved ChatGPT sign-in. Existing Codex clients may need a restart.</p>
+      <button id="installed-remove" class="secondary" disabled>Remove connection</button>
     </div></details>
     <p id="installed-error" role="alert" hidden></p>
     <dialog id="installed-confirm" aria-labelledby="installed-confirm-title" aria-describedby="installed-confirm-description">

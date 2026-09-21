@@ -83,9 +83,9 @@ impl AccessSnapshot {
     }
 
     /// Apply the already-reviewed destination DACL to the held replacement only.
-    /// ReplaceFile can merge staging grants into legacy inherited descriptors;
-    /// matching the destination policy before replacement prevents extra grants.
-    /// Caller checks the resulting descriptor before publishing the replacement.
+    /// ReplaceFile can merge ACLs, so the replacement starts with the same
+    /// reviewed grants. The caller checks it before publication and restores
+    /// only a recognized legacy duplication after the Windows replacement.
     pub(crate) fn prepare_replacement(&self, file: &File) -> io::Result<()> {
         use windows_sys::Win32::Security::{
             Authorization::{

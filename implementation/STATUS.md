@@ -43,6 +43,34 @@ task delegated to the original App backend, which retained its old catalog and
 used fallback metadata; that attempt failed before generation. Broader coding
 qualification remains in progress; no release gate is certified.
 
+## Windows permissions and control panel (2026-09-21)
+
+- CI exposed an inherited-DACL replacement difference absent on this Windows
+  workstation. The targeted fixture captured an Administrators-owned legacy ACL
+  receiving explicit copies of its inherited grants during `ReplaceFileW`.
+  Merely marking the staging descriptor auto-inherited did not fix it; that
+  change was removed. Staging remains private until publication checks pass.
+  It then receives the destination policy. After replacement, the exact staged
+  identity and candidate bytes must match. Only the observed, exact legacy
+  duplication pattern permits restoring the original DACL through the held
+  handle; arbitrary ACL changes still fail. Owner, order, rights, protection and
+  inherited provenance remain checked. The new inherited regression now passes
+  on the CI runner; the full job is still pending.
+- The connected panel now shows three state rows and one primary action, with
+  models/reasoning and removal in details. Closing it hides the window in the
+  notification area. A single-instance handler restores the existing panel on
+  relaunch and ignores all supplied arguments. Visibility actions do not stop
+  the supervisor or change installed routing.
+- Actual Windows UI verification: closed the panel while a live response was in
+  progress, observed its window disappear while the process survived, then
+  relaunched. The second process exited successfully and the original window
+  and process returned. The background response completed successfully and the
+  panel returned to Connected. Direct tray-menu interaction remains unverified.
+- Validation: platform tests 45 passed / 3 explicitly ignored; platform and
+  desktop clippy passed; desktop UI tests 75 passed; release desktop build passed.
+  The frozen 200-case account-live cohort continues on its unchanged installed
+  daemon, independently of the UI build and configuration-permissions changes.
+
 ## Native namespace and task isolation (2026-09-21)
 
 - Added installed-client exercises for two dynamic tools with the same leaf name,

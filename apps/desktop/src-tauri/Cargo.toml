@@ -8,9 +8,10 @@ license.workspace = true
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 cxweb-runtime.workspace = true
 tauri-plugin-dialog = "2"
+tauri-plugin-single-instance = "2"
 
 [features]
 default = ["custom-protocol"]
