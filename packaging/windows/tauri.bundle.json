@@ -11,6 +11,7 @@
       "allowDowngrades": false,
       "webviewInstallMode": { "type": "embedBootstrapper", "silent": true },
       "nsis": {
+        "template": "../../../packaging/windows/installer.nsi",
         "installMode": "currentUser",
         "languages": ["English"],
         "displayLanguageSelector": false,

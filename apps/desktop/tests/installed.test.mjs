@@ -274,7 +274,7 @@ test('background retry is explicit, instance-bound and single while status check
 });
 
 test('late composer or model hydration offers one explicit background retry', async () => {
-  for (const code of ['E_BROWSER_BASELINE_MODEL', 'E_BROWSER_BASELINE_COMPOSER']) {
+  for (const code of ['E_BROWSER_BASELINE_MODEL', 'E_BROWSER_BASELINE_COMPOSER', 'E_BROWSER_TEMPORARY_NAVIGATION']) {
     const ui = panel(async command => command === 'installed_list' ? list() : transient(code));
     await flush();
     assert.equal(ui.nodes.get('installed-retry').hidden, false);

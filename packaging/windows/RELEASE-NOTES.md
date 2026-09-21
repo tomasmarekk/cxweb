@@ -1,5 +1,10 @@
 Windows x64 preview of cxweb, connecting ChatGPT web models to Codex App and Codex CLI.
 
+Fixes ordinary installer upgrades disconnecting Codex and leaving cxweb at
+"Finish removal" with missing web models. Replacing an installed version now
+preserves the connection, private runtime and signed-in browser profile without
+requiring a special installer command-line flag. Real uninstall remains separate.
+
 Fixes tool-envelope transport failures during real Codex App tasks. A single JSON
 code block preserves quoted MCP arguments, Windows paths and patch text through
 ChatGPT's renderer, including its nested code viewer. Envelope, nonce and tool

@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$MakeNsis = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'tauri/NSIS/makensis.exe')
+    [string]$MakeNsis = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'tauri/NSIS/makensis.exe'),
+    [string]$InstallerTemplate = (Join-Path $PSScriptRoot '../packaging/windows/installer.nsi')
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -75,5 +76,61 @@ foreach ($case in $cases) {
         throw "Installer arguments mismatch: $($case.Name)"
     }
     Write-Output "PASS $($case.Name)"
+}
+# Exercise the actual template's interactive replacement decision, not just
+# PREUNINSTALL with an artificially supplied updater flag. The original bug
+# entered the old uninstaller from this function during an ordinary upgrade.
+$templateText = Get-Content -LiteralPath $InstallerTemplate -Raw
+$leaveFunction = [regex]::Match($templateText, '(?s)Function PageLeaveReinstall\r?\n.*?FunctionEnd').Value
+if (-not $leaveFunction) { throw 'Interactive replacement function missing.' }
+# Fail rather than display a blocking dialog if the old uninstall path is hit.
+$leaveFunction = $leaveFunction.Replace('MessageBox MB_ICONEXCLAMATION "$(unableToUninstall)"', 'SetErrorLevel 42')
+$replacementTemplate = @'
+Unicode true
+RequestExecutionLevel user
+SilentInstall silent
+!include "LogicLib.nsh"
+!include "FileFunc.nsh"
+!define MANUPRODUCTKEY "Software\cxweb-isolated-installer-fixture"
+!define UNINSTKEY "Software\cxweb-isolated-installer-fixture-uninstall"
+!define MAINBINARYNAME "fixture-never-installed"
+!macro FixtureGetState CONTROL OUTPUT
+  StrCpy ${OUTPUT} @SELECTION@
+!macroend
+!define NSD_GetState "!insertmacro FixtureGetState"
+Name "cxweb replacement decision test"
+OutFile "@OUT@"
+Var UpdateMode
+Var PassiveMode
+Var WixMode
+@FUNCTION@
+Section
+  StrCpy $UpdateMode 0
+  StrCpy $WixMode 0
+  StrCpy $R0 @VERSION@
+  Call PageLeaveReinstall
+  FileOpen $2 "@RECEIPT@" w
+  FileWrite $2 "replacement-preserved"
+  FileClose $2
+SectionEnd
+'@
+foreach ($decision in @(
+    @{ Name='ordinary-upgrade'; Version=1; Selection=1; Success=$true },
+    @{ Name='ordinary-downgrade'; Version=-1; Selection=1; Success=$true },
+    @{ Name='same-version-reinstall'; Version=0; Selection=1; Success=$true },
+    @{ Name='explicit-removal-still-uninstalls'; Version=0; Selection=0; Success=$false }
+)) {
+    $caseDir = Join-Path $fixtureRoot $decision.Name
+    New-Item -ItemType Directory -Path $caseDir | Out-Null
+    $fixtureExe = Join-Path $caseDir 'fixture.exe'
+    $receipt = Join-Path $caseDir 'continued.txt'
+    $source = $replacementTemplate.Replace('@FUNCTION@', $leaveFunction).Replace('@OUT@', $fixtureExe).Replace('@RECEIPT@', $receipt).Replace('@VERSION@', [string]$decision.Version).Replace('@SELECTION@', [string]$decision.Selection)
+    $source | Set-Content -LiteralPath (Join-Path $caseDir 'fixture.nsi')
+    & $MakeNsis /V1 (Join-Path $caseDir 'fixture.nsi')
+    if ($LASTEXITCODE -ne 0) { throw "Replacement fixture compilation failed: $($decision.Name)" }
+    $process = Start-Process -FilePath $fixtureExe -WindowStyle Hidden -PassThru
+    if (-not $process.WaitForExit(20000)) { throw "Replacement fixture timed out: $($decision.Name)" }
+    if ((Test-Path -LiteralPath $receipt) -ne $decision.Success) { throw "Replacement decision failed: $($decision.Name)" }
+    Write-Output "PASS $($decision.Name)"
 }
 Write-Output "Preserved fixture evidence: $fixtureRoot"

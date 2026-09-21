@@ -579,6 +579,7 @@ fn retryable(code: &str) -> bool {
             | "E_BROWSER_RUNTIME_MISSING"
             | "E_BROWSER_START"
             | "E_BACKGROUND_NAVIGATION"
+            | "E_BROWSER_TEMPORARY_NAVIGATION"
             | "E_BROWSER_OBSERVATION"
             | "E_BROWSER_BASELINE_MODEL"
             | "E_BROWSER_BASELINE_COMPOSER"
@@ -1463,6 +1464,7 @@ mod tests {
             "E_BROWSER_START",
             "E_BROWSER_RUNTIME_MISSING",
             "E_BACKGROUND_NAVIGATION",
+            "E_BROWSER_TEMPORARY_NAVIGATION",
             "E_BROWSER_OBSERVATION",
         ] {
             let pending = PendingProvider::default();
