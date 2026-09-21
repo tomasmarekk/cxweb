@@ -10,7 +10,20 @@ now confirms a quick incomplete read once on the same page, after 200 ms. An
 observed account/workspace reaches the existing mismatch check immediately;
 restrictions, other errors, slow reads and persistent uncertainty are not retried.
 No model submission is retried. The regression test and runtime clippy pass;
-the authenticated retest of this follow-up is pending.
+the follow-up daemon built and was installed with SHA-256
+`3e9f166512423fac1df53bf037ba6abaf11b5e5a77e288c319ff91aa2e7de70e`.
+The saved profile again recovered without login. Subsequent App read/apply_patch
+and CLI deferred MCP discovery/search/exact-result recall passed on this build;
+health returned Ready with both clients request-verified. Two earlier follow-up
+MCP attempts remain recorded as failures: one omitted the MCP call, and another
+completed the real call but failed exact result recall. Their provider error lists
+are empty. A later passing attempt does not erase those failed tool-use/recall
+checks or establish unrestricted tool reliability.
+CI passed for both implementation commits: 4ab486c (run 35596438043) and
+cefa7af (run 35597338564), including workspace tests, all-target clippy and the
+configured JavaScript suites. The probe now retains private diagnostic details
+on a missing MCP call or an exact-recall mismatch; published evidence remains
+sanitized. Its updated JavaScript syntax check passed.
 
 The WebSocket path now carries public ChatGPT status while the response is still
 generating. A bounded channel leaves the existing request/drain owner in charge;

@@ -228,6 +228,16 @@ async function verifyWebTools() {
   assert.equal(done?.params?.turn?.status, 'completed', 'E_TURN_FAILED');
   const completed = events.filter(event => event.method === 'item/completed' && event.params?.threadId === started.thread.id && event.params?.turnId === turn).map(event => event.params.item);
   const calls = completed.filter(item => item.type === 'mcpToolCall');
+  if (calls.length !== 1) {
+    // Private fixture diagnostics only; never included in the published evidence.
+    // Distinguish an empty discovery result from a model ignoring a loaded tool.
+    const discovery = events.filter(event => event.method === 'rawResponseItem/completed'
+      && ['tool_search_call', 'tool_search_output'].includes(event.params?.item?.type))
+      .map(event => event.params.item);
+    await writeFile(join(cwd, 'mcp-failure.private.json'), JSON.stringify({
+      discovery, answers:completed.filter(item => item.type === 'agentMessage').map(item => item.text),
+    }, null, 2));
+  }
   assert.equal(calls.length, 1, 'E_MCP_CALL_COUNT');
   const call = calls[0];
   evidence.nativeMcpSearch.status = call.status;
@@ -243,6 +253,13 @@ async function verifyWebTools() {
   const first = result.results[0];
   const answers = completed.filter(item => item.type === 'agentMessage');
   assert.equal(answers.length, 1, 'E_ANSWER_COUNT');
+  Object.assign(evidence.nativeMcpSearch, { actualNativeMcpCall:true, exactArguments:true,
+    realPublicSearchResults:result.results.length, exactResultRecall:answers[0].text === first.title + '\n' + first.link });
+  if (!evidence.nativeMcpSearch.exactResultRecall) {
+    await writeFile(join(cwd, 'mcp-failure.private.json'), JSON.stringify({
+      expected:first.title + '\n' + first.link, actual:answers[0].text,
+    }, null, 2));
+  }
   assert.equal(answers[0].text, first.title + '\n' + first.link, 'E_MCP_RESULT_RECALL');
   const summaries = completed.filter(item => item.type === 'reasoning');
   evidence.nativeMcpSearch = { result: 'passed', harnessExecutedTool: false, actualNativeMcpCall: true,

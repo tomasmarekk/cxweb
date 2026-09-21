@@ -378,5 +378,460 @@
     "ledgerRevision": 1,
     "meaning": "Browser preparation failed before recording submission intent for the follow-up request.",
     "automaticModelRetry": false
-  }
+  },
+  "scopeConfirmationFollowup": {
+    "sourceCommit": "cefa7afb7e5307485999f8eae09393322b2e22a4",
+    "executionDaemonSha256": "3e9f166512423fac1df53bf037ba6abaf11b5e5a77e288c319ff91aa2e7de70e",
+    "savedSessionRecovery": "Same saved account and models recovered without further login.",
+    "attempts": [
+      {
+        "schema": "cxweb.installed-client.v1",
+        "startedAt": "2026-09-21T12:04:43.049Z",
+        "build": "0.155.1",
+        "executableSha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+        "synthetic": false,
+        "configurationOverride": true,
+        "actualGuiPicker": "not observed",
+        "text": "not requested",
+        "overrideFields": [
+          "features.tool_search",
+          "features.tool_search_always_defer_mcp_tools"
+        ],
+        "routingOverride": false,
+        "installedLoopbackRoute": true,
+        "subscriptionAuthentication": true,
+        "models": [
+          {
+            "id": "gpt-6-astra",
+            "name": "GPT-6-Astra"
+          },
+          {
+            "id": "gpt-5.6-sol",
+            "name": "GPT-5.6-Sol"
+          },
+          {
+            "id": "gpt-5.6-terra",
+            "name": "GPT-5.6-Terra"
+          },
+          {
+            "id": "gpt-5.6-luna",
+            "name": "GPT-5.6-Luna"
+          },
+          {
+            "id": "gpt-daybreak-blue-latest",
+            "name": "Daybreak Blue"
+          },
+          {
+            "id": "gpt-5.5",
+            "name": "GPT-5.5"
+          },
+          {
+            "id": "webbridge/402f0b19d5610fcbee25b681",
+            "name": "ChatGPT Web · Latest"
+          }
+        ],
+        "selectedEffort": "xhigh",
+        "reasoningChoices": [
+          {
+            "reasoningEffort": "low",
+            "description": "Instant"
+          },
+          {
+            "reasoningEffort": "medium",
+            "description": "Medium"
+          },
+          {
+            "reasoningEffort": "high",
+            "description": "High"
+          },
+          {
+            "reasoningEffort": "xhigh",
+            "description": "Extra High"
+          },
+          {
+            "reasoningEffort": "max",
+            "description": "Pro"
+          }
+        ],
+        "ownedAndNativeCatalog": true,
+        "nativeMcpSearch": {
+          "result": "started",
+          "harnessExecutedTool": false,
+          "deferredToolDiscovery": true
+        },
+        "result": "FAIL",
+        "error": "E_MCP_CALL_COUNT",
+        "providerErrorCodes": [],
+        "turnStatuses": [
+          "completed"
+        ],
+        "errorKinds": [],
+        "configUnchanged": true,
+        "executableUnchanged": true,
+        "observedAt": "2026-09-21T12:05:08.783Z",
+        "reasoningEvents": {
+          "item/reasoning/summaryPartAdded": 2,
+          "item/reasoning/summaryTextDelta": 2
+        },
+        "rawOutputKinds": {
+          "message": 4,
+          "reasoning": 2,
+          "tool_search_call": 1,
+          "tool_search_output": 1
+        }
+      },
+      {
+        "schema": "cxweb.installed-client.v1",
+        "startedAt": "2026-09-21T12:06:26.333Z",
+        "build": "0.155.1",
+        "executableSha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+        "synthetic": false,
+        "configurationOverride": true,
+        "actualGuiPicker": "not observed",
+        "text": "not requested",
+        "overrideFields": [
+          "features.tool_search",
+          "features.tool_search_always_defer_mcp_tools"
+        ],
+        "routingOverride": false,
+        "installedLoopbackRoute": true,
+        "subscriptionAuthentication": true,
+        "models": [
+          {
+            "id": "gpt-6-astra",
+            "name": "GPT-6-Astra"
+          },
+          {
+            "id": "gpt-5.6-sol",
+            "name": "GPT-5.6-Sol"
+          },
+          {
+            "id": "gpt-5.6-terra",
+            "name": "GPT-5.6-Terra"
+          },
+          {
+            "id": "gpt-5.6-luna",
+            "name": "GPT-5.6-Luna"
+          },
+          {
+            "id": "gpt-daybreak-blue-latest",
+            "name": "Daybreak Blue"
+          },
+          {
+            "id": "gpt-5.5",
+            "name": "GPT-5.5"
+          },
+          {
+            "id": "webbridge/402f0b19d5610fcbee25b681",
+            "name": "ChatGPT Web · Latest"
+          }
+        ],
+        "selectedEffort": "xhigh",
+        "reasoningChoices": [
+          {
+            "reasoningEffort": "low",
+            "description": "Instant"
+          },
+          {
+            "reasoningEffort": "medium",
+            "description": "Medium"
+          },
+          {
+            "reasoningEffort": "high",
+            "description": "High"
+          },
+          {
+            "reasoningEffort": "xhigh",
+            "description": "Extra High"
+          },
+          {
+            "reasoningEffort": "max",
+            "description": "Pro"
+          }
+        ],
+        "ownedAndNativeCatalog": true,
+        "nativeMcpSearch": {
+          "result": "started",
+          "harnessExecutedTool": false,
+          "status": "completed",
+          "deferredToolDiscovery": true
+        },
+        "result": "FAIL",
+        "error": "E_MCP_RESULT_RECALL",
+        "providerErrorCodes": [],
+        "turnStatuses": [
+          "completed"
+        ],
+        "errorKinds": [],
+        "configUnchanged": true,
+        "executableUnchanged": true,
+        "observedAt": "2026-09-21T12:07:05.452Z",
+        "reasoningEvents": {
+          "item/reasoning/summaryPartAdded": 3,
+          "item/reasoning/summaryTextDelta": 3
+        },
+        "rawOutputKinds": {
+          "message": 4,
+          "reasoning": 3,
+          "tool_search_call": 1,
+          "tool_search_output": 1,
+          "function_call": 1,
+          "function_call_output": 1
+        }
+      },
+      {
+        "schema": "cxweb.installed-client.v1",
+        "startedAt": "2026-09-21T12:07:45.23Z",
+        "build": "0.155.0-alpha.9.2",
+        "executableSha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+        "synthetic": false,
+        "configurationOverride": false,
+        "actualGuiPicker": "not observed",
+        "text": "not requested",
+        "installedLoopbackRoute": true,
+        "subscriptionAuthentication": true,
+        "models": [
+          {
+            "id": "gpt-6-astra",
+            "name": "GPT-6-Astra"
+          },
+          {
+            "id": "gpt-5.6-sol",
+            "name": "GPT-5.6-Sol"
+          },
+          {
+            "id": "gpt-5.6-terra",
+            "name": "GPT-5.6-Terra"
+          },
+          {
+            "id": "gpt-5.6-luna",
+            "name": "GPT-5.6-Luna"
+          },
+          {
+            "id": "gpt-daybreak-blue-latest",
+            "name": "Daybreak Blue"
+          },
+          {
+            "id": "gpt-5.5",
+            "name": "GPT-5.5"
+          },
+          {
+            "id": "webbridge/402f0b19d5610fcbee25b681",
+            "name": "ChatGPT Web · Latest"
+          }
+        ],
+        "selectedEffort": "xhigh",
+        "reasoningChoices": [
+          {
+            "reasoningEffort": "low",
+            "description": "Instant"
+          },
+          {
+            "reasoningEffort": "medium",
+            "description": "Medium"
+          },
+          {
+            "reasoningEffort": "high",
+            "description": "High"
+          },
+          {
+            "reasoningEffort": "xhigh",
+            "description": "Extra High"
+          },
+          {
+            "reasoningEffort": "max",
+            "description": "Pro"
+          }
+        ],
+        "ownedAndNativeCatalog": true,
+        "nativeTools": {
+          "result": "passed",
+          "harnessExecutedTools": false,
+          "fixtureMarkerInPrompt": false,
+          "exactRead": true,
+          "exactPatch": true,
+          "realFileVerified": true,
+          "exactFinalAnswer": true,
+          "readApprovalObserved": true,
+          "patchApprovalObserved": true
+        },
+        "result": "PASS",
+        "configUnchanged": true,
+        "executableUnchanged": true,
+        "observedAt": "2026-09-21T12:09:00.563Z",
+        "reasoningEvents": {
+          "item/reasoning/summaryPartAdded": 3,
+          "item/reasoning/summaryTextDelta": 3
+        },
+        "rawOutputKinds": {}
+      },
+      {
+        "schema": "cxweb.installed-client.v1",
+        "startedAt": "2026-09-21T12:09:28.321Z",
+        "build": "0.155.1",
+        "executableSha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+        "synthetic": false,
+        "configurationOverride": true,
+        "actualGuiPicker": "not observed",
+        "text": "not requested",
+        "overrideFields": [
+          "features.tool_search",
+          "features.tool_search_always_defer_mcp_tools"
+        ],
+        "routingOverride": false,
+        "installedLoopbackRoute": true,
+        "subscriptionAuthentication": true,
+        "models": [
+          {
+            "id": "gpt-6-astra",
+            "name": "GPT-6-Astra"
+          },
+          {
+            "id": "gpt-5.6-sol",
+            "name": "GPT-5.6-Sol"
+          },
+          {
+            "id": "gpt-5.6-terra",
+            "name": "GPT-5.6-Terra"
+          },
+          {
+            "id": "gpt-5.6-luna",
+            "name": "GPT-5.6-Luna"
+          },
+          {
+            "id": "gpt-daybreak-blue-latest",
+            "name": "Daybreak Blue"
+          },
+          {
+            "id": "gpt-5.5",
+            "name": "GPT-5.5"
+          },
+          {
+            "id": "webbridge/402f0b19d5610fcbee25b681",
+            "name": "ChatGPT Web · Latest"
+          }
+        ],
+        "selectedEffort": "xhigh",
+        "reasoningChoices": [
+          {
+            "reasoningEffort": "low",
+            "description": "Instant"
+          },
+          {
+            "reasoningEffort": "medium",
+            "description": "Medium"
+          },
+          {
+            "reasoningEffort": "high",
+            "description": "High"
+          },
+          {
+            "reasoningEffort": "xhigh",
+            "description": "Extra High"
+          },
+          {
+            "reasoningEffort": "max",
+            "description": "Pro"
+          }
+        ],
+        "ownedAndNativeCatalog": true,
+        "nativeMcpSearch": {
+          "result": "passed",
+          "harnessExecutedTool": false,
+          "actualNativeMcpCall": true,
+          "exactArguments": true,
+          "realPublicSearchResults": 3,
+          "exactResultRecall": true,
+          "summaryItems": 3,
+          "publicSummaryCharacters": 24,
+          "deferredToolDiscovery": true
+        },
+        "result": "PASS",
+        "configUnchanged": true,
+        "executableUnchanged": true,
+        "observedAt": "2026-09-21T12:10:06.693Z",
+        "reasoningEvents": {
+          "item/reasoning/summaryPartAdded": 3,
+          "item/reasoning/summaryTextDelta": 3
+        },
+        "rawOutputKinds": {
+          "message": 4,
+          "reasoning": 3,
+          "tool_search_call": 1,
+          "tool_search_output": 1,
+          "function_call": 1,
+          "function_call_output": 1
+        }
+      }
+    ]
+  },
+  "healthAfterTests": {
+    "active_web_turns": 0,
+    "components": {
+      "browser": {
+        "code": null,
+        "evidence": "passive_browser",
+        "observed_at": "2026-09-21T12:10:06.429Z",
+        "state": "healthy"
+      },
+      "codex_app": {
+        "code": null,
+        "evidence": "request_success",
+        "observed_at": "2026-09-21T12:09:00.274Z",
+        "state": "healthy"
+      },
+      "codex_cli": {
+        "code": null,
+        "evidence": "request_success",
+        "observed_at": "2026-09-21T12:10:06.429Z",
+        "state": "healthy"
+      },
+      "config": {
+        "code": null,
+        "evidence": "local_probe",
+        "observed_at": "2026-09-21T12:10:55.413Z",
+        "state": "healthy"
+      },
+      "native_upstream": {
+        "code": null,
+        "evidence": "client_handshake",
+        "observed_at": "2026-09-21T12:09:30.757Z",
+        "state": "healthy"
+      },
+      "runtime": {
+        "code": null,
+        "evidence": "local_probe",
+        "observed_at": "2026-09-21T12:10:55.413Z",
+        "state": "healthy"
+      },
+      "web_auth": {
+        "code": null,
+        "evidence": "passive_browser",
+        "observed_at": "2026-09-21T12:10:06.429Z",
+        "state": "healthy"
+      },
+      "web_models": {
+        "code": null,
+        "evidence": "passive_browser",
+        "observed_at": "2026-09-21T12:10:06.429Z",
+        "state": "healthy"
+      }
+    },
+    "overall": "ready",
+    "revision": 29,
+    "schema_version": "webbridge.health.v1",
+    "suggested_action": "none"
+  },
+  "implementationCi": [
+    {
+      "commit": "4ab486cd46a24273baaa2bef477b665cc06a19c8",
+      "run": 35596438043,
+      "result": "success"
+    },
+    {
+      "commit": "cefa7afb7e5307485999f8eae09393322b2e22a4",
+      "run": 35597338564,
+      "result": "success"
+    }
+  ]
 }
