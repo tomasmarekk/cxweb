@@ -4409,3 +4409,11 @@ model discovery, native WebSocket preservation and actual pickers are proven.
 - Reviewed source condition: [App compression selection](https://github.com/openai/codex/blob/bf6f0a4ec97919bf697cdc532e7b8af4ec482fc6/codex-rs/core/src/client.rs).
   The existing isolated harness uses an API key, so its successful runs do not
   establish the subscription-only compression branch as a live client result.
+
+## 2026-09-21: Windows 0.1.1 release verification
+
+- e70b8f9 adds acknowledged browser shutdown on disconnect and optional scoped local session removal. Existing personal and Codex authentication data are preserved.
+- Full locked workspace tests, workspace Clippy with warnings denied, formatting, 34 installed UI tests, 10 NSIS lifecycle scenarios and the opt-in real fixture-browser shutdown test passed locally.
+- The subsequent complete JavaScript suite caught missing desktop command permissions. 5c34e49 registers the command in the Tauri build manifest, grants it only to the main local window and includes the generated permission file. Complete JavaScript suite, desktop Clippy and formatting then passed.
+- Superseded release run 35604844730 was cancelled before publication. Replacement release run: https://github.com/tomasmarekk/cxweb/actions/runs/35605062591 (pending at this observation). Do not claim 0.1.1 publication until GitHub confirms success and assets.
+- v0.1.0 is published. The user's existing runtime and signed-in profile were not replaced or cleared during this patch. Signed distribution, automatic updates and full V1 qualification remain incomplete.
