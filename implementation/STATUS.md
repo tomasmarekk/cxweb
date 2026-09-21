@@ -30,8 +30,35 @@ and journal; the user also edited config.toml. At 07:42 UTC the native backend
 preflight passed against the user's current configuration without modification,
 and no cxweb/loopback override remained. The now-orphaned scheduled action was
 disabled after checking its exact former runtime path. A new ordinary-Chrome
-setup login is open; fresh authentication and activation are pending. Broader coding
+setup login was completed and closed by the user. Fresh English background text
+and tool protocol checks passed, and a new installation was activated against the
+user's edited configuration. Initial reasoning maintenance exposed a missing
+controller in the fresh-activation path; the fix and regression test now pass,
+with deployment and live reasoning qualification in progress. Broader coding
 qualification remains in progress; no release gate is certified.
+
+## Fresh activation maintenance and protocol diagnostics (2026-09-21)
+
+- Preserved the first bootstrap text failure (E_QUALIFICATION_PROTOCOL). Its old
+  collector discarded the response; the cause is unproven. Added typed structural
+  diagnostics for JSON object shape, protocol/nonce agreement and validation versus
+  expected-output failure, without returning any response content. A new explicit
+  text test and a separate tool test passed after rebuilding the collector.
+- The user-completed login survives closing the ordinary window and restarting
+  the setup owner. Background discovery observed all five English reasoning modes
+  for Latest, Sol and GPT-5.5. Discovery is not qualification of those families.
+- Activation preserves the user's current configuration as its reversible baseline.
+  The first reasoning command failed before browser work because prepared hosts
+  lacked the maintenance controller that restarted hosts already received.
+- Fresh activation now attaches its existing browser/coordinator to the shared
+  provider slot and installs the maintenance controller immediately. Catalog updates
+  and re-login therefore use the same provider slot as normal requests. It neither
+  creates a second browser owner nor starts background recovery at activation.
+- The regression invokes prepared-host maintenance before any restart and checks
+  that the attached provider receives it without applying configuration. Runtime
+  tests: 220 passed, 9 opt-in ignored. Scoped all-target Clippy and formatting pass.
+  Live restoration evidence is in setup-restoration-sep21.json; subsequent client
+  and reasoning checks remain pending.
 
 ## Interrupted coding observation and manual state removal (2026-09-21)
 

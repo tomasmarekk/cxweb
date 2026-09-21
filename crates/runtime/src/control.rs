@@ -7,7 +7,6 @@ use crate::qualification::Kind;
 use cxweb_browser_adapter::{
     LoginObservation, ManagedBrowser, ManagedPage, ModelSurfaceDiagnostic, QualificationDiagnostic,
 };
-use cxweb_codex_adapter::envelope;
 use cxweb_domain::{SessionKey, TurnState};
 use cxweb_platform::state::{StatePaths, installed_browser};
 use serde::{Deserialize, Serialize};
@@ -66,6 +65,8 @@ pub struct ControlStatus {
     #[serde(default)]
     pub qualification_diagnostic: Option<QualificationDiagnostic>,
     #[serde(default)]
+    pub qualification_protocol: Option<crate::qualification::ProtocolDiagnostic>,
+    #[serde(default)]
     pub scope_diagnostic: Option<cxweb_browser_adapter::ScopeDiagnostic>,
 }
 
@@ -97,6 +98,7 @@ impl Default for ControlStatus {
             tool_qualified_model: None,
             qualification_evidence: None,
             qualification_diagnostic: None,
+            qualification_protocol: None,
             scope_diagnostic: None,
         }
     }
@@ -943,6 +945,7 @@ impl Control {
                                     status.text_qualified_model = None;
                                     status.qualification_evidence = None;
                                     status.qualification_diagnostic = None;
+                                    status.qualification_protocol = None;
                                     let selected = observed_routes
                                         .iter()
                                         .filter(|(model, _)| model.selected)
@@ -1152,11 +1155,12 @@ impl Control {
                                         let _ = reply.send(Err(code));
                                         continue;
                                     }
-                                    let valid = envelope::validate(
-                                        outcome.response.as_bytes(),
-                                        &request.context(&nonce),
-                                    );
-                                    if !valid.as_ref().is_ok_and(|output| kind.accepts(output)) {
+                                    let diagnostic =
+                                        kind.diagnose(&outcome.response, &request, &nonce);
+                                    let valid = diagnostic.result
+                                        == crate::qualification::ProtocolResult::Accepted;
+                                    status.qualification_protocol = Some(diagnostic);
+                                    if !valid {
                                         let _ = runtime
                                             .block_on(ledger.transition(&nonce, TurnState::Failed));
                                         let _ = reply.send(Err("E_QUALIFICATION_PROTOCOL"));

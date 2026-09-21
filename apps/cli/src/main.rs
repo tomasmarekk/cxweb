@@ -405,6 +405,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "tool_protocol_verified": status.tool_qualified_model.is_some(),
                     "routing_installed": status.routing_installed,
                     "qualification_diagnostic": status.qualification_diagnostic,
+                    "qualification_protocol": status.qualification_protocol,
                     "scope_diagnostic": status.scope_diagnostic,
                     "model_discovery_diagnostic": status.model_discovery_diagnostic,
                     "session_surface": status.observation.as_ref().map(|observation| serde_json::json!({

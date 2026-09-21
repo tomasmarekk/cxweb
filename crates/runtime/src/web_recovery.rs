@@ -437,6 +437,24 @@ pub(crate) struct PendingProvider(
     Arc<Mutex<Option<(ManagedDriver, CoordinatorProvider)>>>,
 );
 impl PendingProvider {
+    /// Attach the already qualified owner at activation. Maintenance and request
+    /// routing must share this slot so catalog extensions take effect immediately.
+    pub(crate) fn active(
+        driver: ManagedDriver,
+        coordinator: CoordinatorProvider,
+        verified_at: Option<String>,
+    ) -> Self {
+        let provider = Arc::new(ObservedProvider::new(
+            Arc::new(coordinator.clone()),
+            driver.clone(),
+            verified_at,
+        )) as Arc<dyn WebProvider>;
+        Self(
+            Arc::new(Mutex::new(Some(Ok(provider)))),
+            Arc::new(Mutex::new(Some((driver, coordinator)))),
+        )
+    }
+
     fn begin_retry(&self) -> Result<(), &'static str> {
         let mut state = self.0.lock().map_err(|_| "E_WEB_RECOVERY_STATE")?;
         if !matches!(state.as_ref(), Some(Err(code)) if retryable(code)) {

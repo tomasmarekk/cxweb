@@ -1,0 +1,61 @@
+{
+  "schema": "cxweb.setup-restoration.v1",
+  "observed_at": "2026-09-21T08:20:08.5130902Z",
+  "initial_text_attempt": {
+    "detail": "Response was not retained by the old collector; cause remains unproven.",
+    "code": "E_QUALIFICATION_PROTOCOL",
+    "result": "failed"
+  },
+  "instrumented_text_attempt": {
+    "protocol": {
+      "json_object": true,
+      "nonce_matches": true,
+      "protocol_matches": true,
+      "response_bytes": 136,
+      "result": "accepted"
+    },
+    "attribution": {
+      "assistant_present": true,
+      "expected_model_label": "Extra High",
+      "generating": false,
+      "observed_model_label": "Extra High",
+      "user_matches": true,
+      "user_present": true
+    },
+    "phase": "text_qualified"
+  },
+  "background_session": true,
+  "language": {
+    "browser": "en-US",
+    "page": "en-US"
+  },
+  "tool_attempt": {
+    "phase": "tool_protocol_qualified",
+    "attribution": {
+      "assistant_present": true,
+      "expected_model_label": "Extra High",
+      "generating": false,
+      "observed_model_label": "Extra High",
+      "user_matches": true,
+      "user_present": true
+    },
+    "protocol": {
+      "json_object": true,
+      "nonce_matches": true,
+      "protocol_matches": true,
+      "response_bytes": 237,
+      "result": "accepted"
+    }
+  },
+  "activation": {
+    "route": "webbridge/402f0b19d5610fcbee25b681",
+    "result": "passed",
+    "uses_current_config_baseline": true
+  },
+  "initial_reasoning_attempt": {
+    "cause": "Prepared host did not attach its maintenance controller",
+    "code": "E_REASONING_QUALIFICATION",
+    "result": "failed_before_browser_work",
+    "report_created": false
+  }
+}

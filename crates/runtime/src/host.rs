@@ -179,6 +179,7 @@ impl Host {
         listener: TcpListener,
         journal: ConfigJournal,
         gateway: Gateway,
+        recovery: Option<crate::web_recovery::RecoveryController>,
     ) -> io::Result<(Self, ActivationHandle)> {
         if journal.phase() != crate::config_journal::Phase::Prepared
             || listener.local_addr()?.port() != journal.runtime_route().0
@@ -190,8 +191,11 @@ impl Host {
         let installation = journal.installation_id().to_owned();
         let (published, native) = journal.catalog_receipt()?;
         let control_listener = control_pipe::listen(&installation)?;
-        let controller = DisconnectController::new(gateway.clone(), journal, published, native)
+        let mut controller = DisconnectController::new(gateway.clone(), journal, published, native)
             .map_err(io::Error::other)?;
+        if let Some(recovery) = recovery {
+            controller = controller.with_recovery(recovery);
+        }
         let serving = Arc::new(AtomicBool::new(false));
         let handle = ActivationHandle {
             controller: controller.clone(),
@@ -272,6 +276,53 @@ mod tests {
             }
         }
     }
+    #[tokio::test]
+    async fn prepared_host_exposes_maintenance_without_restart_or_background_restore() {
+        use crate::web_recovery::{PendingProvider, Receipt, RecoveryController};
+        let fixture = Fixture(std::env::temp_dir().join(format!(
+            "cxweb-prepared-maintenance-{:032x}",
+            rand::random::<u128>()
+        )));
+        protected_directory(&fixture.0).unwrap();
+        let config = fixture.0.join("config.toml");
+        let directory = fixture.0.join("journal");
+        let listener = loopback::bind(0).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let capability = "a".repeat(43);
+        let mut journal = ConfigJournal::prepare(&directory, &config, port, &capability).unwrap();
+        journal
+            .record_catalog(vec!["webbridge/fixture".into()], vec!["native".into()])
+            .unwrap();
+        let receipt = Receipt::fixture(journal.installation_id());
+        journal.record_web(receipt.clone()).unwrap();
+        let pending = PendingProvider::default();
+        let gateway = Gateway::prepared(
+            port,
+            &capability,
+            NativeTransport::new("http://127.0.0.1:1".into()).unwrap(),
+            Arc::new(pending.clone()),
+        );
+        let recovery = RecoveryController::new(pending, receipt, directory);
+        let (host, activation) =
+            Host::prepared(listener, journal, gateway, Some(recovery)).unwrap();
+        // The actual maintenance call reaches the attached provider. Before the
+        // fix it failed with E_WEB_RECOVERY_STATE because no controller existed.
+        assert_eq!(
+            activation.controller.qualify_reasoning().await,
+            Err("E_WEB_RECOVERING")
+        );
+        assert!(
+            host.recovery.is_none(),
+            "an attached owner must never be restored a second time"
+        );
+        assert!(
+            !config.exists(),
+            "maintenance wiring must not apply configuration"
+        );
+        drop(activation);
+        drop(host);
+    }
+
     #[tokio::test]
     #[ignore = "requires CXWEB_HEALTH_CLI pointing to built CLI; synthetic runtime only, no browser or account"]
     async fn actual_cli_reads_sanitized_health_without_launching_a_runtime() {

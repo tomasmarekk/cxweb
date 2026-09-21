@@ -118,15 +118,16 @@ impl PreparedInstallation {
         if session.driver.is_closed() {
             return Err("E_BROWSER_CLOSED");
         }
+        let active = crate::web_recovery::PendingProvider::active(
+            session.driver.clone(),
+            provider,
+            session.verified_at.clone(),
+        );
         self.finish(
-            Arc::new(crate::web_recovery::ObservedProvider::new(
-                Arc::new(provider),
-                session.driver.clone(),
-                session.verified_at.clone(),
-            )),
+            Arc::new(active.clone()),
             vec![session.route.id.clone()],
             native_models,
-            Some(receipt),
+            Some((receipt, active)),
         )
         .map_err(|_| "E_ACTIVATION_PREPARE")
     }
@@ -136,15 +137,25 @@ impl PreparedInstallation {
         provider: Arc<dyn WebProvider>,
         published: Vec<String>,
         native_models: Vec<String>,
-        recovery: Option<crate::web_recovery::Receipt>,
+        recovery: Option<(
+            crate::web_recovery::Receipt,
+            crate::web_recovery::PendingProvider,
+        )>,
     ) -> io::Result<(Host, ActivationHandle)> {
         self.journal.record_catalog(published, native_models)?;
-        if let Some(receipt) = recovery {
-            self.journal.record_web(receipt)?;
-        }
+        let recovery = recovery
+            .map(|(receipt, pending)| {
+                self.journal.record_web(receipt.clone())?;
+                Ok::<_, io::Error>(crate::web_recovery::RecoveryController::new(
+                    pending,
+                    receipt,
+                    self.directory.clone(),
+                ))
+            })
+            .transpose()?;
         let (port, capability, _) = self.journal.runtime_route();
         let gateway = Gateway::prepared(port, capability, self.native, provider);
-        Host::prepared(self.listener, self.journal, gateway)
+        Host::prepared(self.listener, self.journal, gateway, recovery)
     }
 }
 
