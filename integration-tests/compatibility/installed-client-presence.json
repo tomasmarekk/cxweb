@@ -1,0 +1,130 @@
+{
+  "evidence_level": "installed_runtime",
+  "source_commit": "74e333a",
+  "runtime_sha256": "6291ae9e9d4a6ff9afd5537930756565125ce73dc0af6bd57da072a75c086f98",
+  "observed_at": "2026-09-21T06:08:00.3574718+00:00",
+  "account_generation": false,
+  "actual_installed_runtime": true,
+  "initial_health": {
+    "active_web_turns": 0,
+    "components": {
+      "browser": {
+        "code": null,
+        "evidence": "none",
+        "observed_at": null,
+        "state": "unknown"
+      },
+      "codex_app": {
+        "code": "E_CLIENT_AWAITING_LAUNCH",
+        "evidence": "local_probe",
+        "observed_at": "2026-09-21T06:07:09.297Z",
+        "state": "unknown"
+      },
+      "codex_cli": {
+        "code": "E_CLIENT_AWAITING_LAUNCH",
+        "evidence": "local_probe",
+        "observed_at": "2026-09-21T06:07:09.297Z",
+        "state": "unknown"
+      },
+      "config": {
+        "code": null,
+        "evidence": "local_probe",
+        "observed_at": "2026-09-21T06:07:09.297Z",
+        "state": "healthy"
+      },
+      "native_upstream": {
+        "code": null,
+        "evidence": "client_handshake",
+        "observed_at": "2026-09-21T06:06:58.433Z",
+        "state": "healthy"
+      },
+      "runtime": {
+        "code": null,
+        "evidence": "local_probe",
+        "observed_at": "2026-09-21T06:07:09.297Z",
+        "state": "healthy"
+      },
+      "web_auth": {
+        "code": "E_BROWSER_VERIFICATION_REQUIRED",
+        "evidence": "local_probe",
+        "observed_at": "2026-09-21T06:07:09.297Z",
+        "state": "auth_required"
+      },
+      "web_models": {
+        "code": null,
+        "evidence": "none",
+        "observed_at": null,
+        "state": "unknown"
+      }
+    },
+    "overall": "auth_required",
+    "revision": 2,
+    "schema_version": "webbridge.health.v1",
+    "suggested_action": "open_login"
+  },
+  "current_health": {
+    "active_web_turns": 0,
+    "components": {
+      "browser": {
+        "code": null,
+        "evidence": "none",
+        "observed_at": null,
+        "state": "unknown"
+      },
+      "codex_app": {
+        "code": "E_CLIENT_AWAITING_LAUNCH",
+        "evidence": "local_probe",
+        "observed_at": "2026-09-21T06:07:39.900Z",
+        "state": "unknown"
+      },
+      "codex_cli": {
+        "code": "E_CLIENT_AWAITING_LAUNCH",
+        "evidence": "local_probe",
+        "observed_at": "2026-09-21T06:07:39.900Z",
+        "state": "unknown"
+      },
+      "config": {
+        "code": null,
+        "evidence": "local_probe",
+        "observed_at": "2026-09-21T06:08:00.351Z",
+        "state": "healthy"
+      },
+      "native_upstream": {
+        "code": null,
+        "evidence": "client_handshake",
+        "observed_at": "2026-09-21T06:06:58.433Z",
+        "state": "healthy"
+      },
+      "runtime": {
+        "code": null,
+        "evidence": "local_probe",
+        "observed_at": "2026-09-21T06:08:00.351Z",
+        "state": "healthy"
+      },
+      "web_auth": {
+        "code": "E_BROWSER_VERIFICATION_REQUIRED",
+        "evidence": "local_probe",
+        "observed_at": "2026-09-21T06:08:00.351Z",
+        "state": "auth_required"
+      },
+      "web_models": {
+        "code": null,
+        "evidence": "none",
+        "observed_at": null,
+        "state": "unknown"
+      }
+    },
+    "overall": "auth_required",
+    "revision": 5,
+    "schema_version": "webbridge.health.v1",
+    "suggested_action": "open_login"
+  },
+  "presence_result": "PASS",
+  "connection_readiness": "NOT_VERIFIED",
+  "limits": [
+    "Both supported installations were found and reported Awaiting launch before a qualified catalog handshake.",
+    "Background web recovery returned E_BROWSER_VERIFICATION_REQUIRED. Ready and fresh qualified client catalogs were not verified on this build.",
+    "Single-client readiness and absent/unknown precedence were tested with controlled fixtures, not by uninstalling native clients.",
+    "No account message, authentication mutation or fresh GUI picker test was performed."
+  ]
+}

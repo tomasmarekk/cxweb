@@ -23,6 +23,48 @@ English. The complete installed CLI and App-backend read/patch/final scenarios
 now pass. A fixed message sent from the actual GUI also passed with the owned
 model and effort corroborated by the native turn context.
 
+## Installed-client presence (2026-09-21)
+
+- Added read-only presence observations for the supported Windows installations.
+  Codex App uses current-user registration of its observed official package
+  family through FindPackagesByPackageFamily; stale backend caches do not prove
+  installation. CLI checks bounded runtime PATH and known npm executable paths.
+  Missing environment sources, relative paths, identity/access failures and
+  unresolved shims remain Unknown. No discovered executable or script runs.
+- Presence is checked on the existing serialized blocking health worker and
+  cached for at least 30 seconds, with its own observation timestamp. An installed
+  but unobserved client shows Awaiting launch; a supported installation not found
+  shows Not installed with the search scope in details. Actual client catalog or
+  request evidence takes precedence, including failures and stale catalogs.
+- Ready allows a verified client alongside an absent client, but never two absent
+  clients or an unknown/pending client. Tests cover both single-client directions,
+  uncertain scans, absent clients with actual traffic, cache timing, unresolved
+  shims and preservation of failed catalog evidence. The current-user Windows API
+  opt-in test passed for the real Codex registration and an absent fixture family.
+- Validation: 323 workspace tests passed, 22 opt-in tests ignored; the package
+  inventory test was additionally run explicitly and passed. All 70 desktop UI
+  tests passed. All-target Clippy with denied warnings and formatting passed after
+  the final package-query test change. The interrupted release build had no live
+  handle/process and old outputs; a fresh release daemon/CLI/desktop build passed.
+- Deployed daemon 6291ae9e9d4a6ff9afd5537930756565125ce73dc0af6bd57da072a75c086f98.
+  Actual private health at 06:07:09 UTC found both installations and reported
+  E_CLIENT_AWAITING_LAUNCH with independent local observation times. Desktop was
+  reopened. Presence evidence is in installed-client-presence.json.
+  Background session recovery now reports E_BROWSER_VERIFICATION_REQUIRED;
+  connection readiness and fresh qualified catalogs are explicitly not verified
+  on this build. No generation or automatic browser retry was requested.
+- Next: implement the installed connection's missing OpenLogin action. Current
+  installed UI offers Check status/removal but no path to fulfill the runtime's
+  authentication action. Use the installed daemon's browser ownership and exact
+  instance binding, preserve the native route and account/config, and leave any
+  interactive verification to the user. Do not spawn a competing setup owner or
+  bypass verification. This is an actionable lifecycle gap, not a reason to pause.
+- Scope: CLI discovery describes the runtime environment, not every possible
+  terminal override or portable installation. App discovery covers the observed
+  official Windows package family, not unknown alternative distributions.
+  Installation presence does not qualify backend versions or certify the picker.
+  API source: [current-user package inventory](https://learn.microsoft.com/en-us/windows/win32/api/appmodel/nf-appmodel-findpackagesbypackagefamily).
+
 ## Native failure presentation (2026-09-20)
 
 - Known native authentication, limit and transport failures now leave Preflight
