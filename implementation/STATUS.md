@@ -1,5 +1,37 @@
 # cxweb implementation status
 
+## Latest installed verification (2026-09-21, 11:37 UTC)
+
+The user completed the requested ChatGPT verification. The saved English session
+now works in the background with no visible Chrome window required. Installed
+health is Ready, and the actual cxweb panel shows Connected, ChatGPT Verified,
+Codex App Request verified and Codex CLI Request verified.
+
+Four live probes passed through the installed route and actual native binaries:
+deferred MCP discovery/search on App backend 0.155.0-alpha.9.2 and CLI 0.155.1,
+then native file read/apply_patch on each. Search returned three real public
+results and the model recalled the exact first title and URL. The coding probes
+read a random fixture marker absent from the prompt, applied the exact patch and
+verified the resulting file. Codex executed the tools and handled approvals;
+the harness did not execute them. Configuration and native executables remained
+unchanged. The discovery probes used process-only tool-search feature flags;
+neither routing nor the read/patch probes used overrides.
+
+Both catalogs include ChatGPT Web Latest alongside native models and expose
+Instant, Medium, High, Extra High and Pro. These backend probes complement the
+previous signed GUI picker proof; they do not repeat a GUI coding test.
+Public reasoning events carry the observed Thinking status, buffered until
+completion. Detailed live reasoning, hosted OpenAI web_search and unrestricted
+native feature parity are not established. Full PRD release gates remain open.
+
+Evidence: `integration-tests/quality/client-tools-live-sep21.json`. Active execution
+build is ad72c92 (daemon SHA-256
+`57ace28b540e50b4124e54e843ec1146f6a87fc81ae4749c8b970d643c5ad309`). Stable binaries
+and desktop shortcut are updated to 3c7e04e, whose additional change concerns
+fresh-install MCP setup. The working active session was preserved. CI passed for
+both commits (runs 35591303550 and 35592637567). Account-verification blocks in
+the earlier chronology below are resolved by these observations.
+
 ## Acceptance and current gate
 
 Immediate delivery priority, restated by the user on 2026-09-21: make ChatGPT Web
@@ -67,10 +99,11 @@ qualification remains in progress; no release gate is certified.
   passed / 10 opt-in tests ignored; daemon argument and actual-stdio process tests
   passed; clippy for all three affected packages/all targets passed. CI for prior
   commit ad72c92 completed successfully (run 35591303550), including the complete
-  workspace test suite and JavaScript checks. CI for this follow-up is separate.
-- Live ChatGPT verification remains pending while its ordinary sign-in window is
-  open. This implementation closes the installer gap recorded below; it does not
-  certify the remaining account-based or full release gates.
+  workspace test suite and JavaScript checks. CI for this follow-up also passed
+  (run 35592637567).
+- The subsequent user verification and four installed live probes passed as
+  recorded above. This closes the installer gap and the pending scoped retests;
+  it does not certify the full release gates.
 ## Client tools, public status and cold startup (2026-09-21)
 
 - Added native client-executed tool discovery, including definitions returned in
@@ -84,16 +117,16 @@ qualification remains in progress; no release gate is certified.
   Both installed native backends completed real MCP search and exact result recall.
   A separate scheduled-process test verified the executable/config outside the
   Codex MSIX container. The stable binary location is under `.cxweb-runtime/bin`.
-  This is client MCP search, not OpenAI-hosted `web_search`; automatic MCP setup
-  for a new machine is not yet part of the installer.
+  This is client MCP search, not OpenAI-hosted `web_search`. Automatic MCP setup
+  for fresh installations was added in the follow-up recorded above.
 - Public ChatGPT status is delivered as native reasoning-summary events. The live
   App-backend test returned the exact expected answer and the actual rendered
   `Thinking` status. It does not prove detailed reasoning or live streaming:
   delivery remains buffered until completion and scope revalidation.
 - Actual deferred MCP discovery exposed a missing historical-definition merge;
   that failure is preserved in the development report. The fix passes the five
-  adapter regression tests. Its live retest is pending user verification requested
-  by ChatGPT after the latest cold startup, rather than being reported as passed.
+  adapter regression tests. The subsequent live deferred-discovery retest passed
+  on both installed native backends after the user completed verification.
 - A visible local diagnostic repeatedly saw a missing model control and later
   became ready without interaction. Background restoration now allows 90 seconds
   for composer/model hydration instead of 15. All account, language and model
@@ -102,8 +135,8 @@ qualification remains in progress; no release gate is certified.
   runtime clippy passed; public-summary and installed-panel JavaScript tests 35
   passed; all three Windows release binaries built successfully. Latest daemon
   SHA-256: `57ace28b540e50b4124e54e843ec1146f6a87fc81ae4749c8b970d643c5ad309`.
-  The updated panel and runtime are installed. Current live health requires the
-  ChatGPT user verification step; prior Ready observations are historical.
+  The updated panel and runtime are installed. The later live verification above
+  supersedes the account-verification block observed at this development stage.
 - Evidence: `integration-tests/quality/client-tools-development-sep21.json`.
   Full PRD release gates and unrestricted native feature parity remain unproven.
 ## Windows permissions and control panel (2026-09-21)
