@@ -22,6 +22,7 @@
     "allow-installed-list",
     "allow-installed-check",
     "allow-installed-disconnect",
+    "allow-clear-local-session",
     "allow-installed-retry-web",
     "allow-installed-web-login",
     "allow-installed-diagnostics",

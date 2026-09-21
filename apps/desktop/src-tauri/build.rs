@@ -16,6 +16,7 @@ fn main() {
             "installed_list",
             "installed_check",
             "installed_disconnect",
+            "clear_local_session",
             "installed_retry_web",
             "installed_web_login",
             "installed_diagnostics",
