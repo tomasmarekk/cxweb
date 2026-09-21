@@ -267,6 +267,23 @@ type ScopeVerifier = Box<
 >;
 type Reply<T> = oneshot::Sender<Result<T, &'static str>>;
 
+/// A newly opened account menu can mount before its identity rows hydrate.
+/// Confirm an incomplete read once on the same page. A positively observed
+/// account/workspace is returned immediately so the caller can reject mismatch.
+/// This never retries a submission or changes the selected account/workspace.
+fn confirm_scope_read<T>(
+    mut read: impl FnMut() -> Result<T, &'static str>,
+) -> Result<T, &'static str> {
+    let started = std::time::Instant::now();
+    match read() {
+        Err("E_SESSION_SCOPE") if started.elapsed() < std::time::Duration::from_secs(10) => {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            read()
+        }
+        result => result,
+    }
+}
+
 // Browser errors can contain transport text. Export only reviewed fixed codes.
 pub(crate) fn browser_error(error: &std::io::Error, fallback: &'static str) -> &'static str {
     if error.to_string() == "E_BROWSER_RATE_LIMITED" {
@@ -372,11 +389,13 @@ impl ManagedDriver {
         binding.validate()?;
         let installation = binding.installation.clone();
         let mut verify: ScopeVerifier = Box::new(move |browser, page| {
-            let surface = browser
-                .account_scope(page)
-                .map_err(|error| browser_error(&error, "E_SESSION_SCOPE"))?;
-            let scope = BrowserScope::from_surface(&installation, &surface)?;
-            Ok((scope.account, scope.workspace))
+            confirm_scope_read(|| {
+                let surface = browser
+                    .account_scope(page)
+                    .map_err(|error| browser_error(&error, "E_SESSION_SCOPE"))?;
+                let scope = BrowserScope::from_surface(&installation, &surface)?;
+                Ok((scope.account, scope.workspace))
+            })
         });
         let (commands, mut incoming) = mpsc::channel(32);
         std::thread::Builder::new()
@@ -751,6 +770,46 @@ impl BrowserDriver for ManagedDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn incomplete_scope_is_confirmed_once_but_observed_identity_and_restrictions_are_not_retried() {
+        let mut calls = 0;
+        let scope = confirm_scope_read(|| {
+            calls += 1;
+            if calls == 1 {
+                Err("E_SESSION_SCOPE")
+            } else {
+                Ok(("account", "workspace"))
+            }
+        })
+        .unwrap();
+        assert_eq!(scope, ("account", "workspace"));
+        assert_eq!(calls, 2);
+        for outcome in [
+            Ok(("other-account", "other-workspace")),
+            Err("E_BROWSER_RATE_LIMITED"),
+            Err("E_BROWSER_CLOSED"),
+        ] {
+            let mut calls = 0;
+            assert_eq!(
+                confirm_scope_read(|| {
+                    calls += 1;
+                    outcome
+                }),
+                outcome
+            );
+            assert_eq!(calls, 1);
+        }
+        let mut calls = 0;
+        assert_eq!(
+            confirm_scope_read::<()>(|| {
+                calls += 1;
+                Err("E_SESSION_SCOPE")
+            }),
+            Err("E_SESSION_SCOPE")
+        );
+        assert_eq!(calls, 2);
+    }
 
     #[test]
     fn temporary_chat_errors_preserve_fixed_causes_only() {

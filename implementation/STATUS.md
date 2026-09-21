@@ -2,6 +2,16 @@
 
 ## Public status streaming implementation (2026-09-21)
 
+The post-update App read/apply_patch regression passed. The first CLI deferred
+MCP regression completed discovery but its next browser preparation failed with
+E_SESSION_SCOPE. The ledger records Failed at revision 1, before submission
+intent; that failed attempt is preserved in the live report. Scope observation
+now confirms a quick incomplete read once on the same page, after 200 ms. An
+observed account/workspace reaches the existing mismatch check immediately;
+restrictions, other errors, slow reads and persistent uncertainty are not retried.
+No model submission is retried. The regression test and runtime clippy pass;
+the authenticated retest of this follow-up is pending.
+
 The WebSocket path now carries public ChatGPT status while the response is still
 generating. A bounded channel leaves the existing request/drain owner in charge;
 the final response and all tool inputs remain fully buffered and validated.
@@ -21,10 +31,20 @@ ignored; clippy for both packages/all targets passed; formatting and JavaScript
 syntax checks passed. New tests cover early socket delivery, exact completion
 suffixes, replay without a second generation, scope/attribution failures, revision
 failures, cancellation/drain, a closed receiver and `summary: none`.
-`probe-installed-client.mjs --reasoning-live` now measures summary arrival before
-the final message in native notifications. Authenticated verification of this
-new transport behavior is pending; earlier installed evidence below remains for
-the prior buffered-status build, not this source change.
+`probe-installed-client.mjs --reasoning-live` measures summary arrival before the
+final message in native notifications. Both actual installed clients passed: App
+0.155.0-alpha.9.2 received public status 24,584 ms before its final message; CLI
+0.155.1 received it 21,271 ms earlier. Both returned the exact verified arithmetic
+answer. Configuration and native executables were unchanged. The public content
+was the rendered Thinking status; a detailed reasoning transcript was not observed.
+
+The idle scheduled runtime was updated to source 4ab486c (daemon SHA-256
+`9334f186d96942f03712ee8339853c0ffecd76354663f9dccc95ebfc2e74d915`). Its saved
+session recovered in the background without another login. The stable daemon was
+also updated; the running MCP process still owns the unchanged stable CLI binary.
+All three release binaries built successfully. Evidence is recorded in
+`integration-tests/quality/public-status-live-sep21.json`; the older report below
+remains evidence for the prior buffered-status execution build.
 
 ## Latest installed verification (2026-09-21, 11:37 UTC)
 
