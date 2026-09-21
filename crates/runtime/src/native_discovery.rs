@@ -68,7 +68,7 @@ fn note(diagnostics: &mut Vec<&'static str>, code: &'static str) {
     }
 }
 
-fn npm_paths(root: &Path) -> [PathBuf; 3] {
+pub(crate) fn npm_paths(root: &Path) -> [PathBuf; 3] {
     // Read-only locations from the installed npm loader; never execute codex.cmd,
     // codex.ps1, codex.js or arbitrary package-manager hooks to resolve a wrapper.
     let package = root.join("node_modules/@openai/codex");

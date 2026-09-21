@@ -16,6 +16,8 @@ pub mod control_pipe;
 #[cfg(windows)]
 pub mod loopback;
 #[cfg(windows)]
+pub mod package_inventory;
+#[cfg(windows)]
 pub mod scheduled_runtime;
 #[cfg(windows)]
 pub mod secret;

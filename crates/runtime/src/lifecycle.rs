@@ -33,6 +33,7 @@ pub struct DisconnectController {
     native: Arc<Vec<String>>,
     health: Arc<Mutex<crate::health::Tracker>>,
     config_check: Arc<AsyncMutex<()>>,
+    client_presence: Arc<Mutex<crate::client_presence::Cache>>,
     recovery: Option<crate::web_recovery::RecoveryController>,
 }
 
@@ -304,6 +305,7 @@ impl DisconnectController {
             native: Arc::new(native),
             health: Arc::default(),
             config_check: Arc::default(),
+            client_presence: Arc::default(),
             recovery: None,
         })
     }
@@ -323,7 +325,8 @@ impl DisconnectController {
             return self.health();
         };
         let journal = self.journal.clone();
-        let (configuration, _permit) = tokio::task::spawn_blocking(move || {
+        let presence = self.client_presence.clone();
+        let (configuration, clients, _permit) = tokio::task::spawn_blocking(move || {
             // Retain the permit even when the control exchange times out. A
             // slow filesystem must not accumulate detached probe workers.
             let configuration = journal
@@ -339,12 +342,17 @@ impl DisconnectController {
                     }
                 });
             // Keep observations serialized through publication as well.
-            (configuration, Some(permit))
+            let clients = presence
+                .lock()
+                .map(|mut cache| cache.check())
+                .unwrap_or_default();
+            (configuration, clients, Some(permit))
         })
         .await
-        .unwrap_or((Configuration::Unavailable, None));
+        .unwrap_or((Configuration::Unavailable, Default::default(), None));
         let mut tracker = self.health.lock().expect("health cache lock poisoned");
         tracker.observe_configuration(configuration);
+        tracker.observe_clients(clients);
         tracker.snapshot(*self.state.borrow(), self.gateway.health())
     }
 

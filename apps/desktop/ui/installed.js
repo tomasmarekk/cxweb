@@ -109,7 +109,8 @@ window.cxwebInstalled = (() => {
     node('installed-description').textContent = words[1];
     for (const [id, dimension] of [['chatgpt', 'web_auth'], ['app', 'codex_app'], ['cli', 'codex_cli']]) {
       const component = health.components[dimension];
-      node(`installed-${id}`).textContent = component?.state === 'healthy' && component.evidence === 'request_success'
+      node(`installed-${id}`).textContent = component?.state === 'unknown' && component.code === 'E_CLIENT_AWAITING_LAUNCH'
+        ? 'Awaiting launch' : component?.state === 'healthy' && component.evidence === 'request_success'
         ? 'Request verified' : component?.state === 'healthy' && component.evidence === 'client_handshake'
           ? 'Catalog available' : stateText[component?.state] || 'Unverified';
     }
@@ -125,6 +126,11 @@ window.cxwebInstalled = (() => {
           : component.code === 'E_CLIENT_CATALOG_CHANGED' ? '; catalog changed since the client last requested it'
             : '; catalog response could not be verified';
       }
+      if (component?.code === 'E_CLIENT_AWAITING_LAUNCH') row.textContent += '; installation found; open this client to load the connection';
+      if (component?.code === 'E_CLIENT_DISCOVERY') row.textContent += '; installation could not be determined; no absence or compatibility claim';
+      if (component?.code === 'E_CLIENT_NOT_FOUND') row.textContent += key === 'codex_app'
+        ? '; official Windows package is not registered for this user'
+        : '; not found in the runtime PATH or supported npm locations; a terminal can use different locations';
       details.append(row);
     }
     const families = value.reasoning || [];

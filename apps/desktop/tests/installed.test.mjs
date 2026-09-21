@@ -261,6 +261,23 @@ test('native failures cannot relabel a browser or configuration failure', async 
   }
 });
 
+test('installation presence distinguishes awaiting launch, absence and uncertainty without probes', async () => {
+  for (const [state, code, label, detail] of [
+    ['unknown', 'E_CLIENT_AWAITING_LAUNCH', 'Awaiting launch', /installation found; open this client/],
+    ['not_installed', 'E_CLIENT_NOT_FOUND', 'Not installed', /official Windows package is not registered/],
+    ['unknown', 'E_CLIENT_DISCOVERY', 'Unverified', /installation could not be determined/],
+  ]) {
+    const value = health();
+    value.health.components.codex_app = { state, code, evidence: 'local_probe' };
+    const ui = panel(async command => command === 'installed_list' ? list() : value);
+    await flush();
+    assert.equal(ui.nodes.get('installed-app').textContent, label);
+    assert.ok(ui.nodes.get('installed-components').children.some(row => detail.test(row.textContent)));
+    assert.equal(ui.nodes.get('installed-heading').textContent, 'Verifying connection');
+    assert.deepEqual(ui.calls.map(call => call.command), ['installed_list', 'installed_check']);
+  }
+});
+
 test('catalog readiness is displayed without claiming a generation test', async () => {
   const value = health('ready');
   for (const name of ['codex_app', 'codex_cli']) {

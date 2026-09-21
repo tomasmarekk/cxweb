@@ -13,9 +13,11 @@ pub(crate) struct Tracker {
         DisconnectState,
         GatewayHealth,
         ConfigurationObservation,
+        crate::client_presence::Observation,
         Health,
     )>,
     configuration: ConfigurationObservation,
+    clients: crate::client_presence::Observation,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -178,6 +180,9 @@ fn failure(code: &str) -> (Overall, State, Action, &'static str) {
 }
 
 impl Tracker {
+    pub(crate) fn observe_clients(&mut self, observation: crate::client_presence::Observation) {
+        self.clients = observation;
+    }
     pub(crate) fn observe_configuration(&mut self, configuration: Configuration) {
         self.configuration = ConfigurationObservation {
             state: configuration,
@@ -186,10 +191,12 @@ impl Tracker {
     }
 
     pub(crate) fn snapshot(&mut self, state: DisconnectState, gateway: GatewayHealth) -> Health {
-        if let Some((previous_state, previous_gateway, previous_config, health)) = &self.previous
+        if let Some((previous_state, previous_gateway, previous_config, previous_clients, health)) =
+            &self.previous
             && *previous_state == state
             && *previous_gateway == gateway
             && *previous_config == self.configuration
+            && *previous_clients == self.clients
         {
             return health.clone();
         }
@@ -198,7 +205,7 @@ impl Tracker {
             revision: self
                 .previous
                 .as_ref()
-                .map_or(1, |(_, _, _, h)| h.revision.saturating_add(1)),
+                .map_or(1, |(_, _, _, _, h)| h.revision.saturating_add(1)),
             active_web_turns: gateway.active_turns,
             components: Components {
                 runtime: component(State::Healthy, Evidence::LocalProbe, now.clone(), None),
@@ -257,18 +264,38 @@ impl Tracker {
                 }
             }
         }
-        for (observed, catalog, dimension) in [
+        for (observed, catalog, presence, dimension) in [
             (
                 &gateway.clients.cli,
                 &gateway.clients.cli_catalog,
+                self.clients.cli,
                 &mut health.components.codex_cli,
             ),
             (
                 &gateway.clients.app,
                 &gateway.clients.app_catalog,
+                self.clients.app,
                 &mut health.components.codex_app,
             ),
         ] {
+            if gateway.accepting && state == DisconnectState::Idle {
+                use crate::client_presence::Presence;
+                let (state, code) = match presence {
+                    Presence::Installed => (State::Unknown, Some("E_CLIENT_AWAITING_LAUNCH")),
+                    Presence::NotInstalled => (State::NotInstalled, Some("E_CLIENT_NOT_FOUND")),
+                    Presence::Unknown => (State::Unknown, Some("E_CLIENT_DISCOVERY")),
+                };
+                if self.clients.observed_at.is_some() {
+                    *dimension = component(
+                        state,
+                        Evidence::LocalProbe,
+                        self.clients.observed_at.clone(),
+                        code,
+                    );
+                }
+            }
+            // Actual traffic is stronger than a supported-location inventory:
+            // a running client may outlive its package or use a custom location.
             if gateway.accepting
                 && state == DisconnectState::Idle
                 && let Some(catalog) = catalog
@@ -427,13 +454,21 @@ impl Tracker {
             let clients = [&health.components.codex_cli, &health.components.codex_app];
             if clients
                 .iter()
-                .all(|component| component.state == State::Healthy)
+                .all(|component| matches!(component.state, State::Healthy | State::NotInstalled))
+                && clients
+                    .iter()
+                    .any(|component| component.state == State::Healthy)
             {
                 health.overall = Overall::Ready;
                 health.suggested_action = Action::None;
-            } else if clients
+            } else if clients.iter().all(|component| {
+                matches!(
+                    component.state,
+                    State::Healthy | State::RestartRequired | State::NotInstalled
+                )
+            }) && clients
                 .iter()
-                .all(|component| matches!(component.state, State::Healthy | State::RestartRequired))
+                .any(|component| component.state == State::RestartRequired)
             {
                 health.overall = Overall::RestartRequired;
                 health.suggested_action = Action::Details;
@@ -482,7 +517,13 @@ impl Tracker {
                 );
             }
         }
-        self.previous = Some((state, gateway, self.configuration.clone(), health.clone()));
+        self.previous = Some((
+            state,
+            gateway,
+            self.configuration.clone(),
+            self.clients.clone(),
+            health.clone(),
+        ));
         health
     }
 }
@@ -530,6 +571,78 @@ mod tests {
             tracker.snapshot(DisconnectState::Idle, changed).overall,
             Overall::Preflight
         );
+        // A confirmed absence does not block the other verified client. An
+        // inconclusive scan or an installed, unobserved client still does.
+        let observation = crate::client_presence::Observation {
+            cli: crate::client_presence::Presence::NotInstalled,
+            app: crate::client_presence::Presence::Installed,
+            observed_at: Some("2026-09-20T00:00:00.000Z".into()),
+        };
+        let mut only_app = source.clone();
+        only_app.clients.cli_catalog = None;
+        tracker.observe_clients(observation.clone());
+        let app_ready = tracker.snapshot(DisconnectState::Idle, only_app.clone());
+        assert_eq!(app_ready.overall, Overall::Ready);
+        assert_eq!(app_ready.components.codex_cli.state, State::NotInstalled);
+        assert_eq!(
+            tracker.snapshot(DisconnectState::Idle, only_app.clone()),
+            app_ready
+        );
+        for presence in [
+            crate::client_presence::Presence::Installed,
+            crate::client_presence::Presence::Unknown,
+        ] {
+            tracker.observe_clients(crate::client_presence::Observation {
+                cli: presence,
+                ..observation.clone()
+            });
+            let pending = tracker.snapshot(DisconnectState::Idle, only_app.clone());
+            assert_eq!(pending.overall, Overall::Preflight);
+            assert_eq!(pending.components.codex_cli.state, State::Unknown);
+            assert_eq!(pending.components.codex_cli.evidence, Evidence::LocalProbe);
+            assert!(pending.revision > app_ready.revision);
+        }
+        tracker.observe_clients(crate::client_presence::Observation {
+            cli: crate::client_presence::Presence::Installed,
+            app: crate::client_presence::Presence::NotInstalled,
+            ..observation.clone()
+        });
+        let mut only_cli = source.clone();
+        only_cli.clients.app_catalog = None;
+        assert_eq!(
+            tracker.snapshot(DisconnectState::Idle, only_cli).overall,
+            Overall::Ready
+        );
+        tracker.observe_clients(crate::client_presence::Observation {
+            app: crate::client_presence::Presence::NotInstalled,
+            ..observation
+        });
+        let mut neither = source.clone();
+        neither.clients.cli_catalog = None;
+        neither.clients.app_catalog = None;
+        assert_eq!(
+            tracker.snapshot(DisconnectState::Idle, neither).overall,
+            Overall::Preflight
+        );
+        // Both actual handshakes override installation absence; a corrupt
+        // handshake cannot be hidden by declaring that client absent.
+        assert_eq!(
+            tracker
+                .snapshot(DisconnectState::Idle, source.clone())
+                .overall,
+            Overall::Ready
+        );
+        let mut invalid = source.clone();
+        invalid.clients.cli_catalog.as_mut().unwrap().valid = false;
+        assert_eq!(
+            tracker
+                .snapshot(DisconnectState::Idle, invalid)
+                .components
+                .codex_cli
+                .state,
+            State::Degraded
+        );
+        tracker.observe_clients(Default::default());
         let mut changed = source.clone();
         changed.clients.cli_catalog.as_mut().unwrap().current = false;
         assert_eq!(

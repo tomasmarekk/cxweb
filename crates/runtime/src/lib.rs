@@ -8,6 +8,8 @@ mod catalog_snapshot;
 #[cfg(windows)]
 pub mod checkpoint;
 #[cfg(windows)]
+mod client_presence;
+#[cfg(windows)]
 mod compaction;
 #[cfg(windows)]
 mod compaction_probe;
