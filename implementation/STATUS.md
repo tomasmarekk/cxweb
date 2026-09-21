@@ -4423,3 +4423,10 @@ model discovery, native WebSocket preservation and actual pickers are proven.
 - Release run 35605062591 completed successfully and published v0.1.1 from 5c34e49aea2353e25c242a23e656ab63d02968ae. The release has exactly the expected installer and checksum assets.
 - Downloaded the published 15,343,603-byte installer and verified SHA-256: 70fedeaac1fcf91add9248fda67dafbd5362a4db7e30b081e46e83f514ada08a. Authenticode reports NotSigned, as disclosed in release notes.
 - Private download receipt: .local/github-release-v0.1.1/verification.json. This patch release has not replaced the user's running private runtime or cleared their session.
+
+### Published installer upgrade verified locally
+
+- Installed the actual downloaded v0.1.1 release using its silent update mode after the existing host reported idle/ready and prepare-uninstall --check passed.
+- All three installed executable hashes match the extracted CI installer payload. Installation exited with code 0.
+- Codex config.toml hash and the private daemon process IDs remained unchanged. Private IPC health remained ready. Reopened the installed desktop executable; no login or session deletion was performed.
+- Local verification receipt was updated under .local/github-release-v0.1.1/verification.json. The private host remains its existing version; replacing the desktop payload does not hot-swap running hosts.
