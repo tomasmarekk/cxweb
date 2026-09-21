@@ -1,0 +1,21 @@
+{
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "shortDescription": "ChatGPT web models for Codex App and CLI",
+    "resources": {
+      "../../../target/release/cxweb.exe": "cxweb.exe",
+      "../../../target/release/cxweb-daemon.exe": "cxweb-daemon.exe"
+    },
+    "windows": {
+      "allowDowngrades": false,
+      "webviewInstallMode": { "type": "embedBootstrapper", "silent": true },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["English"],
+        "displayLanguageSelector": false,
+        "installerHooks": "../../../packaging/windows/hooks.nsh"
+      }
+    }
+  }
+}

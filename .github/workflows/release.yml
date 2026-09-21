@@ -1,0 +1,121 @@
+name: Windows release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag matching the source version (for example v0.1.0)'
+        required: true
+        default: v0.1.0
+        type: string
+      prerelease:
+        description: Mark this release as a preview
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate source version
+        shell: pwsh
+        run: |
+          $version = (Get-Content apps/desktop/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          if ($env:RELEASE_TAG -cne "v$version") {
+            throw "Release tag must match the checked-out application version: v$version"
+          }
+      - name: Install pinned Rust
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-release
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo test --locked --workspace
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify desktop and browser behavior
+        shell: pwsh
+        run: |
+          $tests = Get-ChildItem apps/desktop/tests, crates/browser-adapter/tests, scripts -Filter '*.test.mjs' -File | ForEach-Object { $_.FullName }
+          node --test @tests
+          if ($LASTEXITCODE -ne 0) { throw 'JavaScript tests failed.' }
+      - name: Install pinned packaging tool
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $toolDirectory = Join-Path $env:RUNNER_TEMP 'tauri-cli'
+          New-Item -ItemType Directory -Path $toolDirectory | Out-Null
+          gh release download tauri-cli-v2.11.2 --repo tauri-apps/tauri --pattern cargo-tauri-x86_64-pc-windows-msvc.zip --dir $toolDirectory
+          if ($LASTEXITCODE -ne 0) { throw 'Packaging tool download failed.' }
+          $archive = Join-Path $toolDirectory 'cargo-tauri-x86_64-pc-windows-msvc.zip'
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'b6844470bcbf1da6e5dbf01990ae317d4d7969171628bb8badbdbff2e3d06d23') {
+            throw 'Packaging tool checksum mismatch.'
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $toolDirectory
+          $binary = Get-ChildItem -LiteralPath $toolDirectory -Filter cargo-tauri.exe -Recurse | Select-Object -First 1
+          if (-not $binary) { throw 'Packaging tool is missing.' }
+          $binary.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Build Windows installer
+        shell: pwsh
+        run: ./scripts/build-windows.ps1
+      - name: Verify installer hooks
+        shell: pwsh
+        run: ./scripts/test-windows-installer.ps1
+      - name: Upload installer and checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: cxweb-windows-${{ inputs.tag }}
+          path: |
+            target/release/bundle/nsis/*-setup.exe
+            target/release/bundle/nsis/*-setup.exe.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      PRERELEASE: ${{ inputs.prerelease }}
+      SOURCE_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: cxweb-windows-${{ inputs.tag }}
+          path: release-assets
+      - name: Publish release without replacing existing assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo 'This release already exists. Bump the source version and use a new tag.' >&2
+            exit 1
+          fi
+          existing_tag=$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG")
+          if [ -n "$existing_tag" ]; then
+            echo 'The tag already exists. Use a new version so release provenance is unambiguous.' >&2
+            exit 1
+          fi
+          args=(--target "$SOURCE_SHA" --title "cxweb $RELEASE_TAG" --notes-file packaging/windows/RELEASE-NOTES.md)
+          if [ "$PRERELEASE" = true ]; then args+=(--prerelease); fi
+          gh release create "$RELEASE_TAG" "${args[@]}" release-assets/*

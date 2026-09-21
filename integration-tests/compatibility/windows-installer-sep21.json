@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "platform": "Windows x64",
+  "source_parent": "6d97377",
+  "installer": "cxweb_0.1.0_x64-setup.exe",
+  "installer_bytes": 15316017,
+  "installer_sha256": "66cee527209dbf38d1aaede82f5af189b3bbfb631170fb817ca7ddbe1f2d54ac",
+  "authenticode": "NotSigned",
+  "local_installation_exit": 0,
+  "installed_payload_matches_extracted": true,
+  "desktop_shortcut_verified": true,
+  "windows_uninstall_registration_verified": true,
+  "read_only_installed_preflight_connections": 1,
+  "production_runtime_restarted": false,
+  "checks": {
+    "installed_control_tests": 2,
+    "formatting": "passed",
+    "nsis_hook_tests": 7,
+    "lifecycle_tests": 6,
+    "clippy": "passed",
+    "journal_tests": 20
+  },
+  "limitations": [
+    "Production connection was not uninstalled for testing; mutations were verified against isolated runtime fixtures.",
+    "Private runtime and session data are retained on removal.",
+    "Existing Chrome or Edge is required by this preview.",
+    "Signed publishing and automatic runtime updates are not configured."
+  ],
+  "desktop_bundle_marker": "Tauri replaces the three-byte bundle marker UNK with NSS in the packaged desktop executable."
+}

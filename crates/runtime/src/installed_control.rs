@@ -29,7 +29,12 @@ pub struct Snapshot {
     pub reasoning: Option<Vec<control_protocol::ReasoningFamily>>,
 }
 
+#[cfg(test)]
 fn inventory(root: &Path) -> Result<Inventory, &'static str> {
+    inventory_for(root, false)
+}
+
+fn inventory_for(root: &Path, uninstall: bool) -> Result<Inventory, &'static str> {
     let _guard = TargetPathGuard::capture(root, true).map_err(|_| "E_INSTALLED_STATE")?;
     let entries = std::fs::read_dir(root).map_err(|_| "E_INSTALLED_STATE")?;
     let mut result = Inventory {
@@ -55,7 +60,12 @@ fn inventory(root: &Path) -> Result<Inventory, &'static str> {
         if suffix.len() != 32 || !suffix.bytes().all(|b| b.is_ascii_hexdigit()) {
             continue;
         }
-        match ConfigJournal::control_target(&entry.path()) {
+        let target = if uninstall {
+            ConfigJournal::uninstall_target(&entry.path())
+        } else {
+            ConfigJournal::control_target(&entry.path())
+        };
+        match target {
             Ok(Some((installation, home))) => {
                 if !ids.insert(installation.clone()) {
                     return Err("E_INSTALLED_DUPLICATE");
@@ -79,15 +89,19 @@ fn inventory(root: &Path) -> Result<Inventory, &'static str> {
 }
 
 pub async fn list() -> Result<Inventory, &'static str> {
-    tokio::task::spawn_blocking(|| {
+    list_for(false).await
+}
+
+async fn list_for(uninstall: bool) -> Result<Inventory, &'static str> {
+    tokio::task::spawn_blocking(move || {
         let root = StatePaths::installations().map_err(|_| "E_INSTALLED_STATE")?;
-        let mut current = inventory(&root)?;
+        let mut current = inventory_for(&root, uninstall)?;
         // Keep older installed journals discoverable; never silently migrate a
         // live listener, capability or scheduler registration.
         let legacy = StatePaths::legacy_state().map_err(|_| "E_INSTALLED_STATE")?;
         match std::fs::symlink_metadata(&legacy) {
             Ok(_) => {
-                let legacy = inventory(&legacy)?;
+                let legacy = inventory_for(&legacy, uninstall)?;
                 current.targets.extend(legacy.targets);
                 current.diagnostics.extend(legacy.diagnostics);
             }
@@ -113,6 +127,66 @@ pub async fn list() -> Result<Inventory, &'static str> {
     })
     .await
     .map_err(|_| "E_INSTALLED_STATE")?
+}
+
+/// Restore owned configuration before the installer removes its payload.
+/// Private runtime/profile data is retained: existing native clients can still
+/// depend on its compatibility listener until they restart.
+pub async fn prepare_uninstall(check_only: bool) -> Result<usize, &'static str> {
+    let found = list_for(true).await?;
+    let count = prepare_uninstall_targets(found, check_only).await?;
+    if !check_only {
+        let remaining = list_for(true).await?;
+        if !remaining.diagnostics.is_empty() || !remaining.targets.is_empty() {
+            return Err("E_UNINSTALL_UNCONFIRMED");
+        }
+    }
+    Ok(count)
+}
+
+fn uninstall_idle(snapshot: &Snapshot) -> Result<(), &'static str> {
+    use cxweb_domain::health::Overall;
+    if snapshot.health.active_web_turns != 0
+        || matches!(
+            snapshot.health.overall,
+            Overall::Busy | Overall::Disconnecting
+        )
+    {
+        return Err("E_WEB_ACTIVE");
+    }
+    Ok(())
+}
+
+async fn prepare_uninstall_targets(
+    found: Inventory,
+    check_only: bool,
+) -> Result<usize, &'static str> {
+    if !found.diagnostics.is_empty() {
+        return Err("E_INSTALLED_JOURNAL");
+    }
+    // Preflight every host before changing any. The host checks idle state
+    // atomically again on mutation, so work arriving after this read is safe.
+    let mut ready = Vec::new();
+    for target in found.targets {
+        let snapshot = read(&target.installation).await?;
+        uninstall_idle(&snapshot)?;
+        ready.push((target.installation, snapshot.instance));
+    }
+    let count = ready.len();
+    if !check_only {
+        for (installation, instance) in ready {
+            mutate(&installation, instance, Action::Remove(false)).await?;
+            let snapshot = read(&installation).await?;
+            if !matches!(
+                snapshot.health.overall,
+                cxweb_domain::health::Overall::RemovalPendingRestart
+                    | cxweb_domain::health::Overall::DisconnectedComplete
+            ) {
+                return Err("E_UNINSTALL_UNCONFIRMED");
+            }
+        }
+    }
+    Ok(count)
 }
 
 async fn selected(installation: &str) -> Result<(), &'static str> {
@@ -377,6 +451,22 @@ async fn mutate(installation: &str, instance: String, action: Action) -> Result<
 mod tests {
     use super::*;
     use cxweb_platform::{loopback, state::protected_directory};
+    #[test]
+    fn uninstall_preflight_rejects_active_work() {
+        let mut snapshot = Snapshot {
+            instance: "a".repeat(32),
+            health: Health::default(),
+            reasoning: None,
+        };
+        snapshot.health.active_web_turns = 1;
+        assert_eq!(uninstall_idle(&snapshot), Err("E_WEB_ACTIVE"));
+        snapshot.health.active_web_turns = 0;
+        snapshot.health.overall = cxweb_domain::health::Overall::Busy;
+        assert_eq!(uninstall_idle(&snapshot), Err("E_WEB_ACTIVE"));
+        snapshot.health.overall = cxweb_domain::health::Overall::Ready;
+        assert!(uninstall_idle(&snapshot).is_ok());
+    }
+
     #[tokio::test]
     async fn attachment_reads_applied_journals_while_owned_without_exporting_config() {
         let root =
@@ -396,6 +486,7 @@ mod tests {
         journal.record_catalog(vec![], vec![]).unwrap();
         assert!(inventory(&root).unwrap().targets.is_empty());
         journal.apply().unwrap();
+        let applied_config = std::fs::read(&config).unwrap();
         let discovered = inventory(&root).unwrap();
         assert_eq!(discovered.targets.len(), 1);
         assert_eq!(
@@ -413,6 +504,24 @@ mod tests {
         let server = tokio::spawn(host.serve());
         let initial = read(&id).await.unwrap();
         assert_eq!(
+            prepare_uninstall_targets(inventory_for(&root, true).unwrap(), true).await,
+            Ok(1)
+        );
+        let mut unavailable = inventory_for(&root, true).unwrap();
+        unavailable.targets.push(Target {
+            installation: format!("{:032x}", rand::random::<u128>()),
+            home: root.clone(),
+        });
+        assert_eq!(
+            prepare_uninstall_targets(unavailable, false).await,
+            Err("E_INSTALLED_UNAVAILABLE")
+        );
+        assert!(
+            std::fs::read_to_string(&config)
+                .unwrap()
+                .contains("openai_base_url")
+        );
+        assert_eq!(
             mutate(&id, initial.instance.clone(), Action::RetryWeb).await,
             Err("E_INSTALLED_RECOVERY")
         );
@@ -426,7 +535,10 @@ mod tests {
                 .unwrap()
                 .contains("openai_base_url")
         );
-        remove(&id, initial.instance, false).await.unwrap();
+        assert_eq!(
+            prepare_uninstall_targets(inventory_for(&root, true).unwrap(), false).await,
+            Ok(1)
+        );
         assert_eq!(
             read(&id).await.unwrap().health.overall,
             cxweb_domain::health::Overall::RemovalPendingRestart
@@ -439,6 +551,22 @@ mod tests {
         let _ = server.await;
         assert_eq!(inventory(&root).unwrap().targets.len(), 1);
         assert!(read(&id).await.is_err());
+        assert!(inventory_for(&root, true).unwrap().targets.is_empty());
+        std::fs::write(
+            &config,
+            "# PRIVATE_CONFIG_SENTINEL\n# User edit after disconnect\n",
+        )
+        .unwrap();
+        assert!(inventory_for(&root, true).unwrap().targets.is_empty());
+        assert_eq!(
+            prepare_uninstall_targets(inventory_for(&root, true).unwrap(), false).await,
+            Ok(0)
+        );
+        // A restored journal must not hide routing reintroduced on disk.
+        let user_config = std::fs::read(&config).unwrap();
+        std::fs::write(&config, &applied_config).unwrap();
+        assert_eq!(inventory_for(&root, true).unwrap().targets.len(), 1);
+        std::fs::write(&config, user_config).unwrap();
         let duplicate = root.join(format!("prepared-{:032x}", rand::random::<u128>()));
         protected_directory(&duplicate).unwrap();
         std::fs::copy(

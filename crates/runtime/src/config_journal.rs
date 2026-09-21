@@ -147,6 +147,17 @@ impl ConfigJournal {
     /// This does not acquire the writer's lock, inspect auth files or authorize a
     /// config write. Original config and route capabilities never leave here.
     pub(crate) fn control_target(directory: &Path) -> io::Result<Option<(String, PathBuf)>> {
+        Self::attachment_target(directory, false)
+    }
+
+    pub(crate) fn uninstall_target(directory: &Path) -> io::Result<Option<(String, PathBuf)>> {
+        Self::attachment_target(directory, true)
+    }
+
+    fn attachment_target(
+        directory: &Path,
+        uninstall: bool,
+    ) -> io::Result<Option<(String, PathBuf)>> {
         let _guard = cxweb_platform::target_path::TargetPathGuard::capture(directory, true)?;
         protected_directory(directory)?;
         let snapshot = Snapshot::capture(&directory.join("integration.json"))?;
@@ -179,6 +190,27 @@ impl ConfigJournal {
         // reservations without a bound provider remain invisible.
         if record.phase == Phase::Prepared && record.web.is_none() && record.scheduler.is_none() {
             return Ok(None);
+        }
+        if uninstall && record.phase == Phase::ConfigRestored {
+            // A native-only compatibility host may already have exited. Prove
+            // that another key-level undo would make no changes before skipping
+            // it; a stale phase alone is not evidence that routing was removed.
+            let current = Snapshot::capture_native_config(&record.target)?;
+            let text = std::str::from_utf8(current.original()).map_err(|_| invalid())?;
+            let catalog = record.catalog.as_ref().ok_or_else(invalid)?;
+            if !catalog.valid() {
+                return Err(invalid());
+            }
+            let restored = restored_text(
+                &record,
+                text,
+                current.existed(),
+                &catalog.published,
+                &catalog.native,
+            )?;
+            if matches_result(&current, restored.as_deref()) {
+                return Ok(None);
+            }
         }
         Ok(Some((
             record.id,
