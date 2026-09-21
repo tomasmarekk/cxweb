@@ -77,6 +77,70 @@ impl AccessSnapshot {
     pub(crate) fn descriptor_differs(&self, other: &Self) -> bool {
         file_policy(&self.descriptor) != file_policy(&other.descriptor)
     }
+
+    /// Apply the already-reviewed destination DACL to the held replacement only.
+    /// ReplaceFile can merge staging grants into legacy inherited descriptors;
+    /// matching the destination policy before replacement prevents extra grants.
+    /// Caller checks the resulting descriptor before publishing the replacement.
+    pub(crate) fn prepare_replacement(&self, file: &File) -> io::Result<()> {
+        use windows_sys::Win32::Security::{
+            Authorization::{
+                ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+                SetSecurityInfo,
+            },
+            GetSecurityDescriptorControl, GetSecurityDescriptorDacl,
+            PROTECTED_DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED,
+            UNPROTECTED_DACL_SECURITY_INFORMATION,
+        };
+        let sddl: Vec<u16> = self.descriptor.encode_utf16().chain(Some(0)).collect();
+        let mut parsed = null_mut();
+        // SAFETY: descriptor text comes from a reviewed OS snapshot. The parsed
+        // allocation backs every pointer until SetSecurityInfo returns. The
+        // caller holds this test-verified replacement with WRITE_DAC access.
+        unsafe {
+            if ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl.as_ptr(),
+                SDDL_REVISION_1,
+                &mut parsed,
+                null_mut(),
+            ) == 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            let parsed = LocalAllocation(parsed);
+            let mut acl = null_mut();
+            let mut present = 0;
+            let mut defaulted = 0;
+            let mut control = 0;
+            let mut revision = 0;
+            if GetSecurityDescriptorDacl(parsed.0, &mut present, &mut acl, &mut defaulted) == 0
+                || GetSecurityDescriptorControl(parsed.0, &mut control, &mut revision) == 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            if present == 0 || acl.is_null() {
+                return Err(refused());
+            }
+            let protection = if control & SE_DACL_PROTECTED != 0 {
+                PROTECTED_DACL_SECURITY_INFORMATION
+            } else {
+                UNPROTECTED_DACL_SECURITY_INFORMATION
+            };
+            let status = SetSecurityInfo(
+                file.as_raw_handle(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | protection,
+                null_mut(),
+                null_mut(),
+                acl,
+                null_mut(),
+            );
+            if status != 0 {
+                return Err(io::Error::from_raw_os_error(status as i32));
+            }
+        }
+        Ok(())
+    }
     pub(crate) fn directory(path: &Path) -> io::Result<Self> {
         Self::directory_policy(path, false)
     }

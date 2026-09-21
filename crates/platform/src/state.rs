@@ -132,9 +132,8 @@ fn descriptor_with_owner(owner: Option<&str>, directory: bool) -> io::Result<Loc
         ));
     }
     let inheritance = if directory { "OICI" } else { "" };
-    let control = if directory { "P" } else { "PAI" };
     let sddl = wide(OsStr::new(&format!(
-        "O:{owner}D:{control}(A;{inheritance};FA;;;SY)(A;{inheritance};FA;;;{sid})"
+        "O:{owner}D:P(A;{inheritance};FA;;;SY)(A;{inheritance};FA;;;{sid})"
     )))?;
     let mut descriptor = null_mut();
     // SAFETY: terminated UTF-16 input and writable descriptor output. Returned

@@ -292,13 +292,16 @@ impl Snapshot {
         {
             return Err(io::Error::other("E_CONFIG_STAGE"));
         }
-        let mut file = open(staged)?;
+        let mut file = OpenOptions::new()
+            .access_mode(FILE_GENERIC_READ | windows_sys::Win32::Storage::FileSystem::WRITE_DAC)
+            .share_mode(FILE_SHARE_READ)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(staged)?;
         identity(&file)?;
         crate::config_access::AccessSnapshot::capture(&file, false)?;
         if read(&mut file)? != candidate {
             return Err(io::Error::other("E_CONFIG_STAGE_CHANGED"));
         }
-        drop(file); // ReplaceFile needs exclusive access to the replacement file.
         let guard = match (&self.identity, open(&self.path)) {
             (Some(expected), Ok(mut current)) => {
                 if &identity(&current)? != expected
@@ -315,7 +318,17 @@ impl Snapshot {
         };
         let destination = wide(&self.path)?;
         let source = wide(staged)?;
+        if let Some(before) = &self.access {
+            // Staging remains private until bytes, destination and parent are
+            // checked. At publication it receives exactly the destination's
+            // reviewed policy, including existing native sandbox readers.
+            before.prepare_replacement(&file)?;
+            if before.descriptor_differs(&file_access(&file, self.native_config)?) {
+                return Err(io::Error::other("E_CONFIG_STAGE_PERMISSIONS"));
+            }
+        }
         self.verify_parent(&ancestors)?;
+        drop(file); // ReplaceFile needs exclusive access to the replacement file.
         // SAFETY: live NUL-terminated paths. No ignore-ACL flags and no replace
         // flag for a previously absent file. Any API error requires recovery.
         let success = unsafe {
