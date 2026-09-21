@@ -255,7 +255,7 @@ function render(status) {
       : restoring
       ? 'The saved session is loading in the background. Check status again shortly.'
       : signInRequired ? 'Your saved session needs sign-in. Open the sign-in window to continue.'
-      : 'Complete sign-in in the browser window, including MFA or any other verification. You can close the window afterward.';
+      : 'Complete sign-in in the browser window, including MFA or any other verification. Close all cxweb Chrome windows, then select Check status.';
     $('chatgpt').textContent = restoring ? 'Connecting' : 'Waiting for sign-in';
     $('connect').textContent = signInRequired ? 'Open sign-in window' : 'Check status';
   } else if (phase === 'browser_unavailable') {

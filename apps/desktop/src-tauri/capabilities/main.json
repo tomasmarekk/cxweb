@@ -23,6 +23,7 @@
     "allow-installed-check",
     "allow-installed-disconnect",
     "allow-installed-retry-web",
+    "allow-installed-web-login",
     "allow-installed-qualify-reasoning"
   ]
 }

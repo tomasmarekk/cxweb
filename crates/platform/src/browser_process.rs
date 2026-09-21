@@ -1,4 +1,4 @@
-//! Chromium's private Windows pipe transport with an explicit handle allowlist.
+//! Owned Windows browser processes: private pipe transport or user-operated login.
 use std::{
     fs::File,
     io,
@@ -24,7 +24,7 @@ use windows_sys::Win32::{
             CREATE_NO_WINDOW, CREATE_SUSPENDED, CreateProcessW, DeleteProcThreadAttributeList,
             EXTENDED_STARTUPINFO_PRESENT, InitializeProcThreadAttributeList,
             LPPROC_THREAD_ATTRIBUTE_LIST, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION,
-            ResumeThread, STARTF_USESHOWWINDOW, STARTUPINFOEXW, TerminateProcess,
+            ResumeThread, STARTF_USESHOWWINDOW, STARTUPINFOEXW, STARTUPINFOW, TerminateProcess,
             UpdateProcThreadAttribute, WaitForSingleObject,
         },
     },
@@ -38,6 +38,19 @@ pub struct BrowserProcess {
     pid: u32,
     pub input: File,
     pub output: File,
+}
+
+/// User-operated authentication window. Deliberately exposes no browser transport.
+pub struct LoginBrowser(BrowserProcess);
+
+impl LoginBrowser {
+    pub fn launch(executable: &Path, profile: &Path) -> io::Result<Self> {
+        launch_mode(executable, profile, true, false, false, true).map(Self)
+    }
+
+    pub fn has_exited(&self) -> io::Result<bool> {
+        self.0.has_exited()
+    }
 }
 
 impl BrowserProcess {
@@ -161,11 +174,11 @@ impl Drop for Attributes {
 /// `profile` must be an application-owned, dedicated directory. This function
 /// never attaches to an existing browser or accepts arbitrary debugging flags.
 pub fn launch(executable: &Path, profile: &Path, visible: bool) -> io::Result<BrowserProcess> {
-    launch_mode(executable, profile, visible, !visible, false)
+    launch_mode(executable, profile, visible, !visible, false, false)
 }
 
 pub fn launch_offscreen(executable: &Path, profile: &Path) -> io::Result<BrowserProcess> {
-    launch_mode(executable, profile, false, false, true)
+    launch_mode(executable, profile, false, false, true, false)
 }
 
 fn launch_mode(
@@ -174,6 +187,7 @@ fn launch_mode(
     visible: bool,
     headless: bool,
     offscreen: bool,
+    manual_login: bool,
 ) -> io::Result<BrowserProcess> {
     let executable = browser_path(executable)?;
     let profile = browser_path(profile)?;
@@ -203,10 +217,14 @@ fn launch_mode(
     } else {
         ""
     };
-    let command = format!(
-        "\"{exe_string}\" --user-data-dir=\"{profile_string}\" --remote-debugging-pipe --remote-debugging-io-pipes={},{} --no-first-run --no-default-browser-check --no-startup-window --lang=en-US --accept-lang=en-US,en{mode}",
-        handles[0] as usize as u32, handles[1] as usize as u32
-    );
+    let command = if manual_login {
+        login_command(exe_string, profile_string)
+    } else {
+        format!(
+            "\"{exe_string}\" --user-data-dir=\"{profile_string}\" --remote-debugging-pipe --remote-debugging-io-pipes={},{} --no-first-run --no-default-browser-check --no-startup-window --lang=en-US --accept-lang=en-US,en{mode}",
+            handles[0] as usize as u32, handles[1] as usize as u32
+        )
+    };
     let mut command = wide(command.as_ref())?;
     let application = wide(executable.as_os_str())?;
     // SAFETY: Win32 structures are POD with documented zero defaults. Every OS
@@ -230,18 +248,32 @@ fn launch_mode(
             return Err(io::Error::last_os_error());
         }
         let mut startup: STARTUPINFOEXW = zeroed();
-        startup.StartupInfo.cb = size_of::<STARTUPINFOEXW>() as u32;
+        startup.StartupInfo.cb = if manual_login {
+            size_of::<STARTUPINFOW>()
+        } else {
+            size_of::<STARTUPINFOEXW>()
+        } as u32;
         startup.StartupInfo.dwFlags = STARTF_USESHOWWINDOW;
         startup.StartupInfo.wShowWindow = if visible { SW_SHOWNORMAL } else { SW_HIDE } as u16;
-        startup.lpAttributeList = attributes.ptr();
+        startup.lpAttributeList = if manual_login {
+            null_mut()
+        } else {
+            attributes.ptr()
+        };
         let mut info: PROCESS_INFORMATION = zeroed();
         if CreateProcessW(
             application.as_ptr(),
             command.as_mut_ptr(),
             null(),
             null(),
-            1,
-            EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_NO_WINDOW,
+            i32::from(!manual_login),
+            CREATE_SUSPENDED
+                | CREATE_NO_WINDOW
+                | if manual_login {
+                    0
+                } else {
+                    EXTENDED_STARTUPINFO_PRESENT
+                },
             null(),
             null(),
             &startup.StartupInfo,
@@ -270,6 +302,12 @@ fn launch_mode(
     }
 }
 
+fn login_command(executable: &str, profile: &str) -> String {
+    format!(
+        "\"{executable}\" --user-data-dir=\"{profile}\" --no-first-run --no-default-browser-check --disable-background-mode --lang=en-US --accept-lang=en-US,en --new-window https://chatgpt.com/"
+    )
+}
+
 // Rust canonicalization returns a verbatim Windows path. Keep canonical path
 // validation, but supply Chromium the ordinary spelling used by a manual launch.
 fn browser_path(path: &Path) -> io::Result<PathBuf> {
@@ -293,6 +331,30 @@ fn browser_path(path: &Path) -> io::Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn authentication_uses_ordinary_english_chrome_without_automation() {
+        let command = login_command(
+            r"C:\Program Files\Chrome\chrome.exe",
+            r"C:\cxweb data\profile",
+        );
+        assert!(command.starts_with(
+            r#""C:\Program Files\Chrome\chrome.exe" --user-data-dir="C:\cxweb data\profile" "#
+        ));
+        assert!(command.contains("--lang=en-US --accept-lang=en-US,en"));
+        assert!(command.contains("--disable-background-mode"));
+        assert!(command.ends_with("--new-window https://chatgpt.com/"));
+        for flag in [
+            "debugging",
+            "automation",
+            "headless",
+            "no-startup-window",
+            "user-agent",
+            "disable-blink",
+        ] {
+            assert!(!command.contains(flag), "unexpected login flag: {flag}");
+        }
+    }
 
     #[test]
     fn chromium_paths_keep_identity_without_verbatim_prefixes() {

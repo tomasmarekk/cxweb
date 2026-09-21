@@ -432,6 +432,7 @@ impl Control {
                 let mut instance_lock = Some(lock);
                 let mut generation: Option<Arc<GenerationSession>> = None;
                 let mut browser: Option<ManagedBrowser> = None;
+                let mut login: Option<cxweb_platform::browser_process::LoginBrowser> = None;
                 let mut page: Option<ManagedPage> = None;
                 let mut status = ControlStatus::default();
                 let mut observed_routes: Vec<(QualifiedModel, String)> = Vec::new();
@@ -576,6 +577,23 @@ impl Control {
                             }
                         }
                     }
+                    // User-operated authentication is never attached to a transport.
+                    // A status request can restore the saved session only after exit.
+                    let login_closed = match login.as_ref().map(|browser| browser.has_exited()) {
+                        Some(Ok(false)) => {
+                            let _ = reply.send(Ok(status.clone()));
+                            continue;
+                        }
+                        Some(Err(_)) => {
+                            let _ = reply.send(Err("E_BROWSER_RELEASE"));
+                            continue;
+                        }
+                        Some(Ok(true)) => {
+                            login = None;
+                            true
+                        }
+                        None => false,
+                    };
                     // Reconnect never replays a qualification request.
                     if connect && status.phase == "browser_unavailable" {
                         // A failed DOM/pipe observation cannot authorize killing
@@ -604,6 +622,7 @@ impl Control {
                         }
                     }
                     if connect
+                        && !login_closed
                         && (page.is_none()
                             || (status.phase == "authenticating"
                                 && page.as_ref().is_some_and(ManagedPage::is_hidden)))
@@ -619,32 +638,22 @@ impl Control {
                             browser = None;
                         }
                         let opened = (|| {
-                            if browser.is_none() {
-                                browser = Some(
-                                    ManagedBrowser::launch(&executable, &paths.profile, true)
-                                        .map_err(|_| "E_BROWSER_START")?,
-                                );
+                            if let Some(current) = browser.as_mut() {
+                                current
+                                    .close_for_replacement(None)
+                                    .map_err(|error| replacement_error(&error))?;
                             }
-                            let browser = browser.as_mut().ok_or("E_BROWSER_START")?;
-                            if let Some(current) = page.as_ref() {
-                                browser
-                                    .close_page_checked(current)
-                                    .map_err(|_| "E_BROWSER_RELEASE")?;
-                                page = None;
-                            }
-                            let version = browser.version().map_err(|_| "E_BROWSER_PIPE")?;
-                            status.browser_version = version["product"].as_str().map(str::to_owned);
-                            page = Some(browser.open_login().map_err(|error| {
-                                match error.to_string().as_str() {
-                                    "E_HIDDEN_TARGET" => "E_HIDDEN_TARGET",
-                                    "E_HIDDEN_ATTACH" => "E_HIDDEN_ATTACH",
-                                    "E_HIDDEN_VIEWPORT" => "E_HIDDEN_VIEWPORT",
-                                    _ => "E_BROWSER_LOGIN",
-                                }
-                            })?);
+                            browser = None;
+                            page = None;
+                            login = Some(
+                                cxweb_platform::browser_process::LoginBrowser::launch(
+                                    &executable,
+                                    &paths.profile,
+                                )
+                                .map_err(|_| "E_BROWSER_START")?,
+                            );
                             status = ControlStatus {
                                 phase: "authenticating".into(),
-                                browser_version: status.browser_version.take(),
                                 ..Default::default()
                             };
                             observed_routes.clear();
@@ -692,7 +701,8 @@ impl Control {
                             continue;
                         }
                     }
-                    let restore_background = (background && browser.is_none() && page.is_none())
+                    let restore_background = login_closed
+                        || (background && browser.is_none() && page.is_none())
                         || match (browser.as_mut(), page.as_ref()) {
                             (Some(browser), Some(current)) => {
                                 matches!(browser.has_exited(), Ok(true))

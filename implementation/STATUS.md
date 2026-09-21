@@ -17,11 +17,45 @@ instance displays the owned family and all five reasoning choices. Its full pick
 and native/web switching passed, as did a GUI text round trip. Both native backends
 pass web/native/web text generation in one process through the installed runtime.
 Scheduled browser recovery now passes after removing an MSIX data-path ambiguity.
-Current live state: user sign-in is confirmed, the managed login window is closed,
-and installed background recovery has verified the saved account and model in
-English. The complete installed CLI and App-backend read/patch/final scenarios
-now pass. A fixed message sent from the actual GUI also passed with the owned
-model and effort corroborated by the native turn context.
+Earlier installed CLI and App-backend read/patch/final scenarios and a fixed GUI
+message passed with the owned model and effort corroborated by native turn
+context. Current live state (2026-09-21): background recovery requires ChatGPT
+verification. The user reports a repeating Cloudflare challenge in the login
+window. Authentication and background reuse are not currently verified; the
+earlier successful observations do not establish current readiness.
+
+## Installed connection sign-in recovery (2026-09-21)
+
+- Added instance-bound WebLogin open/finish commands through private IPC, the
+  installed control API, diagnostic CLI and desktop. The desktop offers Open
+  ChatGPT sign-in only for web authentication/scope requirements; native Codex
+  auth errors, limits and busy/removal states cannot open it. Opening and finishing
+  are separate explicit actions; Check status remains passive.
+- The installed daemon retains the visible browser process and profile lock
+  independently of desktop lifetime. Repeated open calls reuse the same owner.
+  The user completes authentication/verification and closes the visible window;
+  Verify sign-in then releases the exited browser and uses the existing background
+  account/workspace/model revalidation. No credential entry, verification bypass,
+  generation, new account binding or native configuration write is performed.
+- Initial setup and installed re-login now launch ordinary English Chrome without
+  a debugging/automation transport. The dedicated profile stays unchanged; only
+  after the user closes all login windows can background validation attach.
+  The login launch disables background mode so closing the last window can release
+  the process. No identity spoofing, cookie export or challenge automation occurs.
+- Live login processes prevent profile release rather than being killed.
+  Disconnect also requires their safe release before restoring configuration.
+  Normal native forwarding remains available while the web login is pending.
+- The first actual desktop login click exposed missing Tauri command permissions;
+  the build manifest and main-window capability now include installed_web_login.
+  UI tests derive installed command names from the actual invoke calls, checking
+  the registered handler, generated permission and capability together. The
+  preceding CLI-driven managed login opened but encountered the user-reported
+  challenge loop; the ordinary-browser replacement has not yet been deployed.
+- Validation: 326 workspace tests passed with 22 opt-in tests ignored, plus all
+  72 desktop UI tests. Clippy with denied warnings, formatting and diff checks
+  passed. Tests cover non-auth/cancelled refusal, instance binding, open/finish
+  receipt separation, deduplication, ordinary-browser launch arguments and explicit
+  UI sequencing. Live sign-in recovery remains to be verified after deploying.
 
 ## Installed-client presence (2026-09-21)
 

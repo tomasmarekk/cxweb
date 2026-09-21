@@ -573,8 +573,7 @@ pub(crate) struct RecoveryController {
     login: Arc<Mutex<Option<InstalledLogin>>>,
 }
 struct InstalledLogin {
-    browser: ManagedBrowser,
-    page: Option<cxweb_browser_adapter::ManagedPage>,
+    browser: cxweb_platform::browser_process::LoginBrowser,
     _ownership: std::fs::File,
 }
 impl RecoveryController {
@@ -643,21 +642,14 @@ impl RecoveryController {
             let paths = StatePaths::open().map_err(|_| "E_STATE_PERMISSIONS")?;
             let ownership = paths.lock().map_err(|_| "E_ALREADY_RUNNING")?;
             let executable = installed_browser().map_err(|_| "E_BROWSER_RUNTIME_MISSING")?;
-            let browser = ManagedBrowser::launch(&executable, &paths.profile, true)
-                .map_err(|_| "E_BROWSER_START")?;
-            // Retain ownership even if opening the page has an uncertain outcome.
+            let browser =
+                cxweb_platform::browser_process::LoginBrowser::launch(&executable, &paths.profile)
+                    .map_err(|_| "E_BROWSER_START")?;
+            // Authentication belongs to the user; no browser transport is attached.
             *session = Some(InstalledLogin {
                 browser,
-                page: None,
                 _ownership: ownership,
             });
-            let session = session.as_mut().ok_or("E_WEB_RECOVERY_STATE")?;
-            session.page = Some(
-                session
-                    .browser
-                    .open_login()
-                    .map_err(|_| "E_BROWSER_RELEASE")?,
-            );
             Ok(())
         })
         .await
@@ -677,19 +669,9 @@ impl RecoveryController {
                     .has_exited()
                     .map_err(|_| "E_BROWSER_RELEASE")?
                 {
-                    if let Some(page) = session.page.as_ref()
-                        && session
-                            .browser
-                            .page_exists(page)
-                            .map_err(|_| "E_BROWSER_RELEASE")?
-                    {
-                        return Err("E_LOGIN_WINDOW_OPEN");
-                    }
-                    // Never close another user-opened tab to obtain the profile.
-                    session
-                        .browser
-                        .close_for_replacement(None)
-                        .map_err(|_| "E_BROWSER_RELEASE")?;
+                    // The user closes every login window before background reuse.
+                    // Never inspect authentication pages or force-close this process.
+                    return Err("E_LOGIN_WINDOW_OPEN");
                 }
                 *holder = None;
             }

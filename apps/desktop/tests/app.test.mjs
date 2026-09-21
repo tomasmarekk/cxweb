@@ -74,6 +74,7 @@ test('login starts only after explicit action and failed browser can reconnect',
   await flush();
   assert.deepEqual(ui.calls, ['status', 'connect']);
   assert.equal(ui.timers.size, 0);
+  assert.match(ui.nodes.get('description').textContent, /Close all cxweb Chrome windows, then select Check status/);
   phase = 'browser_unavailable';
   ui.nodes.get('connect').click();
   await flush();
@@ -320,7 +321,12 @@ test('all UI command names are registered and allowed only for the main local wi
   assert.equal(capability.remote, undefined);
   const rust = await readFile(new URL('../src-tauri/src/main.rs', import.meta.url), 'utf8');
   const build = await readFile(new URL('../src-tauri/build.rs', import.meta.url), 'utf8');
-  for (const command of ['activate_codex', 'connect', 'status', 'qualify', 'qualify_text', 'qualify_tools', 'background', 'native_discover', 'native_preflight', 'native_text', 'native_cancel', 'reset_test', 'installed_list', 'installed_check', 'installed_disconnect', 'installed_retry_web', 'installed_qualify_reasoning']) {
+  const installedSource = await readFile(new URL('../ui/installed.js', import.meta.url), 'utf8');
+  const commands = new Set([
+    'activate_codex', 'connect', 'status', 'qualify', 'qualify_text', 'qualify_tools', 'background', 'native_discover', 'native_preflight', 'native_text', 'native_cancel', 'reset_test',
+    ...[...installedSource.matchAll(/\binvoke\(\s*['"]([a-z_]+)['"]/g)].map(match => match[1]),
+  ]);
+  for (const command of commands) {
     assert.ok(capability.permissions.includes(`allow-${command.replaceAll('_', '-')}`));
     assert.ok(build.includes(`"${command}"`));
     assert.match(rust, new RegExp(`async fn ${command}\\(`));

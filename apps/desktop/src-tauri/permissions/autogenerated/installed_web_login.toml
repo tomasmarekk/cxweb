@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-installed-web-login"
+description = "Enables the installed_web_login command without any pre-configured scope."
+commands.allow = ["installed_web_login"]
+
+[[permission]]
+identifier = "deny-installed-web-login"
+description = "Denies the installed_web_login command without any pre-configured scope."
+commands.deny = ["installed_web_login"]
