@@ -1,5 +1,31 @@
 # cxweb implementation status
 
+## Public status streaming implementation (2026-09-21)
+
+The WebSocket path now carries public ChatGPT status while the response is still
+generating. A bounded channel leaves the existing request/drain owner in charge;
+the final response and all tool inputs remain fully buffered and validated.
+The coordinator checks turn attribution and account/workspace scope before each
+new public-status batch. Public status remains optional (`summary: none` suppresses
+it) and cannot originate in the model's JSON envelope. No hidden reasoning is read.
+
+The relay requires the completed event sequence to extend the exact emitted
+prefix, including IDs, text, timestamps and sequence numbers. It sends the suffix
+once, preserves native quota events, and cancels/drains on client disconnect.
+A later validation failure emits a terminal error, never a successful completion.
+HTTP delivery is still buffered. This change transports the observed public
+status; it does not establish detailed reasoning content or final-text streaming.
+
+Validation: adapter 43 unit tests passed; runtime 234 passed / 10 opt-in tests
+ignored; clippy for both packages/all targets passed; formatting and JavaScript
+syntax checks passed. New tests cover early socket delivery, exact completion
+suffixes, replay without a second generation, scope/attribution failures, revision
+failures, cancellation/drain, a closed receiver and `summary: none`.
+`probe-installed-client.mjs --reasoning-live` now measures summary arrival before
+the final message in native notifications. Authenticated verification of this
+new transport behavior is pending; earlier installed evidence below remains for
+the prior buffered-status build, not this source change.
+
 ## Latest installed verification (2026-09-21, 11:37 UTC)
 
 The user completed the requested ChatGPT verification. The saved English session

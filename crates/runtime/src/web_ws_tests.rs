@@ -43,6 +43,47 @@ impl WebProvider for Provider {
             if request.payload["instructions"] == "fixture-context-limit" {
                 return crate::context_budget::failure_response();
             }
+            if request.payload["instructions"]
+                .as_str()
+                .is_some_and(|value| value.starts_with("fixture-public-status"))
+            {
+                let summary = vec!["Thinking".to_string()];
+                let id = format!("resp_cxweb_fixture_{count}");
+                let prefix =
+                    wire::public_summary_prefix("webbridge/test", &id, 1, &summary).unwrap();
+                request
+                    .progress
+                    .as_ref()
+                    .unwrap()
+                    .send(prefix)
+                    .await
+                    .unwrap();
+                tokio::select! {
+                    _ = request.cancellation.cancelled() => {
+                        cancelled.notify_one();
+                        return crate::web_provider::web_failure("E_CANCELLED");
+                    }
+                    _ = release.notified() => (),
+                }
+                if request.payload["instructions"] == "fixture-public-status-failure" {
+                    return crate::web_provider::web_failure("E_TOOL_ENVELOPE_INVALID");
+                }
+                let summary = if request.payload["instructions"] == "fixture-public-status-revision"
+                {
+                    vec!["Revised public status".into()]
+                } else {
+                    summary
+                };
+                let output = wire::encode_with_summary(
+                    &ValidatedOutput::Final("fixed socket reply".into()),
+                    "webbridge/test",
+                    &id,
+                    1,
+                    &summary,
+                )
+                .unwrap();
+                return Response::new(Body::from(output.sse()));
+            }
             if waiting {
                 request.cancellation.cancelled().await;
                 cancelled.notify_one();
@@ -175,6 +216,125 @@ async fn terminal(socket: &mut WebSocketStream<MaybeTlsStream<tokio::net::TcpStr
     })
     .await
     .unwrap()
+}
+
+#[tokio::test]
+async fn public_status_streams_on_the_socket_before_completion_without_duplicates() {
+    let fixture = Fixture::start(false).await;
+    let mut socket = fixture.connect().await;
+    let mut request = frame("progress");
+    request["instructions"] = json!("fixture-public-status");
+    socket
+        .send(Message::Text(request.to_string().into()))
+        .await
+        .unwrap();
+    let expected = wire::public_summary_prefix(
+        "webbridge/test",
+        "resp_cxweb_fixture_0",
+        1,
+        &["Thinking".into()],
+    )
+    .unwrap();
+    let mut observed = Vec::new();
+    for event in &expected {
+        let message = tokio::time::timeout(Duration::from_secs(2), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let value: Value = serde_json::from_str(&message.into_text().unwrap()).unwrap();
+        assert_eq!(&value, event);
+        observed.push(value);
+    }
+    // Completion is held by the fixture: these events really crossed the socket early.
+    assert_eq!(fixture.gateway.health().active_turns, 1);
+    fixture.provider.release.notify_one();
+    loop {
+        let message = tokio::time::timeout(Duration::from_secs(2), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let value: Value = serde_json::from_str(&message.into_text().unwrap()).unwrap();
+        let done = value["type"] == "response.completed";
+        observed.push(value);
+        if done {
+            break;
+        }
+    }
+    let expected = wire::encode_with_summary(
+        &ValidatedOutput::Final("fixed socket reply".into()),
+        "webbridge/test",
+        "resp_cxweb_fixture_0",
+        1,
+        &["Thinking".into()],
+    )
+    .unwrap();
+    assert_eq!(observed, expected.events);
+    assert_eq!(fixture.provider.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn failed_or_revised_output_after_public_status_never_completes() {
+    for (mode, code) in [
+        ("failure", "E_TOOL_ENVELOPE_INVALID"),
+        ("revision", "E_STREAM_REVISION"),
+    ] {
+        let fixture = Fixture::start(false).await;
+        let mut socket = fixture.connect().await;
+        let mut request = frame("progress-failure");
+        request["instructions"] = json!(format!("fixture-public-status-{mode}"));
+        socket
+            .send(Message::Text(request.to_string().into()))
+            .await
+            .unwrap();
+        for _ in 0..7 {
+            let message = tokio::time::timeout(Duration::from_secs(2), socket.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            let event: Value = serde_json::from_str(&message.into_text().unwrap()).unwrap();
+            assert_ne!(event["type"], "response.completed");
+        }
+        fixture.provider.release.notify_one();
+        let failure = terminal(&mut socket).await;
+        assert_eq!(failure["type"], "error");
+        assert_eq!(failure["status"], 400);
+        assert_eq!(failure["error"]["code"], code);
+        assert_eq!(fixture.provider.calls.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[tokio::test]
+async fn closing_socket_after_public_status_cancels_and_drains_the_same_worker() {
+    let fixture = Fixture::start(false).await;
+    let mut socket = fixture.connect().await;
+    let mut request = frame("progress-close");
+    request["instructions"] = json!("fixture-public-status");
+    socket
+        .send(Message::Text(request.to_string().into()))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    socket.close(None).await.unwrap();
+    tokio::time::timeout(
+        Duration::from_secs(2),
+        fixture.provider.cancelled.notified(),
+    )
+    .await
+    .unwrap();
+    fixture
+        .gateway
+        .disconnect_web(Duration::from_secs(2))
+        .await
+        .unwrap();
+    assert_eq!(fixture.gateway.health().active_turns, 0);
+    assert_eq!(fixture.provider.calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]

@@ -306,7 +306,9 @@ async fn serve_owned(
             return false;
         }
     };
-    let delivery = web.deliver(prepared);
+    let (progress_sender, mut progress_receiver) = tokio::sync::mpsc::channel(64);
+    let delivery = web.deliver_with_progress(prepared, Some(progress_sender));
+    let mut published = Vec::new();
     tokio::pin!(delivery);
     // Native clients discard WebSocket ping/pong before their stream-idle
     // watchdog. An ignored, namespaced text event keeps buffered transport
@@ -316,6 +318,12 @@ async fn serve_owned(
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
+            Some(events) = progress_receiver.recv() => {
+                for event in events {
+                    if local.send(LocalMessage::Text(event.to_string().into())).await.is_err() { return false; }
+                    published.push(event);
+                }
+            }
             _ = heartbeat.tick() => {
                 if local.send(LocalMessage::Text(r#"{"type":"cxweb.keepalive","buffered":true}"#.into())).await.is_err() {
                     return false;
@@ -324,7 +332,14 @@ async fn serve_owned(
             result = &mut delivery => {
                 match result {
                     Ok(delivery) => {
-                        for event in &delivery.events {
+                        // The final response must extend exactly what was already
+                        // delivered, with identical IDs, text and sequence numbers.
+                        // Queued but unsent status is supplied by this same suffix.
+                        if !delivery.events.starts_with(&published) {
+                            let _ = local.send(LocalMessage::Text(crate::web_ws::error(400, "E_STREAM_REVISION").to_string().into())).await;
+                            return false;
+                        }
+                        for event in &delivery.events[published.len()..] {
                             if local.send(LocalMessage::Text(event.to_string().into())).await.is_err() { return false; }
                         }
                         web.complete(delivery);

@@ -59,6 +59,7 @@ fn request(
         compact: false,
         cancellation: cancel.clone(),
         transport: WebTransport::Http,
+        progress: None,
     })
 }
 async fn execute(

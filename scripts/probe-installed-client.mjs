@@ -10,6 +10,7 @@
 // --namespaces invokes two same-named dynamic tools in separate namespaces.
 // --batch requires one response containing both calls, with native serial dispatch.
 // --concurrent overlaps two tasks in one native process and checks result isolation.
+// --reasoning-live also requires public summary delivery before the final message.
 // No auth files, routing overrides, model catalogs or client binaries are changed.
 import { spawn, execFileSync } from 'node:child_process';
 import { readFile, readdir, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
@@ -28,7 +29,7 @@ import { NamespaceFixture, definitions as namespaceTools, namespaces, argument a
 const [client, home, model, option] = process.argv.slice(2);
 const codingCase = option?.startsWith('--coding=') ? codingCases.find(fixture => fixture.id === option.slice(9)) : undefined;
 assert.ok(client && home && model?.startsWith('webbridge/') && isAbsolute(client) && isAbsolute(home));
-assert.ok(process.argv.length <= 6 && (!option || codingCase || ['--text', '--unicode', '--coexistence', '--tools', '--reasoning', '--reasoning-trace', '--denial', '--repair', '--namespaces', '--batch', '--concurrent', '--web-tools', '--web-tools-deferred'].includes(option)));
+assert.ok(process.argv.length <= 6 && (!option || codingCase || ['--text', '--unicode', '--coexistence', '--tools', '--reasoning', '--reasoning-trace', '--reasoning-live', '--denial', '--repair', '--namespaces', '--batch', '--concurrent', '--web-tools', '--web-tools-deferred'].includes(option)));
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const builds = new Map([
   ['eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316', '0.155.1'],
@@ -49,6 +50,7 @@ const deferred = option === '--web-tools-deferred';
 const child = spawn(client, ['app-server', ...(deferred ? ['-c', 'features.tool_search=true', '-c', 'features.tool_search_always_defer_mcp_tools=true'] : [])], { cwd, env: { ...process.env, CODEX_HOME: home }, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
 const pending = new Map();
 const events = [];
+const receivedAt = new WeakMap();
 let failure, bytes = 0, id = 0;
 let toolRun;
 let namespaceRun;
@@ -153,6 +155,7 @@ lines.on('line', line => {
       if (!turn || (toolRun.turn && toolRun.turn !== turn)) failure = 'E_TURN_IDENTITY';
       else toolRun.turn = turn;
     }
+    receivedAt.set(message, performance.now());
     events.push(message);
   }
 });
@@ -271,8 +274,16 @@ async function verifyPublicReasoning() {
   assert.equal(answer.length,1,'E_ANSWER_COUNT');
   assert.equal(answer[0].text,expected.toString(),'E_ARITHMETIC_ANSWER');
   const chars = items.filter(item => item.type === 'reasoning').reduce((n,item) => n+(item.summary ?? []).join('').length,0);
-  evidence.publicReasoning = { correctAnswer:true, summaryCharacters:chars, buffered:true };
+  const scoped = events.filter(event => event.params?.threadId === started.thread.id && event.params?.turnId === turn);
+  const firstSummary = scoped.find(event => event.method === 'item/reasoning/summaryTextDelta' && typeof event.params?.delta === 'string' && event.params.delta.length > 0);
+  const firstAnswer = scoped.find(event => event.method === 'item/agentMessage/delta'
+    || (event.method === 'item/started' && event.params?.item?.type === 'agentMessage'));
+  const summaryLeadMs = firstSummary && firstAnswer ? Math.round(receivedAt.get(firstAnswer) - receivedAt.get(firstSummary)) : null;
+  evidence.publicReasoning = { correctAnswer:true, summaryCharacters:chars, summaryLeadMs,
+    timingMeasuredAt:'native app-server notifications', liveDeliveryRequired:option === '--reasoning-live',
+    summaryBeforeAnswer:summaryLeadMs !== null && summaryLeadMs >= 250 };
   assert.ok(chars > 0,'E_PUBLIC_REASONING_NOT_OBSERVED');
+  if (option === '--reasoning-live') assert.ok(evidence.publicReasoning.summaryBeforeAnswer, 'E_PUBLIC_REASONING_BUFFERED');
 }
 
 async function verifyNamespaces(selectedModel) {
@@ -507,7 +518,7 @@ try {
   evidence.reasoningChoices = selectedModel.supportedReasoningEfforts;
   assert.ok(models.some(row => !row.id.startsWith('webbridge/')), 'E_NATIVE_MODELS_MISSING');
   evidence.ownedAndNativeCatalog = true;
-  if (option === '--reasoning-trace') {
+  if (['--reasoning-trace', '--reasoning-live'].includes(option)) {
     await verifyPublicReasoning();
   } else if (['--web-tools', '--web-tools-deferred'].includes(option)) {
     await verifyWebTools();

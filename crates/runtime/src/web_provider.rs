@@ -330,7 +330,7 @@ impl CoordinatorProvider {
         let request_id = digest(&[&scope, identity.turn.as_bytes(), &bytes]);
         let delivery = self
             .coordinator
-            .execute_with_checkpoint(
+            .execute_with_progress(
                 TurnInput {
                     request_id,
                     session,
@@ -338,6 +338,7 @@ impl CoordinatorProvider {
                 },
                 request.cancellation,
                 checkpoint,
+                request.progress,
             )
             .await?;
         #[cfg(windows)]
@@ -636,6 +637,7 @@ mod tests {
                 compact: false,
                 cancellation: tokio_util::sync::CancellationToken::new(),
                 transport: WebTransport::Http,
+                progress: None,
             }
         };
         let pending = json!({"type":"custom_tool_call","name":"apply_patch","call_id":"pending","input":"literal\n🦀"});

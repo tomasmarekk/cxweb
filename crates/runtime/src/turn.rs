@@ -17,6 +17,8 @@ use std::{
 use tokio_util::sync::CancellationToken;
 
 pub type BrowserFuture<T> = Pin<Box<dyn Future<Output = Result<T, &'static str>> + Send>>;
+/// Bounded transport channel; only verified public status events use this path.
+pub type PublicProgress = tokio::sync::mpsc::Sender<Vec<serde_json::Value>>;
 pub struct Prepared {
     pub handle: String,
     pub verified_session: SessionKey,
@@ -37,7 +39,7 @@ pub trait BrowserDriver: Send + Sync {
     }
     fn submit(&self, handle: String, prompt: String, selected_model: String) -> BrowserFuture<()>;
     fn observe(&self, handle: String) -> BrowserFuture<Observation>;
-    /// Recheck the account/workspace before any buffered output is delivered.
+    /// Recheck the account/workspace before public status or final output delivery.
     fn verify_completion(&self, handle: String) -> BrowserFuture<()>;
     fn stop(&self, handle: String) -> BrowserFuture<bool>;
     fn release(&self, handle: String) -> BrowserFuture<()>;
@@ -131,12 +133,23 @@ impl Coordinator {
         cancellation: CancellationToken,
         checkpoint: Option<Arc<dyn CheckpointEncoder>>,
     ) -> Result<Delivery, &'static str> {
+        self.execute_with_progress(input, cancellation, checkpoint, None)
+            .await
+    }
+
+    pub(crate) async fn execute_with_progress(
+        &self,
+        input: TurnInput,
+        cancellation: CancellationToken,
+        checkpoint: Option<Arc<dyn CheckpointEncoder>>,
+        progress: Option<PublicProgress>,
+    ) -> Result<Delivery, &'static str> {
         let cancel = cancellation.child_token();
         // Dropping the HTTP future signals the background coordinator, which
         // still owns its browser lease and can durably record cancellation.
         let _cancel_on_drop = cancel.clone().drop_guard();
         let coordinator = self.clone();
-        tokio::spawn(async move { coordinator.run(input, cancel, checkpoint).await })
+        tokio::spawn(async move { coordinator.run(input, cancel, checkpoint, progress).await })
             .await
             .map_err(|_| "E_TURN_WORKER")?
     }
@@ -145,6 +158,7 @@ impl Coordinator {
         input: TurnInput,
         cancel: CancellationToken,
         checkpoint: Option<Arc<dyn CheckpointEncoder>>,
+        progress: Option<PublicProgress>,
     ) -> Result<Delivery, &'static str> {
         let request = if checkpoint.is_some() {
             CanonicalRequest::decode_compaction(&input.bytes)?
@@ -210,6 +224,7 @@ impl Coordinator {
                 &prepared,
                 &cancel,
                 checkpoint.as_deref(),
+                progress,
             )
             .await;
         // Release occurs on success, validation failure, cancellation and uncertainty.
@@ -223,6 +238,7 @@ impl Coordinator {
         }
         result
     }
+    #[allow(clippy::too_many_arguments)]
     async fn run_prepared(
         &self,
         id: &str,
@@ -231,6 +247,7 @@ impl Coordinator {
         prepared: &Prepared,
         cancel: &CancellationToken,
         checkpoint: Option<&dyn CheckpointEncoder>,
+        progress_sender: Option<PublicProgress>,
     ) -> Result<Delivery, &'static str> {
         let BrowserRequest {
             request,
@@ -291,6 +308,12 @@ impl Coordinator {
         let mut progress_at = tokio::time::Instant::now();
         let mut previous_text_hash = String::new();
         let mut summary = Vec::new();
+        let response_id = format!("resp_cxweb_{:x}", Sha256::digest(id.as_bytes()));
+        let created_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| "E_CLOCK")?
+            .as_secs();
+        let mut published_events = 0;
         let mut state = TurnState::Submitting;
         loop {
             if cancel.is_cancelled() {
@@ -348,6 +371,7 @@ impl Coordinator {
                     return Err(error);
                 }
             };
+            let previous_summary_len = summary.len();
             if matches!(
                 tracker.state(),
                 TurnState::Generating | TurnState::Completed
@@ -374,6 +398,46 @@ impl Coordinator {
             {
                 self.ledger.transition(id, TurnState::Generating).await?;
                 state = TurnState::Generating;
+            }
+            if tracker.state() == TurnState::Generating
+                && request.public_summary
+                && checkpoint.is_none()
+                && summary.len() > previous_summary_len
+                && let Some(sender) = &progress_sender
+            {
+                let verified = tokio::select! {
+                    _ = cancel.cancelled() => Err("E_CANCELLED"),
+                    result = tokio::time::timeout(Duration::from_secs(60), self.browser.verify_completion(prepared.handle.clone())) =>
+                        result.unwrap_or(Err("E_SESSION_SCOPE")),
+                };
+                let publication = verified.and_then(|()| {
+                    let events = wire::public_summary_prefix(
+                        &request.model,
+                        &response_id,
+                        created_at,
+                        &summary,
+                    )?;
+                    let count = events.len();
+                    sender
+                        .try_send(events.into_iter().skip(published_events).collect())
+                        .map_err(|_| "E_PUBLIC_PROGRESS_DELIVERY")?;
+                    published_events = count;
+                    Ok(())
+                });
+                if let Err(code) = publication {
+                    self.ledger
+                        .transition(
+                            id,
+                            if code == "E_CANCELLED" {
+                                TurnState::Cancelled
+                            } else {
+                                TurnState::Failed
+                            },
+                        )
+                        .await?;
+                    self.stop(&prepared.handle).await;
+                    return Err(code);
+                }
             }
             if let Progress::Completed(text) = progress {
                 let verified = tokio::select! {
@@ -406,11 +470,6 @@ impl Coordinator {
                     self.ledger.transition(id, TurnState::Failed).await?;
                     return Err(code);
                 }
-                let response_id = format!("resp_cxweb_{:x}", Sha256::digest(id.as_bytes()));
-                let created_at = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map_err(|_| "E_CLOCK")?
-                    .as_secs();
                 let encoded = match (&output, checkpoint, request.compaction_pending()) {
                     (
                         envelope::ValidatedOutput::Checkpoint(summary),
@@ -477,7 +536,7 @@ impl Coordinator {
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use tokio::sync::Notify;
 
     #[derive(Clone, Copy)]
@@ -504,6 +563,8 @@ mod tests {
         observing: Notify,
         released: Notify,
         release_gate: Option<Arc<Notify>>,
+        hold_generation: AtomicBool,
+        public_summary: Mutex<Vec<String>>,
     }
     impl MockBrowser {
         fn new(mode: Mode) -> Arc<Self> {
@@ -517,6 +578,8 @@ mod tests {
                 observing: Notify::new(),
                 released: Notify::new(),
                 release_gate: None,
+                hold_generation: AtomicBool::new(false),
+                public_summary: Mutex::new(Vec::new()),
             })
         }
     }
@@ -595,7 +658,9 @@ mod tests {
                 Mode::Invalid => "```json\n{}\n```".into(),
                 _ => json!({"protocol":"webbridge.tool.v1","turn_nonce":nonce,"kind":"final","text":"verified mock answer"}).to_string(),
             };
-            let generating = matches!(self.mode, Mode::Waiting);
+            let generating =
+                matches!(self.mode, Mode::Waiting) || self.hold_generation.load(Ordering::SeqCst);
+            let summary = self.public_summary.lock().unwrap().clone();
             let assistant = if matches!(self.mode, Mode::WrongAssistant) {
                 "old"
             } else {
@@ -607,7 +672,7 @@ mod tests {
                     user_matches: true,
                     assistant_id: Some(assistant.into()),
                     text,
-                    summary: vec![],
+                    summary,
                     generating,
                     completion_control: !generating,
                     fenced_output: false,
@@ -634,6 +699,143 @@ mod tests {
     }
     fn input() -> TurnInput {
         TurnInput { request_id:"request-1".into(), session:SessionKey { installation:"i".into(),native_session:"s".into(),account_scope:"a".into(),workspace_scope:"w".into(),route:"webbridge/test".into(),epoch:0 }, bytes:json!({"model":"webbridge/test","input":"synthetic task","tools":[{"type":"function","name":"read_file","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}}]}).to_string().into_bytes() }
+    }
+
+    #[tokio::test]
+    async fn public_status_arrives_before_completion_without_early_tools_and_replays_once() {
+        let browser = MockBrowser::new(Mode::Tool);
+        browser.hold_generation.store(true, Ordering::SeqCst);
+        *browser.public_summary.lock().unwrap() = vec!["Thinking".into()];
+        let coordinator = Coordinator::new(Ledger::in_memory(), browser.clone());
+        let worker = coordinator.clone();
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(64);
+        let task = tokio::spawn(async move {
+            worker
+                .execute_with_progress(input(), CancellationToken::new(), None, Some(sender))
+                .await
+        });
+        let mut prefix = tokio::time::timeout(Duration::from_secs(2), receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!task.is_finished());
+        assert_eq!(prefix.len(), 7);
+        *browser.public_summary.lock().unwrap() = vec!["Checking cases".into()];
+        prefix.extend(
+            tokio::time::timeout(Duration::from_secs(2), receiver.recv())
+                .await
+                .unwrap()
+                .unwrap(),
+        );
+        assert!(!task.is_finished());
+        assert_eq!(prefix.len(), 11);
+        assert!(
+            !serde_json::to_string(&prefix)
+                .unwrap()
+                .contains("function_call")
+        );
+        browser.hold_generation.store(false, Ordering::SeqCst);
+        let delivery = task.await.unwrap().unwrap();
+        let events: Vec<serde_json::Value> = delivery
+            .sse
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .map(|data| serde_json::from_str(data).unwrap())
+            .collect();
+        assert!(events.starts_with(&prefix));
+        assert_eq!(events.last().unwrap()["type"], "response.completed");
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(64);
+        let replay = coordinator
+            .execute_with_progress(input(), CancellationToken::new(), None, Some(sender))
+            .await
+            .unwrap();
+        assert_eq!(replay.sse, delivery.sse);
+        assert!(receiver.recv().await.is_none());
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn public_status_requires_scope_and_attribution_and_a_live_receiver() {
+        for (mode, closed, expected) in [
+            (Mode::ChangedScope, false, "E_SESSION_SCOPE"),
+            (Mode::WrongAssistant, false, "E_TURN_ATTRIBUTION"),
+            (Mode::Final, true, "E_PUBLIC_PROGRESS_DELIVERY"),
+        ] {
+            let browser = MockBrowser::new(mode);
+            browser.hold_generation.store(true, Ordering::SeqCst);
+            *browser.public_summary.lock().unwrap() = vec!["Thinking".into()];
+            let ledger = Ledger::in_memory();
+            let coordinator = Coordinator::new(ledger.clone(), browser.clone());
+            let (sender, mut receiver) = tokio::sync::mpsc::channel(64);
+            if closed {
+                receiver.close();
+            }
+            let result = coordinator
+                .execute_with_progress(input(), CancellationToken::new(), None, Some(sender))
+                .await;
+            assert_eq!(result.err(), Some(expected));
+            assert!(receiver.recv().await.is_none());
+            assert_eq!(browser.stops.load(Ordering::SeqCst), 1);
+            assert_eq!(browser.releases.load(Ordering::SeqCst), 1);
+            assert_eq!(
+                coordinator
+                    .execute(input(), CancellationToken::new())
+                    .await
+                    .err(),
+                Some("E_REQUEST_ALREADY_ADMITTED")
+            );
+            assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelling_after_public_status_stops_once_without_completion() {
+        let browser = MockBrowser::new(Mode::Waiting);
+        *browser.public_summary.lock().unwrap() = vec!["Thinking".into()];
+        let coordinator = Coordinator::new(Ledger::in_memory(), browser.clone());
+        let cancel = CancellationToken::new();
+        let token = cancel.clone();
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(64);
+        let task = tokio::spawn(async move {
+            coordinator
+                .execute_with_progress(input(), token, None, Some(sender))
+                .await
+        });
+        let prefix = tokio::time::timeout(Duration::from_secs(2), receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(prefix.len(), 7);
+        cancel.cancel();
+        assert_eq!(task.await.unwrap().err(), Some("E_CANCELLED"));
+        assert!(receiver.recv().await.is_none());
+        assert_eq!(browser.stops.load(Ordering::SeqCst), 1);
+        assert_eq!(browser.releases.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn summary_none_suppresses_public_status_during_generation() {
+        let browser = MockBrowser::new(Mode::Waiting);
+        *browser.public_summary.lock().unwrap() = vec!["Thinking".into()];
+        let coordinator = Coordinator::new(Ledger::in_memory(), browser.clone());
+        let cancel = CancellationToken::new();
+        let token = cancel.clone();
+        let mut request = input();
+        let mut payload: serde_json::Value = serde_json::from_slice(&request.bytes).unwrap();
+        payload["reasoning"] = json!({"summary":"none"});
+        request.bytes = serde_json::to_vec(&payload).unwrap();
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(64);
+        let task = tokio::spawn(async move {
+            coordinator
+                .execute_with_progress(request, token, None, Some(sender))
+                .await
+        });
+        browser.observing.notified().await;
+        // A second observation proves the first status was handled, not merely queued.
+        browser.observing.notified().await;
+        cancel.cancel();
+        assert_eq!(task.await.unwrap().err(), Some("E_CANCELLED"));
+        assert!(receiver.recv().await.is_none());
     }
 
     #[tokio::test]

@@ -153,21 +153,31 @@ impl Connection {
     }
 
     // Own all inputs so the relay can keep polling Close/Ping while this runs.
+    #[cfg(test)]
     pub fn deliver(
         &self,
         prepared: Prepared,
+    ) -> impl Future<Output = Result<Delivery, Value>> + Send + 'static {
+        self.deliver_with_progress(prepared, None)
+    }
+
+    pub fn deliver_with_progress(
+        &self,
+        prepared: Prepared,
+        progress: Option<crate::turn::PublicProgress>,
     ) -> impl Future<Output = Result<Delivery, Value>> + Send + 'static {
         let gateway = self.gateway.clone();
         let client = self.client;
         async move {
             let response = gateway
-                .dispatch_web(
+                .dispatch_web_with_progress(
                     prepared.payload.clone(),
                     Some(prepared.identity.clone()),
                     false,
                     prepared.warmup,
                     crate::gateway::WebTransport::WebSocket,
                     client,
+                    progress,
                 )
                 .await;
             let status = response.status();

@@ -29,6 +29,7 @@ pub struct WebRequest {
     pub compact: bool,
     pub cancellation: CancellationToken,
     pub transport: WebTransport,
+    pub progress: Option<crate::turn::PublicProgress>,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum WebTransport {
@@ -94,8 +95,8 @@ pub trait WebProvider: Send + Sync {
     }
 
     /// Keep this future alive until generation and cancellation cleanup finish.
-    /// Return buffered output; returning an independently generating stream is
-    /// not supported by the current coordinator or disconnect drain contract.
+    /// Final/tool output remains buffered. The optional progress channel can
+    /// publish verified public status while this future retains its drain lease.
     fn respond(&self, request: WebRequest) -> WebFuture;
     /// Validate a no-generation WebSocket warmup without touching the browser.
     fn validate_warmup(&self, _request: &WebRequest) -> Result<(), &'static str> {
@@ -314,6 +315,21 @@ impl Gateway {
         transport: WebTransport,
         client: Option<CatalogCodec>,
     ) -> Response {
+        self.dispatch_web_with_progress(payload, identity, compact, warmup, transport, client, None)
+            .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn dispatch_web_with_progress(
+        &self,
+        payload: Value,
+        identity: Option<crate::web_provider::WebIdentity>,
+        compact: bool,
+        warmup: bool,
+        transport: WebTransport,
+        client: Option<CatalogCodec>,
+        progress: Option<crate::turn::PublicProgress>,
+    ) -> Response {
         let Some(lease) = self.admission.acquire(!warmup) else {
             return crate::web_provider::web_failure("E_WEB_DISCONNECTED");
         };
@@ -332,6 +348,7 @@ impl Gateway {
                 compact,
                 cancellation: cancellation.clone(),
                 transport,
+                progress,
             };
             if warmup {
                 return match web.validate_warmup(&request) {

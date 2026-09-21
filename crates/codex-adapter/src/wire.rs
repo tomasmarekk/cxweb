@@ -1,10 +1,35 @@
-//! Buffered complete-output encoding. Emitted chunks are not live browser streaming.
+//! Complete-output encoding and an optional public-status event prefix.
 use crate::envelope::{ValidatedOutput, native_call};
 use serde_json::{Value, json};
 
 pub struct CompletedResponse {
     pub response: Value,
     pub events: Vec<Value>,
+}
+
+/// Return only the nonterminal public-status prefix of the same wire response
+/// used at completion. No message text, tool input or successful outcome escapes.
+/// The caller must validate attribution and session scope before publishing it.
+pub fn public_summary_prefix(
+    model: &str,
+    response_id: &str,
+    created_at: u64,
+    summary: &[String],
+) -> Result<Vec<Value>, &'static str> {
+    if summary.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut encoded = encode_with_summary(
+        &ValidatedOutput::Final(String::new()),
+        model,
+        response_id,
+        created_at,
+        summary,
+    )?;
+    // created, in_progress, reasoning item added; four events per public status.
+    // Keep the reasoning item open until the final validated response arrives.
+    encoded.events.truncate(3 + 4 * summary.len());
+    Ok(encoded.events)
 }
 
 pub fn encode(
@@ -174,6 +199,37 @@ impl CompletedResponse {
 mod tests {
     use super::*;
     use crate::envelope::{ToolKind, ValidatedCall};
+    #[test]
+    fn live_public_status_is_an_exact_nonterminal_prefix_of_validated_tool_output() {
+        let summaries = vec!["Thinking".into(), "Checking 🦀 cases".into()];
+        let first =
+            public_summary_prefix("webbridge/test", "resp_1", 123, &summaries[..1]).unwrap();
+        let second = public_summary_prefix("webbridge/test", "resp_1", 123, &summaries).unwrap();
+        assert!(second.starts_with(&first));
+        assert!(
+            second
+                .iter()
+                .all(|event| event["type"] != "response.completed"
+                    && event["type"] != "response.output_item.done"
+                    && !event.to_string().contains("function_call"))
+        );
+        let complete = encode_with_summary(
+            &ValidatedOutput::Calls(vec![ValidatedCall {
+                native_name: "read_file".into(),
+                namespace: None,
+                kind: ToolKind::Function,
+                input: json!({"path":"source.rs"}),
+            }]),
+            "webbridge/test",
+            "resp_1",
+            123,
+            &summaries,
+        )
+        .unwrap();
+        assert!(complete.events.starts_with(&second));
+        assert!(public_summary_prefix("m", "r", 1, &[]).unwrap().is_empty());
+        assert!(public_summary_prefix("m", "r", 1, &["x".repeat(8193)]).is_err());
+    }
     #[test]
     fn literal_custom_payload_and_stable_ids_survive_completed_events() {
         let output = ValidatedOutput::Calls(vec![ValidatedCall {
