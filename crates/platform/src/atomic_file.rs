@@ -387,6 +387,56 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn legacy_inherited_config_replacement_preserves_permissions() {
+        use windows_sys::Win32::Security::{
+            Authorization::{
+                ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+            },
+            DACL_SECURITY_INFORMATION, SetFileSecurityW,
+        };
+        let fixture = Fixture::new();
+        let config = fixture.config();
+        std::fs::write(&config, b"original").unwrap();
+        let sid = crate::state::current_sid().unwrap();
+        let sddl: Vec<u16> = format!("D:(A;ID;FA;;;SY)(A;ID;FA;;;{sid})\0")
+            .encode_utf16()
+            .collect();
+        let mut parsed = null_mut();
+        // SAFETY: legacy inheritance is deliberately reproduced only on this
+        // unique fixture. The descriptor stays live through the Windows call.
+        unsafe {
+            assert_ne!(
+                ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                    sddl.as_ptr(),
+                    SDDL_REVISION_1,
+                    &mut parsed,
+                    null_mut()
+                ),
+                0
+            );
+            let _parsed = crate::state::LocalAllocation(parsed);
+            assert_ne!(
+                SetFileSecurityW(
+                    wide(&config).unwrap().as_ptr(),
+                    DACL_SECURITY_INFORMATION,
+                    parsed
+                ),
+                0
+            );
+        }
+        let before = Snapshot::capture(&config).unwrap();
+        let staged = before.stage(".cxweb-legacy.tmp", b"updated").unwrap();
+        let result = before.commit(&staged, b"updated");
+        let after = Snapshot::capture(&config).unwrap();
+        assert!(
+            result.is_ok(),
+            "{result:?}; fixture policy before: {}; after: {}",
+            before.access.as_ref().unwrap().fixture_descriptor(),
+            after.access.as_ref().unwrap().fixture_descriptor()
+        );
+    }
+
+    #[test]
     fn native_config_preserves_readers_without_relaxing_private_files_or_allowing_writers() {
         let fixture = Fixture::new();
         let config = fixture.config();
