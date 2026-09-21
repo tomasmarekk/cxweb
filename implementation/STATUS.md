@@ -33,8 +33,14 @@ disabled after checking its exact former runtime path. A new ordinary-Chrome
 setup login was completed and closed by the user. Fresh English background text
 and tool protocol checks passed, and a new installation was activated against the
 user's edited configuration. Initial reasoning maintenance exposed a missing
-controller in the fresh-activation path; the fix and regression test now pass,
-with deployment and live reasoning qualification in progress. Broader coding
+controller in the fresh-activation path; the fix and regression test now pass.
+The deployed runtime passed all eight additional reasoning checks and both native
+catalogs expose all five choices. Both native backends also completed the actual
+absolute-distance read/failing-test/patch/passing-retest exercise. Health is Ready.
+A fresh signed GUI instance displays the owned family and all five positions;
+an independent GUI task also returned the exact test marker. Resuming an existing
+task delegated to the original App backend, which retained its old catalog and
+used fallback metadata; that attempt failed before generation. Broader coding
 qualification remains in progress; no release gate is certified.
 
 ## Fresh activation maintenance and protocol diagnostics (2026-09-21)
@@ -57,8 +63,38 @@ qualification remains in progress; no release gate is certified.
 - The regression invokes prepared-host maintenance before any restart and checks
   that the attached provider receives it without applying configuration. Runtime
   tests: 220 passed, 9 opt-in ignored. Scoped all-target Clippy and formatting pass.
-  Live restoration evidence is in setup-restoration-sep21.json; subsequent client
-  and reasoning checks remain pending.
+  Live restoration evidence is in setup-restoration-sep21.json. All eight additional
+  reasoning checks passed, preserving the already qualified Extra High default.
+  Both actual backend catalogs contain the owned family and all five choices.
+- Actual CLI and App-backend absolute-distance repairs passed at 08:32:46 and
+  08:35:58 UTC. Each observed two genuinely failing cases, patched the source via
+  native apply_patch, ran the real tests successfully and answered only afterwards.
+  Configuration/executable hashes and test inputs remained unchanged. The earlier
+  scope failure is retained separately; this new installation's passes do not
+  rewrite it. See arithmetic-distance-restored-sep21.json. This is one exercise
+  per backend, not completion of the required G2 suite.
+- Fresh signed GUI picker verification observed Latest alongside native models,
+  and selected Light, Medium, High, Extra High and Max. These native labels map to
+  Instant, Medium, High, Extra High and Pro on the web. The original running App
+  still holds its previous native-only catalog. An existing-thread GUI attempt
+  failed with E_UNSUPPORTED_REASONING_SUMMARY. Native logs confirm it was handled
+  by the original backend using fallback metadata, not the fresh window's backend.
+- A separate GUI task handled by the fresh backend returned the exact marker at
+  08:57:43 UTC. Its native turn context selected the owned model and xhigh; the
+  configured detailed summary was correctly omitted by native model capabilities.
+  No catalog capability change or summary-request suppression was needed. The
+  failed old-owner attempt remains in app-picker-restored-sep21.json. Added a
+  terminal error explanation advising a complete Codex restart for stale catalogs;
+  explicit summary requests remain rejected. Scoped provider tests: 12 passed,
+  3 opt-in ignored; all-target runtime Clippy passed. The separate GUI instance was
+  closed and its three configuration changes restored to the exact pre-test bytes.
+- Fresh approval-denial exercises passed in both installed native backends at
+  09:03:47 and 09:04:52 UTC. The exact command was declined, its file marker was
+  never exposed, and neither an alternative tool nor a file change occurred.
+  See denial-restored-sep21.json. The diagnostic-only runtime update was deployed
+  while idle and its binary hash verified as
+  6bbdf9054900f933fb29fb9582c8984a31b28d31aeffa9fa063564a24feb06a3.
+  Background session recovery passed without reopening login.
 
 ## Interrupted coding observation and manual state removal (2026-09-21)
 

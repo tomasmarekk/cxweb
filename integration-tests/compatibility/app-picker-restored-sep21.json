@@ -1,0 +1,78 @@
+{
+  "schema": "cxweb.installed-gui.v1",
+  "observedAt": "2026-09-21T08:46:36.1785498Z",
+  "appBuild": "26.915.4065.0",
+  "backendBuild": "0.155.0-alpha.9.2",
+  "synthetic": false,
+  "isolatedNativeHome": false,
+  "separateAppUserData": true,
+  "clientPatched": false,
+  "catalogOrProviderOverride": false,
+  "model": "webbridge/402f0b19d5610fcbee25b681",
+  "displayName": "ChatGPT Web · Latest",
+  "ownedAndNativeVisibleTogether": true,
+  "reasoningPositions": [
+    {
+      "position": 1,
+      "selected": true,
+      "visibleLabel": "Light",
+      "webLabel": "Instant",
+      "effort": "low"
+    },
+    {
+      "position": 2,
+      "selected": true,
+      "visibleLabel": "Medium",
+      "webLabel": "Medium",
+      "effort": "medium"
+    },
+    {
+      "position": 3,
+      "selected": true,
+      "visibleLabel": "High",
+      "webLabel": "High",
+      "effort": "high"
+    },
+    {
+      "position": 4,
+      "selected": true,
+      "visibleLabel": "Extra High",
+      "webLabel": "Extra High",
+      "effort": "xhigh"
+    },
+    {
+      "position": 5,
+      "selected": true,
+      "visibleLabel": "Max",
+      "webLabel": "Pro",
+      "effort": "max"
+    }
+  ],
+  "guiRoundTrip": "passed in independent fresh task; stale-owner failure retained",
+  "originalRunningAppRequiresRestart": true,
+  "failedRoundTrip": {
+    "observedAt": "2026-09-21T08:47:47Z",
+    "code": "E_UNSUPPORTED_REASONING_SUMMARY",
+    "browserGenerationStarted": false,
+    "owner": "original already-running App backend",
+    "freshWindowDelegatedExistingThread": true,
+    "modelMetadataFallbackObserved": true,
+    "source": "Native structured logs correlated by thread and turn timestamp; original backend PID 26372, fresh window backend PID 38636."
+  },
+  "freshRoundTrip": {
+    "startedAt": "2026-09-21T08:57:22.077Z",
+    "completedAt": "2026-09-21T08:57:43.961Z",
+    "model": "webbridge/402f0b19d5610fcbee25b681",
+    "effort": "xhigh",
+    "configuredSummary": "detailed",
+    "exactVisibleAnswer": "CXWEBGUI20260921FRESH",
+    "toolsUsed": false,
+    "modelCapabilitiesRespected": true,
+    "ownerIsFreshAppBackend": true,
+    "browserWindowVisible": false
+  },
+  "cleanup": {
+    "verificationWindowClosed": true,
+    "originalConfigurationRestoredByteForByte": true
+  }
+}

@@ -24,6 +24,17 @@ pub(crate) enum BrowserEvidence {
 pub(crate) fn web_failure(code: &'static str) -> Response {
     use axum::http::StatusCode;
     let mut response = unavailable(code);
+    if code == "E_UNSUPPORTED_REASONING_SUMMARY" {
+        // An already-running native client can retain fallback model metadata
+        // after installation. Do not silently discard a requested capability.
+        *response.body_mut() = Body::from(
+            serde_json::json!({"error":{
+                "code":code,
+                "message":"cxweb does not support reasoning summaries. A stale Codex model catalog can cause this request. Fully restart Codex to reload model capabilities. Explicit requests for summaries remain unsupported."
+            }})
+            .to_string(),
+        );
+    }
     response
         .extensions_mut()
         .insert(BrowserEvidence::Failure(code));
@@ -888,6 +899,33 @@ mod tests {
         // The complete browser response is replayed, but remains blocked before
         // either delivery format can emit executable tool output.
         assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn summary_refusal_explains_catalog_refresh_without_enabling_summaries() {
+        let response = web_failure("E_UNSUPPORTED_REASONING_SUMMARY");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(matches!(
+            response.extensions().get::<BrowserEvidence>(),
+            Some(BrowserEvidence::Failure("E_UNSUPPORTED_REASONING_SUMMARY"))
+        ));
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["error"]["code"], "E_UNSUPPORTED_REASONING_SUMMARY");
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("Fully restart Codex")
+        );
+        for summary in ["auto", "concise", "detailed"] {
+            let request =
+                json!({"model":"webbridge/test","input":"hello","reasoning":{"summary":summary}});
+            assert_eq!(
+                CanonicalRequest::decode(request.to_string().as_bytes()).err(),
+                Some("E_UNSUPPORTED_REASONING_SUMMARY")
+            );
+        }
     }
 
     #[tokio::test]

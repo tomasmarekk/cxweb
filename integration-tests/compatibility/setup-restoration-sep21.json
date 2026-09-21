@@ -57,5 +57,256 @@
     "code": "E_REASONING_QUALIFICATION",
     "result": "failed_before_browser_work",
     "report_created": false
+  },
+  "reasoning": {
+    "failure": null,
+    "observed_labels": [
+      "Latest · Instant",
+      "Latest · Medium",
+      "Latest · High",
+      "Latest · Extra High",
+      "Latest · Pro"
+    ],
+    "finished": true,
+    "default_previously_qualified": "Latest · Extra High",
+    "completed": [
+      [
+        "text",
+        "Latest · Instant"
+      ],
+      [
+        "tools",
+        "Latest · Instant"
+      ],
+      [
+        "text",
+        "Latest · Medium"
+      ],
+      [
+        "tools",
+        "Latest · Medium"
+      ],
+      [
+        "text",
+        "Latest · High"
+      ],
+      [
+        "tools",
+        "Latest · High"
+      ],
+      [
+        "text",
+        "Latest · Pro"
+      ],
+      [
+        "tools",
+        "Latest · Pro"
+      ]
+    ]
+  },
+  "daemon_sha256": "5861a5d2b7a61e2c9ac40ec7fff118188b69562b66fbf8c97524e89f5a4594ca",
+  "native_catalogs": [
+    {
+      "schema": "cxweb.installed-client.v1",
+      "startedAt": "2026-09-21T08:30:10.521Z",
+      "build": "0.155.0-alpha.9.2",
+      "executableSha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+      "synthetic": false,
+      "configurationOverride": false,
+      "actualGuiPicker": "not observed",
+      "text": "not requested",
+      "installedLoopbackRoute": true,
+      "subscriptionAuthentication": true,
+      "models": [
+        {
+          "id": "gpt-6-astra",
+          "name": "GPT-6-Astra"
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "name": "GPT-5.6-Sol"
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "name": "GPT-5.6-Terra"
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "name": "GPT-5.6-Luna"
+        },
+        {
+          "id": "gpt-daybreak-blue-latest",
+          "name": "Daybreak Blue"
+        },
+        {
+          "id": "gpt-5.5",
+          "name": "GPT-5.5"
+        },
+        {
+          "id": "webbridge/402f0b19d5610fcbee25b681",
+          "name": "ChatGPT Web · Latest"
+        }
+      ],
+      "selectedEffort": "xhigh",
+      "reasoningChoices": [
+        {
+          "reasoningEffort": "low",
+          "description": "Instant"
+        },
+        {
+          "reasoningEffort": "medium",
+          "description": "Medium"
+        },
+        {
+          "reasoningEffort": "high",
+          "description": "High"
+        },
+        {
+          "reasoningEffort": "xhigh",
+          "description": "Extra High"
+        },
+        {
+          "reasoningEffort": "max",
+          "description": "Pro"
+        }
+      ],
+      "ownedAndNativeCatalog": true,
+      "result": "PASS",
+      "configUnchanged": true,
+      "executableUnchanged": true,
+      "observedAt": "2026-09-21T08:30:11.505Z"
+    },
+    {
+      "schema": "cxweb.installed-client.v1",
+      "startedAt": "2026-09-21T08:30:10.290Z",
+      "build": "0.155.1",
+      "executableSha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+      "synthetic": false,
+      "configurationOverride": false,
+      "actualGuiPicker": "not observed",
+      "text": "not requested",
+      "installedLoopbackRoute": true,
+      "subscriptionAuthentication": true,
+      "models": [
+        {
+          "id": "gpt-6-astra",
+          "name": "GPT-6-Astra"
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "name": "GPT-5.6-Sol"
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "name": "GPT-5.6-Terra"
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "name": "GPT-5.6-Luna"
+        },
+        {
+          "id": "gpt-daybreak-blue-latest",
+          "name": "Daybreak Blue"
+        },
+        {
+          "id": "gpt-5.5",
+          "name": "GPT-5.5"
+        },
+        {
+          "id": "webbridge/402f0b19d5610fcbee25b681",
+          "name": "ChatGPT Web · Latest"
+        }
+      ],
+      "selectedEffort": "xhigh",
+      "reasoningChoices": [
+        {
+          "reasoningEffort": "low",
+          "description": "Instant"
+        },
+        {
+          "reasoningEffort": "medium",
+          "description": "Medium"
+        },
+        {
+          "reasoningEffort": "high",
+          "description": "High"
+        },
+        {
+          "reasoningEffort": "xhigh",
+          "description": "Extra High"
+        },
+        {
+          "reasoningEffort": "max",
+          "description": "Pro"
+        }
+      ],
+      "ownedAndNativeCatalog": true,
+      "result": "PASS",
+      "configUnchanged": true,
+      "executableUnchanged": true,
+      "observedAt": "2026-09-21T08:30:11.012Z"
+    }
+  ],
+  "health_after_native_coding": {
+    "active_web_turns": 0,
+    "components": {
+      "browser": {
+        "code": null,
+        "evidence": "passive_browser",
+        "observed_at": "2026-09-21T08:35:57.965Z",
+        "state": "healthy"
+      },
+      "codex_app": {
+        "code": null,
+        "evidence": "request_success",
+        "observed_at": "2026-09-21T08:35:57.965Z",
+        "state": "healthy"
+      },
+      "codex_cli": {
+        "code": null,
+        "evidence": "request_success",
+        "observed_at": "2026-09-21T08:32:46.051Z",
+        "state": "healthy"
+      },
+      "config": {
+        "code": null,
+        "evidence": "local_probe",
+        "observed_at": "2026-09-21T08:42:04.526Z",
+        "state": "healthy"
+      },
+      "native_upstream": {
+        "code": null,
+        "evidence": "local_probe",
+        "observed_at": "2026-09-21T08:41:19.206Z",
+        "state": "healthy"
+      },
+      "runtime": {
+        "code": null,
+        "evidence": "local_probe",
+        "observed_at": "2026-09-21T08:42:04.526Z",
+        "state": "healthy"
+      },
+      "web_auth": {
+        "code": null,
+        "evidence": "passive_browser",
+        "observed_at": "2026-09-21T08:35:57.965Z",
+        "state": "healthy"
+      },
+      "web_models": {
+        "code": null,
+        "evidence": "passive_browser",
+        "observed_at": "2026-09-21T08:35:57.965Z",
+        "state": "healthy"
+      }
+    },
+    "overall": "ready",
+    "revision": 50,
+    "schema_version": "webbridge.health.v1",
+    "suggested_action": "none"
+  },
+  "existing_gui_catalog": {
+    "fresh_gui_check": "passed independent GUI task; existing thread delegated to stale original backend and failed before generation",
+    "observation": "Already-running original Codex App still displays its previous native-only model list.",
+    "owned_model_visible": false
   }
 }
