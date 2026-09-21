@@ -78,6 +78,10 @@ impl AccessSnapshot {
         file_policy(&self.descriptor) != file_policy(&other.descriptor)
     }
 
+    pub(crate) fn is_legacy_replacement_merge(&self, other: &Self) -> bool {
+        legacy_replacement_merge(&self.descriptor, &other.descriptor)
+    }
+
     /// Apply the already-reviewed destination DACL to the held replacement only.
     /// ReplaceFile can merge staging grants into legacy inherited descriptors;
     /// matching the destination policy before replacement prevents extra grants.
@@ -96,7 +100,7 @@ impl AccessSnapshot {
         let mut parsed = null_mut();
         // SAFETY: descriptor text comes from a reviewed OS snapshot. The parsed
         // allocation backs every pointer until SetSecurityInfo returns. The
-        // caller holds this test-verified replacement with WRITE_DAC access.
+        // caller holds this identity-verified replacement with WRITE_DAC access.
         unsafe {
             if ConvertStringSecurityDescriptorToSecurityDescriptorW(
                 sddl.as_ptr(),
@@ -418,9 +422,73 @@ fn file_policy(text: &str) -> String {
     result
 }
 
+// Legacy ACLs can be copied by ReplaceFile as explicit ACEs and then inherit
+// their existing entries again. Accept only this exact duplication pattern for
+// restoration, never an arbitrary post-commit policy change or extra trustee.
+fn legacy_replacement_merge(before: &str, after: &str) -> bool {
+    let Some((owner, acl)) = before.split_once("D:") else {
+        return false;
+    };
+    if !acl.starts_with('(') {
+        return false;
+    }
+    let original = file_policy(before);
+    let (_, acl) = original.split_once("D:").expect("normalized descriptor");
+    let mut explicit = String::new();
+    let mut inherited = String::new();
+    for ace in acl.split('(').skip(1) {
+        let fields: Vec<_> = ace.split(';').collect();
+        if fields.len() != 6 {
+            return false;
+        }
+        if fields[1].contains("ID") {
+            inherited.push('(');
+            inherited.push_str(ace);
+        }
+        explicit.push('(');
+        for (index, field) in fields.iter().enumerate() {
+            if index != 0 {
+                explicit.push(';');
+            }
+            if index == 1 {
+                explicit.push_str(&field.replace("ID", ""));
+            } else {
+                explicit.push_str(field);
+            }
+        }
+    }
+    !inherited.is_empty() && file_policy(after) == format!("{owner}D:{explicit}{inherited}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::file_policy;
+
+    #[test]
+    fn legacy_merge_requires_exact_owner_order_masks_and_inherited_duplicates() {
+        let before = "O:BAD:(A;ID;FA;;;SY)(A;ID;FA;;;LA)";
+        let merged = "O:BAD:AI(A;;FA;;;SY)(A;;FA;;;LA)(A;ID;FA;;;SY)(A;ID;FA;;;LA)";
+        assert!(super::legacy_replacement_merge(before, merged));
+        for changed in [
+            merged.replace("O:BA", "O:SY"),
+            merged.replace("D:AI", "D:PAI"),
+            merged.replace(";FA;", ";FR;"),
+            merged.replace(";;;LA", ";;;WD"),
+            merged.replace("A;;", "D;;"),
+            merged.replace("A;ID;", "A;;"),
+            format!("{merged}(A;;FA;;;WD)"),
+        ] {
+            assert!(!super::legacy_replacement_merge(before, &changed));
+        }
+        assert!(!super::legacy_replacement_merge(
+            &before.replace("D:", "D:AI"),
+            merged
+        ));
+        assert!(!super::legacy_replacement_merge(
+            &before.replace("D:", "D:P"),
+            merged
+        ));
+    }
 
     #[test]
     fn system_ancestor_trust_does_not_expand_private_configuration_trust() {

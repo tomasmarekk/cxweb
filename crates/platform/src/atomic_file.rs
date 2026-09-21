@@ -297,7 +297,7 @@ impl Snapshot {
             .share_mode(FILE_SHARE_READ)
             .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
             .open(staged)?;
-        identity(&file)?;
+        let replacement_identity = identity(&file)?;
         crate::config_access::AccessSnapshot::capture(&file, false)?;
         if read(&mut file)? != candidate {
             return Err(io::Error::other("E_CONFIG_STAGE_CHANGED"));
@@ -352,18 +352,28 @@ impl Snapshot {
         if success == 0 {
             return Err(io::Error::last_os_error());
         }
-        let mut committed = open(&self.path)?;
-        identity(&committed)?;
-        let committed_access = file_access(&committed, self.native_config)?;
+        let mut committed = OpenOptions::new()
+            .access_mode(FILE_GENERIC_READ | windows_sys::Win32::Storage::FileSystem::WRITE_DAC)
+            .share_mode(FILE_SHARE_READ)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&self.path)?;
+        if identity(&committed)? != replacement_identity || read(&mut committed)? != candidate {
+            return Err(io::Error::other("E_CONFIG_POST_COMMIT_CHANGED"));
+        }
+        let mut committed_access = file_access(&committed, self.native_config)?;
+        if let Some(before) = &self.access
+            && before.is_legacy_replacement_merge(&committed_access)
+        {
+            self.verify_parent(&ancestors)?;
+            before.prepare_replacement(&committed)?;
+            committed_access = file_access(&committed, self.native_config)?;
+        }
         if self
             .access
             .as_ref()
             .is_some_and(|before| before.descriptor_differs(&committed_access))
         {
             return Err(io::Error::other("E_CONFIG_POST_COMMIT_PERMISSIONS"));
-        }
-        if read(&mut committed)? != candidate {
-            return Err(io::Error::other("E_CONFIG_POST_COMMIT_CHANGED"));
         }
         self.verify_parent(&ancestors)?;
         Ok(())
