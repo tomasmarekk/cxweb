@@ -47,6 +47,7 @@ pub fn inspect(text: &str) -> Result<Preflight, ConfigError> {
 pub struct RoutePatch {
     installed: String,
     previous_model: Option<String>,
+    web_tools: Option<(String, String)>,
 }
 
 fn remove_preserving_comments(doc: &mut DocumentMut, name: &str) {
@@ -81,6 +82,44 @@ fn remove_preserving_comments(doc: &mut DocumentMut, name: &str) {
 }
 
 impl RoutePatch {
+    /// Add one installation-owned MCP entry to the same configuration transaction.
+    /// The installation supplies its private immutable executable location.
+    pub fn plan_with_web_tools(
+        original: &str,
+        port: u16,
+        capability: &str,
+        name: &str,
+        executable: &str,
+    ) -> Result<(Self, String), ConfigError> {
+        if !name.starts_with("cxweb_web_")
+            || name.len() != 42
+            || !name[10..].bytes().all(|b| b.is_ascii_hexdigit())
+            || executable.is_empty()
+            || executable.len() > 32767
+            || executable.chars().any(char::is_control)
+        {
+            return Err(ConfigError::InvalidRoute);
+        }
+        let (mut patch, candidate) = Self::plan(original, port, capability)?;
+        let mut doc: DocumentMut = candidate.parse().map_err(|_| ConfigError::Parse)?;
+        if !doc.contains_key("mcp_servers") {
+            let mut table = toml_edit::Table::new();
+            table.set_implicit(true);
+            doc["mcp_servers"] = toml_edit::Item::Table(table);
+        }
+        let servers = doc["mcp_servers"]
+            .as_table_mut()
+            .ok_or(ConfigError::Conflict)?;
+        if servers.contains_key(name) {
+            return Err(ConfigError::Conflict);
+        }
+        let mut entry = toml_edit::Table::new();
+        entry["command"] = value(executable);
+        entry["args"] = value(toml_edit::Array::from_iter(["--web-tools"]));
+        servers[name] = toml_edit::Item::Table(entry);
+        patch.web_tools = Some((name.into(), servers[name].to_string()));
+        Ok((patch, doc.to_string()))
+    }
     /// A saved route may resume after unrelated edits, but never after its key
     /// or effective provider/profile/catalog was replaced by the user.
     pub fn can_resume(&self, current: &str) -> bool {
@@ -142,6 +181,7 @@ impl RoutePatch {
             Self {
                 installed,
                 previous_model,
+                web_tools: None,
             },
             doc.to_string(),
         ))
@@ -191,6 +231,23 @@ impl RoutePatch {
                 remove_preserving_comments(&mut doc, "model");
             }
         }
+        if let Some((name, installed)) = &self.web_tools
+            && let Some(servers) = doc
+                .get_mut("mcp_servers")
+                .and_then(|item| item.as_table_mut())
+        {
+            // A changed entry belongs to the user. Never erase their added flags,
+            // environment, comments or replacement command during route removal.
+            if servers
+                .get(name)
+                .is_some_and(|entry| entry.to_string() == *installed)
+            {
+                servers.remove(name);
+                if servers.is_empty() && servers.is_implicit() {
+                    doc.remove("mcp_servers");
+                }
+            }
+        }
         Ok(doc.to_string())
     }
 }
@@ -199,6 +256,40 @@ impl RoutePatch {
 mod tests {
     use super::*;
     const CAP: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    #[test]
+    fn owned_web_search_round_trips_and_preserves_other_servers_and_user_edits() {
+        let name = format!("cxweb_web_{}", "1".repeat(32));
+        let original = "# personal settings\nmodel = 'native'\n[mcp_servers.personal]\ncommand = 'my-server'\n";
+        let executable = r"C:\Users\Fixture User\cxweb\cxweb-daemon.exe";
+        let (patch, installed) =
+            RoutePatch::plan_with_web_tools(original, 12345, CAP, &name, executable).unwrap();
+        let doc: DocumentMut = installed.parse().unwrap();
+        assert_eq!(
+            doc["mcp_servers"][&name]["command"].as_str(),
+            Some(executable)
+        );
+        assert_eq!(
+            doc["mcp_servers"][&name]["args"]
+                .as_array()
+                .unwrap()
+                .get(0)
+                .unwrap()
+                .as_str(),
+            Some("--web-tools")
+        );
+        assert_eq!(patch.remove(&installed).unwrap(), original);
+        let mut edited = doc;
+        edited["mcp_servers"][&name]["enabled"] = value(false);
+        let removed = patch.remove(&edited.to_string()).unwrap();
+        assert!(removed.contains("enabled = false"));
+        assert!(removed.contains("my-server"));
+        assert!(!removed.contains("openai_base_url"));
+        assert_eq!(patch.remove(&removed).unwrap(), removed);
+        assert!(RoutePatch::plan_with_web_tools(&removed, 12345, CAP, &name, executable).is_err());
+        let (empty, installed) =
+            RoutePatch::plan_with_web_tools("", 12345, CAP, &name, executable).unwrap();
+        assert_eq!(empty.remove(&installed).unwrap(), "");
+    }
     #[test]
     fn recovery_requires_owned_route_and_no_new_provider_or_profile_conflict() {
         let (patch, installed) = RoutePatch::plan("model = 'native'\n", 43127, CAP).unwrap();

@@ -46,6 +46,31 @@ task delegated to the original App backend, which retained its old catalog and
 used fallback metadata; that attempt failed before generation. Broader coding
 qualification remains in progress; no release gate is certified.
 
+## Automatic web-search installation (2026-09-21)
+
+- Fresh production setup now includes its MCP search entry in the same atomic
+  configuration journal as the Codex route. The entry has an installation-specific
+  name, points to that installation's private daemon, and uses `--web-tools`.
+  The daemon serves stdio without starting the host, browser or a console window.
+  There is no extra executable or Node/Python dependency for this feature.
+- Journal format v3 records the owned executable and validates its exact location
+  on recovery. Existing v1/v2 journals remain supported without migration. Fresh
+  installations require the new daemon before the v3 transaction is committed;
+  setup already copies and verifies that exact executable before activation.
+- Removal deletes only an unchanged owned MCP entry. Other servers and changed
+  entries are preserved; a colliding entry is never overwritten. Repeated removal,
+  a previously absent config, private journal recovery and a substituted executable
+  path are covered by regression tests. Existing installed v2 connections retain
+  their current configuration; the working manually installed search entry on this
+  workstation is not rewritten by this change.
+- Validation: adapter 42 unit tests plus all contract tests passed; runtime 227
+  passed / 10 opt-in tests ignored; daemon argument and actual-stdio process tests
+  passed; clippy for all three affected packages/all targets passed. CI for prior
+  commit ad72c92 completed successfully (run 35591303550), including the complete
+  workspace test suite and JavaScript checks. CI for this follow-up is separate.
+- Live ChatGPT verification remains pending while its ordinary sign-in window is
+  open. This implementation closes the installer gap recorded below; it does not
+  certify the remaining account-based or full release gates.
 ## Client tools, public status and cold startup (2026-09-21)
 
 - Added native client-executed tool discovery, including definitions returned in

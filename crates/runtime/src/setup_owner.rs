@@ -179,7 +179,7 @@ async fn qualify(
         let root = cxweb_platform::state::StatePaths::installations()
             .map_err(|_| "E_STATE_PERMISSIONS")?;
         let directory = root.join(format!("prepared-{:032x}", rand::random::<u128>()));
-        let installation = PreparedInstallation::reserve(&directory, &config)
+        let installation = PreparedInstallation::reserve_with_web_tools(&directory, &config)
             .map_err(|_| "E_NATIVE_TEST_PREPARE")?;
         state.prepared = Some(PreparedTarget {
             directory,
@@ -255,7 +255,7 @@ async fn activate(
             let root = cxweb_platform::state::StatePaths::installations()
                 .map_err(|_| "E_STATE_PERMISSIONS")?;
             let directory = root.join(format!("prepared-{:032x}", rand::random::<u128>()));
-            let installation = PreparedInstallation::reserve(&directory, &config)
+            let installation = PreparedInstallation::reserve_with_web_tools(&directory, &config)
                 .map_err(|_| "E_NATIVE_TEST_PREPARE")?;
             state.prepared = Some(PreparedTarget {
                 directory,

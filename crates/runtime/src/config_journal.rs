@@ -69,6 +69,8 @@ struct Record {
     scheduler: Option<SchedulerRecord>,
     #[serde(default)]
     web: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    web_tools: Option<PathBuf>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -154,7 +156,8 @@ impl ConfigJournal {
         let value =
             strict_json::parse(snapshot.original(), 2 * 1024 * 1024).map_err(|_| invalid())?;
         let record: Record = serde_json::from_value(value).map_err(|_| invalid())?;
-        if !matches!(record.version, 1 | 2)
+        if !matches!(record.version, 1..=3)
+            || !web_tools_location(&record, directory)
             || record.id.len() != 32
             || !record
                 .id
@@ -192,6 +195,25 @@ impl ConfigJournal {
         port: u16,
         capability: &str,
     ) -> io::Result<Self> {
+        Self::prepare_inner(directory, target, port, capability, false)
+    }
+
+    pub(crate) fn prepare_with_web_tools(
+        directory: &Path,
+        target: &Path,
+        port: u16,
+        capability: &str,
+    ) -> io::Result<Self> {
+        Self::prepare_inner(directory, target, port, capability, true)
+    }
+
+    fn prepare_inner(
+        directory: &Path,
+        target: &Path,
+        port: u16,
+        capability: &str,
+        web_tools: bool,
+    ) -> io::Result<Self> {
         let lock = acquire(directory)?;
         let journal = Snapshot::capture(&directory.join("integration.json"))?;
         if journal.existed() {
@@ -202,24 +224,26 @@ impl ConfigJournal {
             return Err(invalid());
         }
         let original = std::str::from_utf8(prepared.original()).map_err(|_| invalid())?;
-        let (_, candidate) = RoutePatch::plan(original, port, capability).map_err(|_| invalid())?;
-        let record = Record {
-            version: 2,
+        let mut record = Record {
+            version: if web_tools { 3 } else { 2 },
             id: format!("{:032x}", rand::random::<u128>()),
             target: prepared.path().into(),
             phase: Phase::Prepared,
             original_existed: prepared.existed(),
             original: original.into(),
             original_sha256: hash(original.as_bytes()),
-            candidate_sha256: hash(candidate.as_bytes()),
-            candidate,
+            candidate_sha256: String::new(),
+            candidate: String::new(),
             port,
             capability: capability.into(),
             undo: None,
             catalog: None,
             scheduler: None,
             web: None,
+            web_tools: web_tools.then(|| directory.join("cxweb-daemon.exe")),
         };
+        record.candidate = plan_record(&record)?.1;
+        record.candidate_sha256 = hash(record.candidate.as_bytes());
         replace(
             &journal,
             &serde_json::to_vec(&record).map_err(|_| invalid())?,
@@ -242,7 +266,8 @@ impl ConfigJournal {
             strict_json::parse(journal.original(), 2 * 1024 * 1024).map_err(|_| invalid())?;
         let record: Record = serde_json::from_value(value).map_err(|_| invalid())?;
         let selected = Snapshot::capture_native_config(target)?;
-        if !matches!(record.version, 1 | 2)
+        if !matches!(record.version, 1..=3)
+            || !web_tools_location(&record, directory)
             || record.id.len() != 32
             || !record.id.bytes().all(|b| b.is_ascii_hexdigit())
             || record.target != selected.path()
@@ -671,9 +696,30 @@ fn plan_record(record: &Record) -> io::Result<(RoutePatch, String)> {
     match record.version {
         1 => RoutePatch::legacy_plan(&record.original, record.port, &record.capability),
         2 => RoutePatch::plan(&record.original, record.port, &record.capability),
+        3 => RoutePatch::plan_with_web_tools(
+            &record.original,
+            record.port,
+            &record.capability,
+            &format!("cxweb_web_{}", record.id),
+            record
+                .web_tools
+                .as_ref()
+                .and_then(|path| path.to_str())
+                .ok_or_else(invalid)?,
+        ),
         _ => return Err(invalid()),
     }
     .map_err(|_| invalid())
+}
+
+fn web_tools_location(record: &Record, directory: &Path) -> bool {
+    match (&record.web_tools, record.version) {
+        (Some(executable), 3) => {
+            directory.is_absolute() && *executable == directory.join("cxweb-daemon.exe")
+        }
+        (None, 1 | 2) => true,
+        _ => false,
+    }
 }
 
 fn restored_text(
@@ -697,6 +743,48 @@ fn restored_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn web_search_is_in_the_atomic_journal_and_reopens_with_scoped_undo() {
+        let f = Fixture::new();
+        let mut journal =
+            ConfigJournal::prepare_with_web_tools(&f.state, &f.target, 12345, CAP).unwrap();
+        assert_eq!(journal.record.version, 3);
+        assert!(!f.target.exists());
+        journal.apply().unwrap();
+        let installed = std::fs::read_to_string(&f.target).unwrap();
+        assert!(installed.contains("--web-tools"));
+        assert!(installed.contains("openai_base_url"));
+        assert!(installed.contains(&format!("cxweb_web_{}", journal.installation_id())));
+        drop(journal);
+        let mut journal = ConfigJournal::reopen(&f.state, &f.target).unwrap();
+        assert_eq!(journal.recovery().unwrap(), Recovery::Candidate);
+        journal.disconnect(&[], &[]).unwrap();
+        assert!(!f.target.exists());
+        drop(journal);
+        let mut journal = ConfigJournal::reopen(&f.state, &f.target).unwrap();
+        assert_eq!(journal.recovery().unwrap(), Recovery::Restored);
+        journal.disconnect(&[], &[]).unwrap();
+    }
+
+    #[test]
+    fn web_search_journal_cannot_select_an_executable_outside_its_installation() {
+        let f = Fixture::new();
+        let journal =
+            ConfigJournal::prepare_with_web_tools(&f.state, &f.target, 12345, CAP).unwrap();
+        let mut record = journal.record.clone();
+        record.web_tools = Some(f.root.join("other.exe"));
+        record.candidate = plan_record(&record).unwrap().1;
+        record.candidate_sha256 = hash(record.candidate.as_bytes());
+        drop(journal);
+        std::fs::write(
+            f.state.join("integration.json"),
+            serde_json::to_vec(&record).unwrap(),
+        )
+        .unwrap();
+        assert!(ConfigJournal::reopen(&f.state, &f.target).is_err());
+        assert!(ConfigJournal::control_target(&f.state).is_err());
+        assert!(!f.target.exists());
+    }
     #[test]
     fn refresh_removes_only_the_selected_homes_model_cache_and_refuses_links() {
         let f = Fixture::new();

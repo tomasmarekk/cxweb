@@ -38,17 +38,40 @@ impl PreparedInstallation {
         )
     }
 
+    pub(crate) fn reserve_with_web_tools(directory: &Path, config: &Path) -> io::Result<Self> {
+        Self::reserve_options(
+            directory,
+            config,
+            NativeTransport::subscription().map_err(io::Error::other)?,
+            true,
+        )
+    }
+
     fn reserve_with_native(
         directory: &Path,
         config: &Path,
         native: NativeTransport,
+    ) -> io::Result<Self> {
+        Self::reserve_options(directory, config, native, false)
+    }
+
+    fn reserve_options(
+        directory: &Path,
+        config: &Path,
+        native: NativeTransport,
+        web_tools: bool,
     ) -> io::Result<Self> {
         if !directory.is_absolute() || !config.is_absolute() {
             return Err(io::Error::other("E_ACTIVATION_TARGET"));
         }
         let listener = loopback::bind(0)?;
         let capability = URL_SAFE_NO_PAD.encode(rand::random::<[u8; 32]>());
-        let journal = ConfigJournal::prepare(
+        let prepare = if web_tools {
+            ConfigJournal::prepare_with_web_tools
+        } else {
+            ConfigJournal::prepare
+        };
+        let journal = prepare(
             directory,
             config,
             listener.local_addr()?.port(),
