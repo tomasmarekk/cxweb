@@ -1,17 +1,23 @@
 # Windows release
 
 In GitHub, open **Actions → Windows release → Run workflow**. Select the source
-branch, enter its version as a tag (for example `v0.1.1`), and keep **Mark this release
+branch, leave the tag empty to select the next available version, and keep **Mark this release
 as a preview** enabled for development builds. The workflow runs Rust and
 JavaScript checks, builds the per-user installer, tests its lifecycle hooks, and
 publishes the installer and SHA-256 file to GitHub Releases. The build artifact is
 also retained for 30 days, even if the later publishing job fails.
 
-For a new version, update both `[workspace.package].version` in `Cargo.toml` and
-`version` in `apps/desktop/src-tauri/tauri.conf.json`, refresh `Cargo.lock`, commit,
-then run the workflow with the corresponding new tag. Existing releases and tags
-are never overwritten. The release points at the exact commit selected when the
-workflow was dispatched.
+No source edit is required for each manual release. The workflow selects the source
+version if it is unused, or the next patch version after existing release tags.
+For a deliberate version, enter a new tag such as `v0.2.0`; an existing tag is
+rejected before compilation. Release runs are serialized to avoid version collisions.
+Existing releases and tags are never overwritten.
+
+The chosen version is staged in Cargo and Tauri manifests and the workspace lock
+entries only inside the CI checkout. External dependency changes are rejected.
+The release tag points at the selected source commit; the published
+`release-provenance.json` records that commit, the original source version, the
+staged release version and the workflow run. The repository is not rewritten by CI.
 
 Local build on Windows x64:
 

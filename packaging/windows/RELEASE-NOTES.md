@@ -1,5 +1,8 @@
 Windows x64 preview of cxweb, connecting ChatGPT web models to Codex App and Codex CLI.
 
+Manual releases now select the next unused version automatically. Release assets
+include provenance linking the packaged version to its source commit and CI run.
+
 This update closes the dedicated browser when disconnecting and adds optional
 local ChatGPT session removal in the app and uninstaller. Session removal refuses
 active profiles and connected Codex homes. Native forwarding for already open

@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag matching the source version (for example v0.1.0)'
-        required: true
-        default: v0.1.1
+        description: 'Optional new tag, for example v0.2.0. Leave empty for the next available version.'
+        required: false
+        default: ''
         type: string
       prerelease:
         description: Mark this release as a preview
@@ -18,35 +18,36 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-release-${{ inputs.tag }}
+  group: windows-release
   cancel-in-progress: false
 
 jobs:
   build:
     runs-on: windows-latest
     timeout-minutes: 60
+    outputs:
+      tag: ${{ steps.prepare.outputs.tag }}
     env:
-      RELEASE_TAG: ${{ inputs.tag }}
+      REQUESTED_TAG: ${{ inputs.tag }}
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
-      - name: Validate source version
-        shell: pwsh
-        run: |
-          $version = (Get-Content apps/desktop/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
-          if ($env:RELEASE_TAG -cne "v$version") {
-            throw "Release tag must match the checked-out application version: v$version"
-          }
       - name: Install pinned Rust
         run: rustup show
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test scripts/prepare-release.test.mjs
+      - name: Select and stage an unused release version
+        id: prepare
+        run: node scripts/prepare-release.mjs
       - uses: Swatinem/rust-cache@v2
         with:
           key: windows-release
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo test --locked --workspace
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
       - name: Verify desktop and browser behavior
         shell: pwsh
         run: |
@@ -76,13 +77,21 @@ jobs:
       - name: Verify installer hooks
         shell: pwsh
         run: ./scripts/test-windows-installer.ps1
+      - name: Stage this release's assets
+        shell: pwsh
+        env:
+          INSTALLER_NAME: ${{ steps.prepare.outputs.installer }}
+        run: |
+          New-Item -ItemType Directory -Path .local/release-assets -Force | Out-Null
+          Copy-Item -LiteralPath "target/release/bundle/nsis/$env:INSTALLER_NAME" -Destination .local/release-assets
+          Copy-Item -LiteralPath "target/release/bundle/nsis/$env:INSTALLER_NAME.sha256" -Destination .local/release-assets
+          Copy-Item -LiteralPath .local/release-provenance.json -Destination .local/release-assets
       - name: Upload installer and checksum
         uses: actions/upload-artifact@v4
         with:
-          name: cxweb-windows-${{ inputs.tag }}
-          path: |
-            target/release/bundle/nsis/*-setup.exe
-            target/release/bundle/nsis/*-setup.exe.sha256
+          name: cxweb-windows-${{ steps.prepare.outputs.tag }}
+          path: .local/release-assets/*
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 30
 
@@ -94,14 +103,14 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_TAG: ${{ needs.build.outputs.tag }}
       PRERELEASE: ${{ inputs.prerelease }}
       SOURCE_SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: cxweb-windows-${{ inputs.tag }}
+          name: cxweb-windows-${{ needs.build.outputs.tag }}
           path: release-assets
       - name: Publish release without replacing existing assets
         shell: bash
@@ -118,4 +127,9 @@ jobs:
           fi
           args=(--target "$SOURCE_SHA" --title "cxweb $RELEASE_TAG" --notes-file packaging/windows/RELEASE-NOTES.md)
           if [ "$PRERELEASE" = true ]; then args+=(--prerelease); fi
-          gh release create "$RELEASE_TAG" "${args[@]}" release-assets/*
+          version="${RELEASE_TAG#v}"
+          installer="release-assets/cxweb_${version}_x64-setup.exe"
+          provenance="release-assets/release-provenance.json"
+          test -f "$installer" && test -f "$installer.sha256" && test -f "$provenance"
+          (cd "$(dirname "$installer")" && sha256sum --check "$(basename "$installer").sha256")
+          gh release create "$RELEASE_TAG" "${args[@]}" "$installer" "$installer.sha256" "$provenance"

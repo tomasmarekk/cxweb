@@ -4436,3 +4436,11 @@ model discovery, native WebSocket preservation and actual pickers are proven.
 - Added the PRD-required Linux Rust contract job for the workspace excluding the Windows desktop package, and made Windows CI discover every JavaScript test using the same directories as release CI. This does not claim Linux desktop or browser support.
 - First Linux run 35606854365 exposed Windows-only clock imports in portable gateway/native health code and a health accessor unavailable to WebSocket tests. Added UTC observations on non-Windows using the already locked time 0.3.55 package; existing Windows time behavior is retained. Gateway health is also compiled for tests on every platform.
 - Local format check, clock contract test, all ten WebSocket tests, platform/runtime Clippy with warnings denied and the complete JavaScript suite passed. Linux verification of the fix remains pending the next CI run.
+
+## Manual release collision fix
+
+- User-triggered release 35608014150 built and tested successfully, then failed because the default v0.1.1 release already existed. Existing published assets were preserved.
+- Manual release tags are now optional. Empty selects the next unused patch version; explicit collisions fail before compilation. Serialized release runs stage matching Cargo/Tauri/lock versions in the CI checkout without rewriting the repository or changing external dependencies.
+- Artifacts include only the selected version's installer, checksum and source/version provenance. Publishing verifies the checksum before creating a new immutable release.
+- Four release regression tests and the complete JavaScript suite passed. An isolated copy of the real source successfully staged v0.1.2 and passed locked offline Cargo metadata; external dependency entries were unchanged. CI publication verification follows the pushed fix.
+- Separately, portability CI run 35607390918 passed on Windows and Linux; the Linux job ran 158 passing tests with no failures.
