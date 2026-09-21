@@ -280,7 +280,7 @@ mod desktop {
                     "main",
                     tauri::WebviewUrl::App("index.html".into()),
                 )
-                .title("cxweb · development preview")
+                .title("cxweb")
                 .inner_size(440.0, 540.0)
                 .min_inner_size(360.0, 440.0)
                 .on_navigation(|url| {

@@ -686,8 +686,10 @@ pub(crate) mod tests {
         crate::state::protected_directory(&parent).unwrap();
         let config = parent.join("config.toml");
         std::fs::write(&config, b"original").unwrap();
-        // Expose only the fixture ancestor, preserving the private child's ACL.
-        set_fixture_acl(&fixture.0, Some("(A;;FA;;;CURRENT_USER)(A;;FW;;;WD)"));
+        // Grant public DELETE_CHILD on the fixture ancestor, preserving the
+        // private child's ACL. Ordinary sibling creation is permitted while
+        // the next child is pinned; it does not establish this unsafe case.
+        set_fixture_acl(&fixture.0, Some("(A;;FA;;;CURRENT_USER)(A;;0x40;;;WD)"));
         let mut snapshot = Snapshot::capture(&config).unwrap();
         assert!(snapshot.require_ancestor_access().is_err());
         assert!(snapshot.ancestor_access.is_none());

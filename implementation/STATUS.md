@@ -2,8 +2,12 @@
 
 ## Acceptance and current gate
 
-Target: the complete supplied PRD, not a substitute chat application. No subagents.
-Current gate: **G0 IN PROGRESS**. No client or browser combination is certified.
+Current delivery scope, narrowed by the user on 2026-09-21: make the ChatGPT Web
+model and all five reasoning choices work in the actual Codex CLI and Codex App,
+with saved sign-in and no visible Chrome required during normal operation. Finish
+and deliver that working local integration. No subagents. The broader PRD release
+certification below is retained as historical engineering scope, not a condition
+for this local handoff. No claim of full G0–G5 certification is made.
 Manual login and managed reuse of the saved session are user-confirmed. Scoped
 background text generation and native read/apply_patch cycles now pass through
 both actual native backends. The actual CLI picker passed isolated synthetic and
@@ -68,8 +72,29 @@ qualification remains in progress; no release gate is certified.
   panel returned to Connected. Direct tray-menu interaction remains unverified.
 - Validation: platform tests 45 passed / 3 explicitly ignored; platform and
   desktop clippy passed; desktop UI tests 75 passed; release desktop build passed.
-  The frozen 200-case account-live cohort continues on its unchanged installed
-  daemon, independently of the UI build and configuration-permissions changes.
+  The exploratory account-live cohort stopped after case 20 timed out: 19/20
+  protocol-valid and task-correct responses. The failure remains in
+  `integration-tests/quality/protocol-restored-xhigh-sep21.json`. No retry or
+  further cohort is scheduled after the user's narrowed delivery request.
+- Full CI subsequently exposed a built-in Administrator SDDL alias and an
+  ancestor test that depended on incidental host ACLs. Ownership now compares the
+  actual SID and DACL protection bit; the negative fixture grants DELETE_CHILD
+  explicitly. Local platform tests and clippy pass. Full CI remains separate
+  from the verified local App/CLI handoff.
+
+## Native loopback benchmark (2026-09-21)
+
+- Added an explicit release-only benchmark using 32 KiB synthetic request and
+  response data, fixed fake authorization, actual production TCP peer admission,
+  HTTP classification/forwarding and exact response checks. No account, browser
+  or installed configuration is accessed by the benchmark.
+- After 100 warmup pairs, 1,000 alternating-order pairs measured incremental
+  median 0.1971 ms and nearest-rank p95 0.3255 ms. The fixture met the 20 ms p95
+  target on this workstation. The result records hardware, OS, existing power
+  plan, concurrent activity and executable/source hashes. This is a shared-host
+  HTTP keep-alive measurement, not G4 certification or an idle-resource result.
+- Artifact: `integration-tests/benchmarks/loopback-sep21.json`; reproducible
+  procedure and limitations: `integration-tests/benchmarks/LOOPBACK.md`.
 
 ## Native namespace and task isolation (2026-09-21)
 

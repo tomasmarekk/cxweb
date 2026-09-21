@@ -17,8 +17,9 @@ use windows_sys::Win32::{
         AccessCheck,
         Authorization::{ConvertSidToStringSidW, GetSecurityInfo, SE_FILE_OBJECT},
         DACL_SECURITY_INFORMATION, DuplicateToken, GENERIC_MAPPING, GROUP_SECURITY_INFORMATION,
-        GetAce, INHERIT_ONLY_ACE, IsValidAcl, IsValidSid, MapGenericMask,
-        OWNER_SECURITY_INFORMATION, PSID, SecurityImpersonation, TOKEN_DUPLICATE, TOKEN_QUERY,
+        GetAce, GetSecurityDescriptorControl, INHERIT_ONLY_ACE, IsValidAcl, IsValidSid,
+        MapGenericMask, OWNER_SECURITY_INFORMATION, PSID, SE_DACL_PROTECTED, SecurityImpersonation,
+        TOKEN_DUPLICATE, TOKEN_QUERY,
     },
     Storage::FileSystem::{
         BY_HANDLE_FILE_INFORMATION, DELETE, FILE_ADD_FILE, FILE_ADD_SUBDIRECTORY, FILE_ALL_ACCESS,
@@ -63,6 +64,7 @@ pub(crate) struct AccessSnapshot {
     identity: [u32; 3],
     descriptor: String,
     owner: String,
+    dacl_protected: bool,
 }
 impl AccessSnapshot {
     #[cfg(test)]
@@ -156,7 +158,9 @@ impl AccessSnapshot {
     pub(crate) fn protected_container(path: &Path) -> io::Result<Self> {
         let snapshot = Self::native_directory(path)?;
         let user = current_sid()?;
-        if snapshot.owner != user || !snapshot.descriptor.starts_with(&format!("O:{user}D:P")) {
+        // SDDL can abbreviate the built-in administrator's owner SID as LA.
+        // Compare the actual SID and control bit, never its display spelling.
+        if snapshot.owner != user || !snapshot.dacl_protected {
             return Err(refused());
         }
         Ok(snapshot)
@@ -252,6 +256,11 @@ impl AccessSnapshot {
                 return Err(io::Error::from_raw_os_error(status as i32));
             }
             let descriptor = LocalAllocation(descriptor);
+            let mut control = 0;
+            let mut revision = 0;
+            if GetSecurityDescriptorControl(descriptor.0, &mut control, &mut revision) == 0 {
+                return Err(io::Error::last_os_error());
+            }
             let owner = sid_text(owner)?;
             // Elevated Windows tools can create an Administrators-owned file
             // inside a user-owned directory. AccessCheck still requires the
@@ -373,6 +382,7 @@ impl AccessSnapshot {
                 ],
                 descriptor: descriptor_text(descriptor.0)?,
                 owner,
+                dacl_protected: control & SE_DACL_PROTECTED != 0,
             })
         }
     }

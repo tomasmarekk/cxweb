@@ -1,0 +1,62 @@
+{
+  "architecture": "x86_64",
+  "build": "release",
+  "cold_first_request_ms": {
+    "direct": 2.3945,
+    "gateway": 2.2985
+  },
+  "evidence_level": "benchmark",
+  "external_requests": 0,
+  "fixture": "echo-native-json-32k.v1",
+  "keep_alive": true,
+  "limitations": [
+    "Single shared workstation run; record OS, hardware and power mode separately.",
+    "HTTP keep-alive native passthrough only; not browser latency, WebSocket overhead or an idle-resource measurement.",
+    "Cold figures are one request per path, not cold-start percentiles."
+  ],
+  "measured_pairs": 1000,
+  "observed_at": "2026-09-21T09:50:38.037Z",
+  "order": "alternating paired",
+  "paired_incremental": {
+    "max_ms": 0.6081,
+    "median_ms": 0.1971,
+    "min_ms": -0.08629999999999999,
+    "p95_ms": 0.3255,
+    "samples": 1000
+  },
+  "payload_bytes_each_direction": 32768,
+  "production_tcp_peer_verification": true,
+  "schema": "cxweb.loopback-benchmark.v1",
+  "synthetic_auth_only": true,
+  "target_incremental_p95_ms": 20,
+  "target_met": true,
+  "warm_direct": {
+    "max_ms": 0.425,
+    "median_ms": 0.1656,
+    "min_ms": 0.10189999999999999,
+    "p95_ms": 0.2388,
+    "samples": 1000
+  },
+  "warm_gateway": {
+    "max_ms": 0.8164,
+    "median_ms": 0.36585,
+    "min_ms": 0.23479999999999998,
+    "p95_ms": 0.5233,
+    "samples": 1000
+  },
+  "warmup_pairs": 100,
+  "machine": {
+    "os": "Windows 11 Enterprise LTSC Evaluation",
+    "os_version": "10.0.26100",
+    "cpu": "AMD Ryzen 9 5900X",
+    "physical_cores": 12,
+    "logical_processors": 24,
+    "physical_memory_bytes": 34268241920,
+    "power_mode": "Existing custom Windows power plan; unchanged",
+    "concurrent_activity": "Codex desktop and the independent account-live protocol cohort remained active",
+    "profiler_attached": false
+  },
+  "benchmark_executable_sha256": "95c15ac2d8d601e8361503816f882e6c7af80e4f71a19fe16c1ac3379b6f1865",
+  "benchmark_source_sha256": "4b0ee08bd5a6225ffe7cab3e24d200ce4af49ac022633f15f19318ab3b45e85b",
+  "command": "cargo test --locked --release -p cxweb-runtime host::latency_benchmark::paired_native_loopback_latency -- --ignored --nocapture"
+}

@@ -1,0 +1,332 @@
+{
+  "account_plan_category": null,
+  "attempts": {
+    "case-001": {
+      "finished_at": 1789982509,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789982493,
+      "submitted_at": 1789982499
+    },
+    "case-002": {
+      "finished_at": 1789982638,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789982610,
+      "submitted_at": 1789982616
+    },
+    "case-003": {
+      "finished_at": 1789982716,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789982698,
+      "submitted_at": 1789982704
+    },
+    "case-004": {
+      "finished_at": 1789982798,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789982776,
+      "submitted_at": 1789982781
+    },
+    "case-005": {
+      "finished_at": 1789982875,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789982858,
+      "submitted_at": 1789982863
+    },
+    "case-006": {
+      "finished_at": 1789982955,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789982935,
+      "submitted_at": 1789982941
+    },
+    "case-007": {
+      "finished_at": 1789983034,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789983015,
+      "submitted_at": 1789983020
+    },
+    "case-008": {
+      "finished_at": 1789983110,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789983094,
+      "submitted_at": 1789983099
+    },
+    "case-009": {
+      "finished_at": 1789983188,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789983170,
+      "submitted_at": 1789983175
+    },
+    "case-010": {
+      "finished_at": 1789983289,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789983248,
+      "submitted_at": 1789983253
+    },
+    "case-011": {
+      "finished_at": 1789983366,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789983349,
+      "submitted_at": 1789983354
+    },
+    "case-012": {
+      "finished_at": 1789983447,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789983426,
+      "submitted_at": 1789983431
+    },
+    "case-013": {
+      "finished_at": 1789983528,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789983507,
+      "submitted_at": 1789983514
+    },
+    "case-014": {
+      "finished_at": 1789983607,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789983588,
+      "submitted_at": 1789983594
+    },
+    "case-015": {
+      "finished_at": 1789983685,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789983667,
+      "submitted_at": 1789983672
+    },
+    "case-016": {
+      "finished_at": 1789983765,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789983745,
+      "submitted_at": 1789983750
+    },
+    "case-017": {
+      "finished_at": 1789983846,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789983825,
+      "submitted_at": 1789983831
+    },
+    "case-018": {
+      "finished_at": 1789983923,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789983907,
+      "submitted_at": 1789983912
+    },
+    "case-019": {
+      "finished_at": 1789984000,
+      "result": {
+        "kind": "response",
+        "protocol_valid": true,
+        "task_passed": true
+      },
+      "started_at": 1789983983,
+      "submitted_at": 1789983988
+    },
+    "case-020": {
+      "failure_code": "E_QUALIFICATION_TIMEOUT",
+      "finished_at": 1789984366,
+      "result": {
+        "kind": "failure",
+        "reason": "timeout"
+      },
+      "started_at": 1789984060,
+      "submitted_at": 1789984065
+    }
+  },
+  "identity": {
+    "browser_version": "Chrome/153.0.8010.48",
+    "corpus_sha256": "ebbaf51a3c453a614ed4c126b81aeba48bb3acae4bd89c7763fc143f0d5e34f1",
+    "effort": "xhigh",
+    "route_sha256": "5e07a528a537ababb2896783c9b26269809661a085ce9e4c9b70ab8aab2943e4",
+    "runtime_sha256": "6bbdf9054900f933fb29fb9582c8984a31b28d31aeffa9fa063564a24feb06a3",
+    "scope_sha256": "d960957ba4c69abdc59939bfeddef6b725375d4f258e0eb74e44f40aa8e70bd1"
+  },
+  "last_browser_diagnostic": {
+    "attribution": {
+      "actual_character_kind": 0,
+      "anchor_count": 0,
+      "answer_candidates": 1,
+      "answer_dom_text_differs": 0,
+      "answer_fenced": 0,
+      "answer_generating": 1,
+      "answer_length": 1826,
+      "answer_rendered_length": 1826,
+      "answer_utf16_pending": 0,
+      "block_count": 7,
+      "break_count": 0,
+      "code_count": 0,
+      "common_prefix_length": 16251,
+      "control_count": 1,
+      "expected_character_kind": 0,
+      "expected_length": 16251,
+      "intermediate_blocks": 0,
+      "plain_length": 16251,
+      "rendered_length": 16261,
+      "span_count": 0,
+      "text_content_matches": 1
+    },
+    "qualification": {
+      "assistant_present": true,
+      "expected_model_label": "Extra High",
+      "generating": true,
+      "observed_model_label": "Extra High",
+      "user_matches": true,
+      "user_present": true
+    }
+  },
+  "native_client_exercised": false,
+  "not_before": 1789984426,
+  "summary": {
+    "adversarial_attempted": 0,
+    "categories": {
+      "checkpoint": {
+        "attempted": 0,
+        "completed": 0,
+        "protocol_valid": 0,
+        "task_passed": 0
+      },
+      "custom": {
+        "attempted": 0,
+        "completed": 0,
+        "protocol_valid": 0,
+        "task_passed": 0
+      },
+      "denial_feedback": {
+        "attempted": 0,
+        "completed": 0,
+        "protocol_valid": 0,
+        "task_passed": 0
+      },
+      "final_text": {
+        "attempted": 20,
+        "completed": 20,
+        "protocol_valid": 19,
+        "task_passed": 19
+      },
+      "function": {
+        "attempted": 0,
+        "completed": 0,
+        "protocol_valid": 0,
+        "task_passed": 0
+      },
+      "namespace_collision": {
+        "attempted": 0,
+        "completed": 0,
+        "protocol_valid": 0,
+        "task_passed": 0
+      },
+      "parallel": {
+        "attempted": 0,
+        "completed": 0,
+        "protocol_valid": 0,
+        "task_passed": 0
+      },
+      "structured_final": {
+        "attempted": 0,
+        "completed": 0,
+        "protocol_valid": 0,
+        "task_passed": 0
+      },
+      "untrusted_repository": {
+        "attempted": 0,
+        "completed": 0,
+        "protocol_valid": 0,
+        "task_passed": 0
+      },
+      "untrusted_tool_output": {
+        "attempted": 0,
+        "completed": 0,
+        "protocol_valid": 0,
+        "task_passed": 0
+      }
+    },
+    "complete": false,
+    "counts": {
+      "attempted": 20,
+      "completed": 20,
+      "protocol_valid": 19,
+      "task_passed": 19
+    },
+    "custom_or_namespaced_attempted": 0,
+    "failures": {
+      "timeout": 1
+    },
+    "meets_envelope_threshold": false,
+    "planned": 200,
+    "protocol_wilson_95": [
+      0.763868806553258,
+      0.9911185511992047
+    ],
+    "release_qualified": false
+  },
+  "version": "cxweb.protocol-corpus.v1"
+}

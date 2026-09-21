@@ -8,7 +8,7 @@ jobs:
       - name: Install pinned Rust
         run: rustup show
       - run: cargo fmt --all -- --check
-      - run: cargo test --locked -p cxweb-platform inherited_config_replacement_preserves_permissions
+      - run: cargo test --locked -p cxweb-platform
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo test --locked --workspace
       - uses: actions/setup-node@v4

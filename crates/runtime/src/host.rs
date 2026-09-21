@@ -24,6 +24,10 @@ use tokio_util::sync::CancellationToken;
 /// parsing. Native configuration can be readable without granting another
 /// Windows user access to the saved ChatGPT session.
 struct UserListener(TcpListener);
+
+#[cfg(test)]
+#[path = "host/latency_benchmark.rs"]
+mod latency_benchmark;
 impl axum::serve::Listener for UserListener {
     type Io = tokio::net::TcpStream;
     type Addr = std::net::SocketAddr;
