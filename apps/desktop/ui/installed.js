@@ -58,6 +58,7 @@ window.cxwebInstalled = (() => {
     return wording[health.overall] || wording.unavailable;
   }
   function controls() {
+    for (const id of ['installed-copy-diagnostics', 'installed-export-diagnostics']) node(id).disabled = pending || Boolean(confirmation) || !snapshot;
     node('installed-refresh').disabled = pending || Boolean(confirmation);
     node('installed-choice').disabled = pending || Boolean(confirmation);
     node('installed-remove').disabled = pending || Boolean(confirmation) || !snapshot || ['disconnecting', 'removal_pending_restart', 'disconnected_complete'].includes(snapshot.health.overall);
@@ -235,6 +236,32 @@ window.cxwebInstalled = (() => {
     if (selected) await refresh();
   });
   node('installed-refresh').addEventListener('click', refresh);
+  async function diagnostics(save) {
+    if (pending || confirmation || !snapshot) return;
+    const receipt = { installation: selected, instance: snapshot.instance };
+    pending = true; clearTimer(); ++epoch; controls();
+    const result = node('installed-diagnostics-result');
+    result.textContent = save ? 'Choose a new file for the diagnostics.' : 'Preparing safe diagnostics.';
+    try {
+      if (save) {
+        const written = await invoke('installed_export_diagnostics', receipt);
+        result.textContent = written ? 'Diagnostics saved. Nothing was uploaded.' : 'Export cancelled. No file was written.';
+      } else {
+        const report = await invoke('installed_diagnostics', receipt);
+        await navigator.clipboard.writeText(report);
+        result.textContent = 'Safe diagnostics copied. Nothing was uploaded.';
+      }
+    } catch (code) {
+      result.textContent = code === 'E_DIAGNOSTICS_EXISTS'
+        ? 'That file already exists and was preserved. Choose a new filename.'
+        : code === 'E_INSTALLED_CHANGED'
+        ? 'The runtime restarted. Check status before collecting diagnostics again.'
+        : save ? 'Diagnostics could not be saved. Choose another new file and try again.'
+        : 'Diagnostics could not be copied. Try exporting them to a new file.';
+    } finally { pending = false; controls(); schedule(); }
+  }
+  node('installed-copy-diagnostics').addEventListener('click', () => diagnostics(false));
+  node('installed-export-diagnostics').addEventListener('click', () => diagnostics(true));
   node('installed-login').addEventListener('click', async () => {
     if (pending || confirmation || !snapshot || node('installed-login').disabled) return;
     const receipt = { installation: selected, instance: snapshot.instance, finish: snapshot.health.components.web_auth?.code === 'E_LOGIN_WINDOW_OPEN' };

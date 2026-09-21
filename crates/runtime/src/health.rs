@@ -52,6 +52,37 @@ fn component(
 
 /// Never pass arbitrary backend text through the control protocol. Codes below
 /// are fixed local observations and carry no paths, URLs, IDs or account data.
+pub(crate) fn export_code(code: &str) -> &str {
+    if matches!(
+        code,
+        "E_COMPATIBILITY_UNQUALIFIED"
+            | "E_WEB_RECOVERING"
+            | "E_CLIENT_AWAITING_LAUNCH"
+            | "E_CLIENT_NOT_FOUND"
+            | "E_CLIENT_DISCOVERY"
+            | "E_CLIENT_CATALOG_RESPONSE"
+            | "E_CLIENT_CATALOG_CHANGED"
+            | "E_CLIENT_WEB_REQUEST"
+            | "E_NATIVE_AUTH_REQUIRED"
+            | "E_NATIVE_FORBIDDEN"
+            | "E_NATIVE_RATE_LIMITED"
+            | "E_NATIVE_SERVER"
+            | "E_NATIVE_REQUEST_REJECTED"
+            | "E_NATIVE_UNAVAILABLE"
+            | "E_NATIVE_REDIRECT"
+            | "E_NATIVE_STREAM"
+            | "E_CONFIG_CHANGED"
+            | "E_CONFIG_OBSERVATION"
+            | "E_CONFIG_RESTORE"
+            | "E_WEB_CLEANUP_UNCONFIRMED"
+    ) || failure(code).3 == code
+    {
+        code
+    } else {
+        "E_DIAGNOSTIC_REDACTED"
+    }
+}
+
 fn failure(code: &str) -> (Overall, State, Action, &'static str) {
     if matches!(
         code,

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-installed-export-diagnostics"
+description = "Enables the installed_export_diagnostics command without any pre-configured scope."
+commands.allow = ["installed_export_diagnostics"]
+
+[[permission]]
+identifier = "deny-installed-export-diagnostics"
+description = "Denies the installed_export_diagnostics command without any pre-configured scope."
+commands.deny = ["installed_export_diagnostics"]

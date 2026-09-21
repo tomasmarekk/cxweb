@@ -18,6 +18,8 @@ fn main() {
             "installed_disconnect",
             "installed_retry_web",
             "installed_web_login",
+            "installed_diagnostics",
+            "installed_export_diagnostics",
             "installed_qualify_reasoning",
         ]),
     ))

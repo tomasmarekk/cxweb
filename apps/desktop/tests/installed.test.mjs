@@ -14,7 +14,7 @@ function health(overall = 'preflight', turns = 0) {
   components.web_auth.state = 'healthy';
   return { instance: 'b'.repeat(32), health: { overall, active_web_turns: turns, components } };
 }
-function panel(respond) {
+function panel(respond, clipboard = async () => {}) {
   const nodes = new Map(), calls = [], timers = new Map(), events = new Map();
   let focus = null;
   const element = id => ({
@@ -30,7 +30,7 @@ function panel(respond) {
     getElementById(id) { if (!nodes.has(id)) nodes.set(id, element(id)); return nodes.get(id); }
   };
   const window = { __TAURI__: { core: { invoke(command, params) { calls.push({ command, params }); return respond(command, params); } } } };
-  const context = vm.createContext({ document, window,
+  const context = vm.createContext({ document, window, navigator: { clipboard: { writeText: clipboard } },
     setTimeout(action, delay) { const token = {}; timers.set(token, { action, delay }); return token; },
     clearTimeout(token) { timers.delete(token); }
   });
@@ -40,6 +40,57 @@ function panel(respond) {
   };
 }
 const list = (targets = [target], diagnostics = []) => ({ targets, diagnostics });
+
+test('diagnostics copy only the backend report and never the connection identity or local paths', async () => {
+  const copied = [];
+  const report = '{"schema":"cxweb.support.v1","health":{"overall":"auth_required"}}';
+  const ui = panel(async command => command === 'installed_list' ? list()
+    : command === 'installed_diagnostics' ? report : health('auth_required'), async text => copied.push(text));
+  await flush();
+  assert.deepEqual(copied, []);
+  await ui.nodes.get('installed-copy-diagnostics').click();
+  assert.deepEqual(copied, [report]);
+  const request = ui.calls.at(-1);
+  assert.equal(request.command, 'installed_diagnostics');
+  assert.deepEqual({ ...request.params }, { installation: target.installation, instance: 'b'.repeat(32) });
+  assert.match(ui.nodes.get('installed-diagnostics-result').textContent, /copied/);
+  assert.ok(ui.calls.every(call => !['connect', 'installed_web_login', 'installed_retry_web'].includes(call.command)));
+});
+
+test('diagnostic export is explicit and single, with cancel distinct from success', async () => {
+  let finish;
+  const ui = panel(async command => command === 'installed_list' ? list()
+    : command === 'installed_export_diagnostics' ? new Promise(resolve => { finish = resolve; }) : health());
+  await flush();
+  const button = ui.nodes.get('installed-export-diagnostics');
+  const work = button.click(); await button.click();
+  assert.equal(button.disabled, true);
+  assert.equal(ui.nodes.get('installed-copy-diagnostics').disabled, true);
+  assert.equal(ui.calls.filter(call => call.command === 'installed_export_diagnostics').length, 1);
+  assert.deepEqual({ ...ui.calls.at(-1).params }, { installation: target.installation, instance: 'b'.repeat(32) });
+  finish(false); await work;
+  assert.match(ui.nodes.get('installed-diagnostics-result').textContent, /cancelled.*No file was written/);
+  const next = button.click(); finish(true); await next;
+  assert.match(ui.nodes.get('installed-diagnostics-result').textContent, /saved.*Nothing was uploaded/);
+});
+
+test('diagnostic failures preserve health and do not expose raw errors or repeat writes', async () => {
+  for (const code of ['E_DIAGNOSTICS_EXISTS', 'E_INSTALLED_CHANGED', 'C:\\private\\secret-token']) {
+    const ui = panel(async command => command === 'installed_list' ? list()
+      : command === 'installed_export_diagnostics' ? Promise.reject(code) : health('ready'));
+    await flush(); await ui.nodes.get('installed-export-diagnostics').click();
+    assert.equal(ui.nodes.get('installed-heading').textContent, 'Connected');
+    assert.equal(ui.calls.filter(call => call.command === 'installed_export_diagnostics').length, 1);
+    const message = ui.nodes.get('installed-diagnostics-result').textContent;
+    assert.doesNotMatch(message, /secret-token|^Diagnostics saved|^Safe diagnostics copied/);
+    if (code === 'E_DIAGNOSTICS_EXISTS') assert.match(message, /preserved/);
+  }
+  const ui = panel(async command => command === 'installed_list' ? list()
+    : command === 'installed_diagnostics' ? '{}' : health(), async () => { throw new Error('clipboard private detail'); });
+  await flush(); await ui.nodes.get('installed-copy-diagnostics').click();
+  assert.match(ui.nodes.get('installed-diagnostics-result').textContent, /could not be copied/);
+  assert.doesNotMatch(ui.nodes.get('installed-diagnostics-result').textContent, /private detail/);
+});
 
 function reasoningStatus(complete = false) {
   const value = health();

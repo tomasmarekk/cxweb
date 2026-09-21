@@ -4,6 +4,7 @@
 mod desktop {
     use cxweb_runtime::{control::ControlStatus, remote_control::RemoteControl};
     use tauri::Manager;
+    use tauri_plugin_dialog::DialogExt;
 
     pub struct AppState {
         control: Result<RemoteControl, &'static str>,
@@ -44,6 +45,47 @@ mod desktop {
         cxweb_runtime::installed_control::check(&installation)
             .await
             .map_err(str::to_owned)
+    }
+    #[tauri::command]
+    async fn installed_diagnostics(
+        installation: String,
+        instance: String,
+    ) -> Result<String, String> {
+        cxweb_runtime::diagnostics::collect(&installation, &instance)
+            .await
+            .map_err(str::to_owned)
+    }
+
+    #[tauri::command]
+    async fn installed_export_diagnostics(
+        app: tauri::AppHandle,
+        window: tauri::WebviewWindow,
+        installation: String,
+        instance: String,
+    ) -> Result<bool, String> {
+        let report = cxweb_runtime::diagnostics::collect(&installation, &instance)
+            .await
+            .map_err(str::to_owned)?;
+        tauri::async_runtime::spawn_blocking(move || {
+            let path = app
+                .dialog()
+                .file()
+                .set_parent(&window)
+                .set_title("Export safe cxweb diagnostics")
+                .set_file_name("cxweb-diagnostics.json")
+                .add_filter("JSON diagnostics", &["json"])
+                .blocking_save_file();
+            let Some(path) = path else {
+                return Ok(false);
+            };
+            let path = path
+                .into_path()
+                .map_err(|_| "E_DIAGNOSTICS_DESTINATION".to_owned())?;
+            cxweb_runtime::diagnostics::write_new(&path, &report).map_err(str::to_owned)?;
+            Ok(true)
+        })
+        .await
+        .map_err(|_| "E_DIAGNOSTICS_WRITE".to_owned())?
     }
     #[tauri::command]
     async fn installed_retry_web(
@@ -222,6 +264,7 @@ mod desktop {
 
     pub fn run() {
         tauri::Builder::default()
+            .plugin(tauri_plugin_dialog::init())
             .setup(|app| {
                 app.manage(AppState {
                     control: RemoteControl::new(),
@@ -259,7 +302,9 @@ mod desktop {
                 installed_disconnect,
                 installed_qualify_reasoning,
                 installed_retry_web,
-                installed_web_login
+                installed_web_login,
+                installed_diagnostics,
+                installed_export_diagnostics
             ])
             .run(tauri::generate_context!())
             .expect("cxweb desktop runtime");

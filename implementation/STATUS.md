@@ -24,6 +24,40 @@ verification. The user reports a repeating Cloudflare challenge in the login
 window. Authentication and background reuse are not currently verified; the
 earlier successful observations do not establish current readiness.
 
+## Safe support diagnostics (2026-09-21)
+
+- Added explicit Copy safe diagnostics and Export safe diagnostics actions under
+  installed connection details. They use read-only private IPC with the currently
+  selected installation and runtime instance; collecting never triggers login,
+  recovery, generation or an upload. CLI exposes the same report through
+  `runtime-diagnostics --installation <id>`.
+- The report includes collector version, OS/architecture and typed health only.
+  Dynamic schema text, unknown error strings and non-timestamp observation text
+  are discarded or replaced by a fixed redaction code. It excludes installation
+  and instance identities, paths, model labels, account data, credentials, logs and
+  content. Collector version is not presented as the running daemon/client build.
+- The native Save dialog supplies the destination directly to Rust. The webview
+  cannot supply output content or a path. Cancellation writes nothing, existing
+  files are preserved, and blocking dialog/file work stays off the async reactor.
+  Only the two fixed app commands are granted; no generic dialog/filesystem IPC
+  capability was added. Tauri dialog 2.7.3 is locked with its dependencies.
+- Tests cover redaction of hostile values, new-file writes and preservation,
+  explicit copy/export, duplicate clicks, cancellation and sanitized failures.
+  328 workspace tests passed (22 opt-in ignored), all 75 UI tests passed, and
+  all-target Clippy/format/diff checks passed. Actual collection from the installed
+  daemon passed and reported E_LOGIN_WINDOW_OPEN without exposing local identity.
+- Live desktop copy confirmation, native Save dialog and Escape cancellation
+  passed. The user completed saving through the native dialog; the actual file
+  was checked for the expected schema, exact top-level fields and absence of
+  private content markers. Its backend new-file/preservation behavior passed
+  the filesystem test. Release
+  desktop/CLI builds passed. Evidence is in support-diagnostics-windows.json.
+  Cargo audit reported zero vulnerabilities and seven existing warnings
+  (six unmaintained dependencies and glib's unsoundness advisory); release
+  security qualification remains incomplete. Full
+  diagnostic build/capability metadata and collection when no host is reachable
+  remain incomplete; this does not complete the diagnostics/release gates.
+
 ## Installed connection sign-in recovery (2026-09-21)
 
 - Added instance-bound WebLogin open/finish commands through private IPC, the

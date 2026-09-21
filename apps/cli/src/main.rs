@@ -59,6 +59,11 @@ enum Command {
         #[arg(long)]
         installation: String,
     },
+    /// Print a sanitized support report. Does not export logs, credentials or paths.
+    RuntimeDiagnostics {
+        #[arg(long)]
+        installation: String,
+    },
     /// Explicitly retry an eligible installed browser recovery without sending a message.
     RuntimeWebLogin {
         #[arg(long)]
@@ -257,6 +262,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 let _ = (client, home, cwd, route);
                 return Err("Codex integration requires Windows".into());
+            }
+        }
+        Command::RuntimeDiagnostics { installation } => {
+            #[cfg(windows)]
+            {
+                let snapshot = cxweb_runtime::installed_control::check(&installation).await?;
+                let report =
+                    cxweb_runtime::diagnostics::collect(&installation, &snapshot.instance).await?;
+                print_json(&serde_json::from_str(&report)?);
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = installation;
+                return Err("runtime diagnostics requires Windows".into());
             }
         }
         Command::RuntimeHealth { installation } => {

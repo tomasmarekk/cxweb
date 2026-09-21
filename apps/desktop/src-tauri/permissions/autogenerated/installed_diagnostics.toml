@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-installed-diagnostics"
+description = "Enables the installed_diagnostics command without any pre-configured scope."
+commands.allow = ["installed_diagnostics"]
+
+[[permission]]
+identifier = "deny-installed-diagnostics"
+description = "Denies the installed_diagnostics command without any pre-configured scope."
+commands.deny = ["installed_diagnostics"]

@@ -1,0 +1,96 @@
+{
+  "schema": "cxweb.support-diagnostics-validation.v1",
+  "date": "2026-09-21",
+  "result": "PASS unit tests, live installed collection, desktop copy, native-dialog cancellation and user-completed native-dialog save",
+  "validation": {
+    "rust_passed": 328,
+    "rust_opt_in_ignored": 22,
+    "desktop_tests_passed": 75,
+    "clippy": "PASS",
+    "format": "PASS",
+    "release_cli": "PASS",
+    "release_desktop": "PASS"
+  },
+  "desktop_sha256": "325b6ef33133fcda2bfd8a20af8fd1205dee45605cf8a5ef556ac1cfbd0fd987",
+  "checks": {
+    "live_installed_collection": "PASS",
+    "desktop_copy_confirmation": "PASS",
+    "native_save_dialog": "PASS",
+    "native_save_cancel": "PASS",
+    "native_save_completion": "PASS user selected destination; written JSON schema and fields checked",
+    "unknown_error_redaction": "PASS unit",
+    "timestamp_redaction": "PASS unit",
+    "preserves_existing_file": "PASS unit",
+    "duplicate_ui_action": "PASS unit"
+  },
+  "report": {
+    "architecture": "x86_64",
+    "collector_version": "0.1.0",
+    "health": {
+      "active_web_turns": 0,
+      "components": {
+        "browser": {
+          "code": null,
+          "evidence": "none",
+          "observed_at": null,
+          "state": "unknown"
+        },
+        "codex_app": {
+          "code": "E_CLIENT_AWAITING_LAUNCH",
+          "evidence": "local_probe",
+          "observed_at": "2026-09-21T06:38:33.428Z",
+          "state": "unknown"
+        },
+        "codex_cli": {
+          "code": "E_CLIENT_AWAITING_LAUNCH",
+          "evidence": "local_probe",
+          "observed_at": "2026-09-21T06:38:33.428Z",
+          "state": "unknown"
+        },
+        "config": {
+          "code": null,
+          "evidence": "local_probe",
+          "observed_at": "2026-09-21T06:38:33.438Z",
+          "state": "healthy"
+        },
+        "native_upstream": {
+          "code": null,
+          "evidence": "client_handshake",
+          "observed_at": "2026-09-21T06:17:16.746Z",
+          "state": "healthy"
+        },
+        "runtime": {
+          "code": null,
+          "evidence": "local_probe",
+          "observed_at": "2026-09-21T06:38:33.438Z",
+          "state": "healthy"
+        },
+        "web_auth": {
+          "code": "E_LOGIN_WINDOW_OPEN",
+          "evidence": "local_probe",
+          "observed_at": "2026-09-21T06:38:33.438Z",
+          "state": "auth_required"
+        },
+        "web_models": {
+          "code": null,
+          "evidence": "none",
+          "observed_at": null,
+          "state": "unknown"
+        }
+      },
+      "overall": "auth_required",
+      "revision": 16,
+      "schema_version": "webbridge.health.v1",
+      "suggested_action": "check"
+    },
+    "platform": "windows",
+    "schema": "cxweb.support.v1"
+  },
+  "limits": [
+    "Authentication remains pending in the earlier managed login process.",
+    "Collector version does not establish the installed daemon or native client build.",
+    "No export metadata for an unreachable runtime yet.",
+    "Cargo audit reported zero vulnerabilities and seven existing warnings; this is not complete release security qualification."
+  ],
+  "exported_file_sha256": "43fd9bbd0d7ad5a6f99c3cffa6c8dc08c65c100510a043ab9af9d66e57f4ef34"
+}

@@ -18,6 +18,13 @@
     <details><summary>Connection details</summary><div class="details-body native-form">
       <label for="installed-choice">Connected Codex home</label><select id="installed-choice"></select>
       <div id="installed-components" class="selectable"></div>
+      <section aria-labelledby="installed-diagnostics-heading">
+        <h2 id="installed-diagnostics-heading">Diagnostics</h2>
+        <p>Copy or save connection health and the diagnostics collector version. No account details, paths, tokens, conversations or raw logs are included. Nothing is uploaded.</p>
+        <button id="installed-copy-diagnostics" class="secondary" disabled>Copy safe diagnostics</button>
+        <button id="installed-export-diagnostics" class="secondary" disabled>Export safe diagnostics</button>
+        <p id="installed-diagnostics-result" role="status" aria-live="polite"></p>
+      </section>
       <p>Closing this window keeps the runtime running. Removing the connection restores owned configuration changes and keeps your saved ChatGPT sign-in. Existing Codex clients may need a restart.</p>
     </div></details>
     <p id="installed-error" role="alert" hidden></p>

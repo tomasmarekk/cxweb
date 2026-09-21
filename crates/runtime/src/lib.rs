@@ -21,6 +21,8 @@ mod context_budget;
 pub mod control;
 #[cfg(windows)]
 pub mod control_protocol;
+#[cfg(windows)]
+pub mod diagnostics;
 pub mod gateway;
 #[cfg(windows)]
 mod generation_handoff;
