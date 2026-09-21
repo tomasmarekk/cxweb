@@ -3,7 +3,10 @@ function () {
   const visible = selector => [...document.querySelectorAll(selector)].some(element => element instanceof HTMLElement && element.getClientRects().length > 0);
   const composer = visible('#prompt-textarea');
   const profile = visible('[data-testid="accounts-profile-button"]');
-  const login = visible('[data-testid="login-button"], a[href*="/auth/login"]');
+  const login = visible('[data-testid="login-button"], a[href*="/auth/login"]') ||
+    [...document.querySelectorAll('button, a, [role="button"]')].some(element =>
+      element instanceof HTMLElement && element.getClientRects().length > 0 &&
+      !element.closest('[data-message-author-role], article') && /^(Log in|Sign in)$/i.test(element.textContent.trim()));
   const model = document.querySelector('[data-testid="model-switcher-dropdown-button"]');
   return {
     browser_language: language(navigator.language),

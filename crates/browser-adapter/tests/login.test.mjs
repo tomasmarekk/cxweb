@@ -4,10 +4,11 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
 const source = await readFile(new URL('../src/dom/login.js', import.meta.url), 'utf8');
-function observe(challenge, { login = [], hiddenSurface = false } = {}) {
+function observe(challenge, { login = [], actions = [], hiddenSurface = false } = {}) {
   class Element {
     constructor(shown) { this.shown = shown; }
     getClientRects() { return this.shown ? [{}] : []; }
+    closest() { return this.message ? {} : null; }
   }
   return vm.runInNewContext(`(${source})`, {
     HTMLElement: Element,
@@ -19,6 +20,7 @@ function observe(challenge, { login = [], hiddenSurface = false } = {}) {
         return null;
       },
       querySelectorAll(selector) {
+        if (selector === 'button, a, [role="button"]') return actions.map(action => Object.assign(new Element(action.shown ?? true), { textContent: action.label, message: action.message }));
         if (selector.includes('login-button')) return login.map(shown => new Element(shown));
         if (selector === '#prompt-textarea' || selector === '[data-testid="accounts-profile-button"]') return [new Element(!hiddenSurface)];
         return [];
@@ -42,4 +44,13 @@ test('hidden login links do not invalidate a visible signed-in surface', () => {
   const hidden = observe(false, { hiddenSurface: true });
   assert.equal(hidden.composer, false);
   assert.equal(hidden.account_surface, false);
+});
+
+test('current English sign-in buttons without legacy test IDs are detected without reading credentials', () => {
+  for (const label of ['Log in', 'Sign in', ' Log in ']) {
+    assert.equal(observe(false, { actions: [{ label }], hiddenSurface: true }).login_action, true);
+  }
+  for (const action of [{ label: 'Log in', shown: false }, { label: 'Log in', message: true }, { label: 'How to Log in' }]) {
+    assert.equal(observe(false, { actions: [action] }).login_action, false);
+  }
 });

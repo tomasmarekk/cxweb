@@ -96,7 +96,7 @@ fn failure(code: &str) -> (Overall, State, Action, &'static str) {
         );
     }
     let preparation = crate::managed_driver::temporary_chat_error(code);
-    if preparation.starts_with("E_BROWSER_TEMPORARY_") {
+    if code != "E_BACKGROUND_NAVIGATION" && preparation.starts_with("E_BROWSER_TEMPORARY_") {
         return (
             Overall::Unavailable,
             State::Unavailable,
@@ -569,6 +569,18 @@ impl Tracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn startup_navigation_is_not_reported_as_temporary_chat_navigation() {
+        assert_eq!(
+            failure("E_BACKGROUND_NAVIGATION").3,
+            "E_BACKGROUND_NAVIGATION"
+        );
+        assert_eq!(failure("E_BACKGROUND_NAVIGATION").2, Action::Check);
+        assert_eq!(
+            failure("E_BROWSER_TEMPORARY_NAVIGATION").3,
+            "E_BROWSER_TEMPORARY_NAVIGATION"
+        );
+    }
     #[test]
     fn ready_requires_every_dimension_and_catalog_cannot_erase_failed_generation() {
         let mut source = gateway(ProviderHealth::Verified { observed_at: None });

@@ -4466,3 +4466,9 @@ model discovery, native WebSocket preservation and actual pickers are proven.
 - Added compiled NSIS fixtures executing the actual PageLeaveReinstall function: ordinary upgrade, downgrade decision, same-version reinstall and explicit removal. All 14 installer cases pass. The same suite against the original template fails specifically at ordinary-upgrade, proving the regression test detects the original defect.
 - Local Windows installer packaging passed. Recovery tests passed (11, one opt-in browser test ignored) and all 34 installed UI tests passed. A transient Temporary Chat navigation failure during startup can now be explicitly retried through the existing recovery button; no message is resubmitted.
 - Restored this user's installation-owned route from its private uninstall receipt, preserving all other current settings and retaining a private backup. Reused the original browser profile and qualification receipt. Live catalog and published upgrade checks follow; do not infer readiness solely from restored configuration.
+
+### Signed-out surface detection after upgrade
+
+- Direct observation of the owned browser showed a signed-out ChatGPT page with a visible English Log in button. The legacy data-testid/href selectors missed it, producing a startup timeout. Recognize exact visible English sign-in buttons outside message/article content, without clicking or reading credentials. New regression tests reject hidden buttons and quoted login text.
+- Health mapping also mislabeled E_BACKGROUND_NAVIGATION as Temporary Chat navigation. Preserve the startup code and Check action; a dedicated regression verifies both codes stay distinct.
+- All 157 JavaScript tests and nine health-related Rust tests passed. Temporary structural/screenshot diagnostics were removed from source and their opt-in marker was removed. Renewed account login is required for live verification; no claim that the existing session remains authenticated.
