@@ -23,6 +23,7 @@ pub enum ProtocolError {
 pub enum ToolKind {
     Function,
     Custom,
+    ToolSearch,
 }
 
 pub struct Tool {
@@ -76,10 +77,17 @@ impl Registry {
         if tools.len() >= 9999 {
             return Err(ProtocolError::UnsupportedTool);
         }
-        let name = definition["name"]
-            .as_str()
-            .filter(|s| !s.is_empty() && !s.contains('\0'))
-            .ok_or(ProtocolError::UnsupportedTool)?;
+        let search = definition["type"] == "tool_search";
+        if search && (namespace.is_some() || definition["execution"] != "client") {
+            return Err(ProtocolError::UnsupportedTool);
+        }
+        let name = if search {
+            Some("tool_search")
+        } else {
+            definition["name"].as_str()
+        }
+        .filter(|s| !s.is_empty() && !s.contains('\0'))
+        .ok_or(ProtocolError::UnsupportedTool)?;
         let patch_grammar = definition["type"] == "custom"
             && name == "apply_patch"
             && definition["format"]["type"] == "grammar"
@@ -88,7 +96,7 @@ impl Registry {
                 .as_str()
                 .is_some_and(crate::patch_grammar::recognizes);
         let (kind, schema) = match definition["type"].as_str() {
-            Some("function") => {
+            Some("function" | "tool_search") => {
                 let schema = definition
                     .get("parameters")
                     .ok_or(ProtocolError::UnsupportedTool)?;
@@ -97,7 +105,14 @@ impl Registry {
                 }
                 let validator = jsonschema::validator_for(schema)
                     .map_err(|_| ProtocolError::UnsupportedTool)?;
-                (ToolKind::Function, Some(validator))
+                (
+                    if search {
+                        ToolKind::ToolSearch
+                    } else {
+                        ToolKind::Function
+                    },
+                    Some(validator),
+                )
             }
             Some("custom")
                 if patch_grammar
@@ -125,6 +140,48 @@ impl Registry {
             .iter()
             .map(|t| json!({"tool_key":t.key,"definition":t.definition,"namespace":t.namespace}))
             .collect()
+    }
+
+    /// Codex returns deferred definitions in tool_search_output history, not
+    /// necessarily in the next request's top-level tools. The caller validates
+    /// call/result correlation before including these client-provided schemas.
+    pub(crate) fn include_discovered(&mut self, history: &[Value]) -> Result<(), ProtocolError> {
+        if !self
+            .tools
+            .iter()
+            .any(|tool| tool.kind == ToolKind::ToolSearch)
+        {
+            return Ok(());
+        }
+        let explicit_count = self.tools.len();
+        for item in history.iter().filter(|item| {
+            item["type"] == "tool_search_output"
+                && item["execution"] == "client"
+                && item["status"] == "completed"
+        }) {
+            let definitions = item["tools"]
+                .as_array()
+                .ok_or(ProtocolError::UnsupportedTool)?;
+            for mut tool in Self::from_native(definitions)?.tools {
+                if let Some(index) = self.tools.iter().position(|current| {
+                    current.name == tool.name && current.namespace == tool.namespace
+                }) {
+                    // Current explicit definitions win; later discovery replaces
+                    // earlier discovery for the same identity without changing keys.
+                    if index >= explicit_count {
+                        tool.key = self.tools[index].key.clone();
+                        self.tools[index] = tool;
+                    }
+                } else {
+                    if self.tools.len() >= 9999 {
+                        return Err(ProtocolError::UnsupportedTool);
+                    }
+                    tool.key = format!("tool_{:04}", self.tools.len() + 1);
+                    self.tools.push(tool);
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn key_for(&self, name: &str, namespace: Option<&str>) -> Option<&str> {
@@ -301,7 +358,7 @@ fn validate_body(
                     return Err(ProtocolError::ToolChoice);
                 }
                 match tool.kind {
-                    ToolKind::Function
+                    ToolKind::Function | ToolKind::ToolSearch
                         if !call.input.is_object()
                             || !tool
                                 .schema
@@ -341,6 +398,9 @@ pub fn native_call(call: &ValidatedCall, item_id: &str, call_id: &str) -> Value 
         }
         ToolKind::Custom => {
             json!({"type":"custom_tool_call","id":item_id,"call_id":call_id,"name":call.native_name,"input":call.input,"status":"completed"})
+        }
+        ToolKind::ToolSearch => {
+            json!({"type":"tool_search_call","id":item_id,"call_id":call_id,"execution":"client","arguments":call.input,"status":"completed"})
         }
     };
     if let Some(namespace) = &call.namespace {

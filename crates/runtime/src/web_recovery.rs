@@ -190,7 +190,9 @@ impl Receipt {
                         .baseline(&page)
                         .map_err(|error| baseline_error(&error.to_string()))
                 },
-                Duration::from_secs(15),
+                // The composer may hydrate long before its model picker after
+                // a cold launch. Keep the original scope checks after this wait.
+                Duration::from_secs(90),
             )?;
             if !baseline.composer_empty || baseline.generating {
                 return Err("E_BROWSER_BUSY");
@@ -578,6 +580,8 @@ fn retryable(code: &str) -> bool {
             | "E_BROWSER_START"
             | "E_BACKGROUND_NAVIGATION"
             | "E_BROWSER_OBSERVATION"
+            | "E_BROWSER_BASELINE_MODEL"
+            | "E_BROWSER_BASELINE_COMPOSER"
     )
 }
 
@@ -946,6 +950,16 @@ mod tests {
 
     #[test]
     fn baseline_hydration_is_bounded_and_cancellation_is_not_retried() {
+        assert!(retryable("E_BROWSER_BASELINE_MODEL"));
+        assert!(retryable("E_BROWSER_BASELINE_COMPOSER"));
+        for code in [
+            "E_SESSION_SCOPE",
+            "E_BROWSER_LANGUAGE",
+            "E_MODEL_SELECTION",
+            "E_CANCELLED",
+        ] {
+            assert!(!retryable(code));
+        }
         let mut observations = [
             Err("E_BROWSER_BASELINE_COMPOSER"),
             Err("E_BROWSER_BASELINE_MODEL"),

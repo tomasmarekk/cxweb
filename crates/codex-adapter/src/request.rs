@@ -11,6 +11,7 @@ pub struct CanonicalRequest {
     pub stream: bool,
     pub parallel: bool,
     pub requested_effort: Option<String>,
+    pub public_summary: bool,
     instructions: String,
     history: Vec<Value>,
     unavailable_server_tools: Vec<Value>,
@@ -59,7 +60,10 @@ impl CanonicalRequest {
         if value
             .get("reasoning")
             .and_then(|r| r.get("summary"))
-            .is_some_and(|s| !s.is_null() && s != "none")
+            .is_some_and(|s| {
+                !s.is_null()
+                    && !matches!(s.as_str(), Some("none" | "auto" | "concise" | "detailed"))
+            })
         {
             return Err("E_UNSUPPORTED_REASONING_SUMMARY");
         }
@@ -106,11 +110,15 @@ impl CanonicalRequest {
             }
         }
         if !unavailable_server_tools.is_empty()
-            && (value["tool_choice"] == "required" || value["tool_choice"]["type"] == "web_search")
+            && ((value["tool_choice"] == "required" && callable.is_empty())
+                || value["tool_choice"]["type"] == "web_search")
         {
             return Err("E_UNSUPPORTED_SERVER_TOOL");
         }
-        let registry = Registry::from_native(&callable).map_err(|_| "E_UNSUPPORTED_TOOL")?;
+        let mut registry = Registry::from_native(&callable).map_err(|_| "E_UNSUPPORTED_TOOL")?;
+        registry
+            .include_discovered(&history)
+            .map_err(|_| "E_UNSUPPORTED_TOOL")?;
         let choice = match value.get("tool_choice") {
             None => Choice::Auto,
             Some(Value::String(s)) if s == "auto" => Choice::Auto,
@@ -142,6 +150,7 @@ impl CanonicalRequest {
             _ => Err("E_UNSUPPORTED_REQUEST"),
         };
         Ok(Self {
+            public_summary: value["reasoning"]["summary"] != "none",
             model,
             registry,
             instructions,
@@ -278,7 +287,7 @@ impl CanonicalRequest {
         .map_err(|_| "E_REQUEST_ENCODING")?;
         let data = String::from_utf8(encoded).map_err(|_| "E_REQUEST_ENCODING")?;
         let limitation = if self.hosted_search_unavailable() {
-            " Server tools listed in unavailable_server_tools cannot run on this text-and-coding route. They have no callable tool keys. Do not use ChatGPT's own search as a substitute, invent search results or claim to have searched. If the task needs web search, explain that this route cannot perform it and ask the user to choose a native Codex model. You can still use the explicitly listed client tools."
+            " Server tools listed in unavailable_server_tools have no callable tool keys. Do not use ChatGPT's own search as a substitute, invent search results or claim to have searched. For web research, use an available client-executed search tool such as the cxweb_web MCP search tool; use tool_search to discover it if needed. If no client search tool is available, explain that limitation. All explicitly listed client tools remain available."
         } else {
             ""
         };
@@ -384,11 +393,42 @@ fn validate_item(item: &Value) -> Result<(), &'static str> {
             }
         }
         "function_call_output" | "custom_tool_call_output" => {
-            if !item["call_id"].is_string() || !item["output"].is_string() {
+            let output = &item["output"];
+            let text_parts = output.as_array().is_some_and(|parts| {
+                parts.iter().all(|part| {
+                    matches!(
+                        part["type"].as_str(),
+                        Some("text" | "input_text" | "output_text")
+                    ) && part["text"].is_string()
+                })
+            });
+            if !item["call_id"].is_string() || !(output.is_string() || text_parts) {
                 return Err("E_UNSUPPORTED_INPUT");
             }
         }
-        "reasoning" | "compaction" | "item_reference" => return Err("E_NONPORTABLE_CONTEXT"),
+        "tool_search_call" | "tool_search_output" => {
+            if !item["call_id"].is_string()
+                || item["execution"] != "client"
+                || (item["type"] == "tool_search_call" && !item["arguments"].is_object())
+                || (item["type"] == "tool_search_output" && !item["tools"].is_array())
+            {
+                return Err("E_UNSUPPORTED_INPUT");
+            }
+        }
+        "reasoning" => {
+            // Public summaries can round-trip as history. Encrypted native state
+            // remains nonportable and must never be silently discarded.
+            if item.get("encrypted_content").is_some_and(|v| !v.is_null())
+                || !item["summary"].as_array().is_some_and(|parts| {
+                    parts
+                        .iter()
+                        .all(|part| part["type"] == "summary_text" && part["text"].is_string())
+                })
+            {
+                return Err("E_NONPORTABLE_CONTEXT");
+            }
+        }
+        "compaction" | "item_reference" => return Err("E_NONPORTABLE_CONTEXT"),
         "compaction_trigger" => return Err("E_COMPACTION_UNQUALIFIED"),
         _ => return Err("E_UNSUPPORTED_INPUT"),
     }

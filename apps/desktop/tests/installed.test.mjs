@@ -224,6 +224,17 @@ test('background retry is explicit, instance-bound and single while status check
   assert.equal(ui.nodes.get('installed-app').textContent, 'Unverified');
 });
 
+test('late composer or model hydration offers one explicit background retry', async () => {
+  for (const code of ['E_BROWSER_BASELINE_MODEL', 'E_BROWSER_BASELINE_COMPOSER']) {
+    const ui = panel(async command => command === 'installed_list' ? list() : transient(code));
+    await flush();
+    assert.equal(ui.nodes.get('installed-retry').hidden, false);
+    assert.ok(ui.calls.every(c => c.command !== 'installed_retry_web'));
+    await ui.nodes.get('installed-retry').click();
+    assert.equal(ui.calls.filter(c => c.command === 'installed_retry_web').length, 1);
+  }
+});
+
 test('login, rate limits, compatibility, cleanup and active work do not offer background retry', async () => {
   for (const code of ['E_LOGIN_REQUIRED', 'E_BROWSER_RATE_LIMITED', 'E_SESSION_SCOPE', 'E_BROWSER_VERSION_CHANGED', 'E_BROWSER_LANGUAGE', 'E_WEB_RECOVERY_CLEANUP']) {
     const ui = panel(async command => command === 'installed_list' ? list() : transient(code));

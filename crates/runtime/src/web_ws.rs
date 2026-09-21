@@ -287,7 +287,7 @@ fn history_item(item: &Value) -> Result<Value, &'static str> {
                 .ok_or("E_WEB_DELIVERY")?
                 .remove("status");
         }
-        Some("custom_tool_call") => (),
+        Some("custom_tool_call" | "tool_search_call" | "reasoning") => (),
         Some("compaction")
             if item["encrypted_content"]
                 .as_str()
@@ -538,6 +538,16 @@ mod tests {
         request["previous_response_id"] = json!(id);
         assert!(connection.prepare(request).is_err());
         assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn public_reasoning_and_client_discovery_survive_websocket_history_projection() {
+        for item in [
+            json!({"type":"reasoning","id":"r1","summary":[{"type":"summary_text","text":"Checking results"}]}),
+            json!({"type":"tool_search_call","id":"s1","call_id":"c1","execution":"client","arguments":{"query":"read a file"},"status":"completed"}),
+        ] {
+            assert_eq!(history_item(&item).unwrap(), item);
+        }
     }
 
     #[test]

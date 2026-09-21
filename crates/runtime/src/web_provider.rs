@@ -30,7 +30,7 @@ pub(crate) fn web_failure(code: &'static str) -> Response {
         *response.body_mut() = Body::from(
             serde_json::json!({"error":{
                 "code":code,
-                "message":"cxweb does not support reasoning summaries. A stale Codex model catalog can cause this request. Fully restart Codex to reload model capabilities. Explicit requests for summaries remain unsupported."
+                "message":"Unsupported reasoning summary option. Use auto, concise, detailed or none. cxweb returns only public progress shown by ChatGPT."
             }})
             .to_string(),
         );
@@ -515,6 +515,7 @@ mod tests {
                     user_matches: true,
                     assistant_id: Some("new-assistant".into()),
                     text,
+                    summary: vec![],
                     generating: waiting,
                     completion_control: !waiting,
                     fenced_output: false,
@@ -902,7 +903,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn summary_refusal_explains_catalog_refresh_without_enabling_summaries() {
+    async fn public_summary_modes_are_supported_and_unknown_modes_fail_explicitly() {
         let response = web_failure("E_UNSUPPORTED_REASONING_SUMMARY");
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert!(matches!(
@@ -916,15 +917,12 @@ mod tests {
             body["error"]["message"]
                 .as_str()
                 .unwrap()
-                .contains("Fully restart Codex")
+                .contains("public progress")
         );
         for summary in ["auto", "concise", "detailed"] {
             let request =
                 json!({"model":"webbridge/test","input":"hello","reasoning":{"summary":summary}});
-            assert_eq!(
-                CanonicalRequest::decode(request.to_string().as_bytes()).err(),
-                Some("E_UNSUPPORTED_REASONING_SUMMARY")
-            );
+            assert!(CanonicalRequest::decode(request.to_string().as_bytes()).is_ok());
         }
     }
 

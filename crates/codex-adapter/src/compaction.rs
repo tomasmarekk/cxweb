@@ -67,7 +67,7 @@ pub fn pending_calls(history: &[Value]) -> Result<Vec<Value>, &'static str> {
     for (index, item) in history.iter().enumerate() {
         let kind = item["type"].as_str().unwrap_or("message");
         match kind {
-            "function_call" | "custom_tool_call" => {
+            "function_call" | "custom_tool_call" | "tool_search_call" => {
                 let id = item["call_id"]
                     .as_str()
                     .filter(|id| !id.is_empty())
@@ -77,12 +77,17 @@ pub fn pending_calls(history: &[Value]) -> Result<Vec<Value>, &'static str> {
                 }
                 calls.insert(id, (index, item));
             }
-            "function_call_output" | "custom_tool_call_output" => {
+            "function_call_output" | "custom_tool_call_output" | "tool_search_output" => {
                 let id = item["call_id"]
                     .as_str()
                     .ok_or("E_CHECKPOINT_PENDING_TOOLS")?;
                 let (_, call) = calls.remove(id).ok_or("E_CHECKPOINT_PENDING_TOOLS")?;
-                if (kind == "function_call_output") != (call["type"] == "function_call") {
+                let expected = match kind {
+                    "function_call_output" => "function_call",
+                    "custom_tool_call_output" => "custom_tool_call",
+                    _ => "tool_search_call",
+                };
+                if call["type"] != expected {
                     return Err("E_CHECKPOINT_PENDING_TOOLS");
                 }
             }

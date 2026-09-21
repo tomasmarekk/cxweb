@@ -28,7 +28,7 @@ import { NamespaceFixture, definitions as namespaceTools, namespaces, argument a
 const [client, home, model, option] = process.argv.slice(2);
 const codingCase = option?.startsWith('--coding=') ? codingCases.find(fixture => fixture.id === option.slice(9)) : undefined;
 assert.ok(client && home && model?.startsWith('webbridge/') && isAbsolute(client) && isAbsolute(home));
-assert.ok(process.argv.length <= 6 && (!option || codingCase || ['--text', '--unicode', '--coexistence', '--tools', '--reasoning', '--denial', '--repair', '--namespaces', '--batch', '--concurrent'].includes(option)));
+assert.ok(process.argv.length <= 6 && (!option || codingCase || ['--text', '--unicode', '--coexistence', '--tools', '--reasoning', '--reasoning-trace', '--denial', '--repair', '--namespaces', '--batch', '--concurrent', '--web-tools', '--web-tools-deferred'].includes(option)));
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const builds = new Map([
   ['eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316', '0.155.1'],
@@ -45,7 +45,8 @@ const shells = [];
 if (codingCase || ['--tools', '--denial', '--repair'].includes(option)) for (const name of ['pwsh.exe', 'powershell.exe']) {
   try { shells.push(...execFileSync('where.exe', [name], { encoding: 'utf8', windowsHide: true }).trim().split(/\r?\n/)); } catch { /* optional shell absent */ }
 }
-const child = spawn(client, ['app-server'], { cwd, env: { ...process.env, CODEX_HOME: home }, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
+const deferred = option === '--web-tools-deferred';
+const child = spawn(client, ['app-server', ...(deferred ? ['-c', 'features.tool_search=true', '-c', 'features.tool_search_always_defer_mcp_tools=true'] : [])], { cwd, env: { ...process.env, CODEX_HOME: home }, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
 const pending = new Map();
 const events = [];
 let failure, bytes = 0, id = 0;
@@ -169,6 +170,7 @@ async function rpc(method, params) {
   } finally { clearTimeout(timer); pending.delete(requestId); }
 }
 const evidence = { schema: 'cxweb.installed-client.v1', startedAt: new Date().toISOString(), build: builds.get(hash), executableSha256: hash, synthetic: false, configurationOverride: false, actualGuiPicker: 'not observed', text: 'not requested' };
+if (deferred) { evidence.configurationOverride = true; evidence.overrideFields = ['features.tool_search', 'features.tool_search_always_defer_mcp_tools']; evidence.routingOverride = false; }
 async function verifyText(selectedModel, effort) {
   const check = { model: selectedModel.id, effort, route: selectedModel.id.startsWith('webbridge/') ? 'web' : 'native', result: 'started' };
   (evidence.textChecks ??= []).push(check);
@@ -202,6 +204,75 @@ async function verifyText(selectedModel, effort) {
   assert.ok(!events.some(event => event.method === 'item/started' && event.params?.threadId === thread && event.params?.turnId === turn && ['commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall'].includes(event.params?.item?.type)), 'E_UNEXPECTED_TOOL');
   check.result = 'passed';
   if (option === '--concurrent') check.completedAt = new Date().toISOString();
+}
+async function verifyWebTools() {
+  evidence.nativeMcpSearch = { result: 'started', harnessExecutedTool: false };
+  const started = await rpc('thread/start', { cwd, model, ephemeral: true, experimentalRawEvents: true, approvalPolicy: 'untrusted', sandbox: 'read-only' });
+  assert.equal(started.model, model, 'E_SELECTED_MODEL');
+  const query = 'Rust programming language official website';
+  const prompt = `Use the cxweb_web MCP search tool exactly once, with query exactly ${JSON.stringify(query)} and limit=3. Discover it using tool_search if needed. Wait for its real result. Then return exactly the first result title, a newline, and its link. Do not guess the result, use other tools, or change files.`;
+  const turn = (await rpc('turn/start', { threadId: started.thread.id, effort: 'medium', summary: 'auto', input: [{ type: 'text', text: prompt, text_elements: [] }] })).turn.id;
+  console.log(JSON.stringify({ phase: 'native MCP web search', model }));
+  const deadline = Date.now() + 600000;
+  let done;
+  while (Date.now() < deadline) {
+    assert.ok(!failure, failure);
+    done = events.find(event => event.method === 'turn/completed' && event.params?.threadId === started.thread.id && event.params?.turn?.id === turn);
+    if (done) break;
+    assert.equal(child.exitCode, null, 'E_CLIENT_EXIT');
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  assert.equal(done?.params?.turn?.status, 'completed', 'E_TURN_FAILED');
+  const completed = events.filter(event => event.method === 'item/completed' && event.params?.threadId === started.thread.id && event.params?.turnId === turn).map(event => event.params.item);
+  const calls = completed.filter(item => item.type === 'mcpToolCall');
+  assert.equal(calls.length, 1, 'E_MCP_CALL_COUNT');
+  const call = calls[0];
+  evidence.nativeMcpSearch.status = call.status;
+  assert.equal(call.server, 'cxweb_web', 'E_MCP_SERVER');
+  assert.equal(call.tool, 'search', 'E_MCP_TOOL');
+  assert.deepEqual(call.arguments, { query, limit: 3 }, 'E_MCP_ARGUMENTS');
+  assert.equal(call.status, 'completed', 'E_MCP_FAILED');
+  assert.ok(!call.error, 'E_MCP_FAILED');
+  const text = call.result.content.find(part => part.type === 'text')?.text;
+  const result = JSON.parse(text);
+  assert.equal(result.provider, 'Bing', 'E_SEARCH_PROVIDER');
+  assert.ok(result.results.length > 0, 'E_SEARCH_EMPTY');
+  const first = result.results[0];
+  const answers = completed.filter(item => item.type === 'agentMessage');
+  assert.equal(answers.length, 1, 'E_ANSWER_COUNT');
+  assert.equal(answers[0].text, first.title + '\n' + first.link, 'E_MCP_RESULT_RECALL');
+  const summaries = completed.filter(item => item.type === 'reasoning');
+  evidence.nativeMcpSearch = { result: 'passed', harnessExecutedTool: false, actualNativeMcpCall: true,
+    exactArguments: true, realPublicSearchResults: result.results.length, exactResultRecall: true,
+    summaryItems: summaries.length, publicSummaryCharacters: summaries.reduce((n, item) => n + (item.summary ?? []).join('').length, 0),
+    deferredToolDiscovery: completed.some(item => item.type === 'toolSearch') };
+  assert.deepEqual(await readdir(cwd), [], 'E_UNEXPECTED_FILE');
+}
+async function verifyPublicReasoning() {
+  const congruences = [[97n,42n],[101n,17n],[103n,89n],[107n,66n]];
+  let expected = 0n, step = 1n;
+  for (const [modulus, remainder] of congruences) { while (expected % modulus !== remainder) expected += step; step *= modulus; }
+  const started = await rpc('thread/start', { cwd, model, ephemeral: true, experimentalRawEvents: true, approvalPolicy: 'untrusted', sandbox: 'read-only' });
+  const prompt = 'Find the least nonnegative integer x such that x is congruent to 42 modulo 97, 17 modulo 101, 89 modulo 103, and 66 modulo 107. Verify all four congruences. Use no tools. Return only the decimal integer.';
+  const turn = (await rpc('turn/start', { threadId: started.thread.id, effort: 'xhigh', summary: 'auto', input: [{ type:'text', text:prompt, text_elements:[] }] })).turn.id;
+  console.log(JSON.stringify({ phase:'public reasoning trace', model }));
+  const deadline = Date.now() + 600000;
+  let done;
+  while (Date.now() < deadline) {
+    assert.ok(!failure, failure);
+    done = events.find(event => event.method === 'turn/completed' && event.params?.threadId === started.thread.id && event.params?.turn?.id === turn);
+    if (done) break;
+    assert.equal(child.exitCode, null, 'E_CLIENT_EXIT');
+    await new Promise(resolve => setTimeout(resolve,100));
+  }
+  assert.equal(done?.params?.turn?.status,'completed','E_TURN_FAILED');
+  const items = events.filter(event => event.method === 'item/completed' && event.params?.threadId === started.thread.id && event.params?.turnId === turn).map(event => event.params.item);
+  const answer = items.filter(item => item.type === 'agentMessage');
+  assert.equal(answer.length,1,'E_ANSWER_COUNT');
+  assert.equal(answer[0].text,expected.toString(),'E_ARITHMETIC_ANSWER');
+  const chars = items.filter(item => item.type === 'reasoning').reduce((n,item) => n+(item.summary ?? []).join('').length,0);
+  evidence.publicReasoning = { correctAnswer:true, summaryCharacters:chars, buffered:true };
+  assert.ok(chars > 0,'E_PUBLIC_REASONING_NOT_OBSERVED');
 }
 
 async function verifyNamespaces(selectedModel) {
@@ -436,7 +507,11 @@ try {
   evidence.reasoningChoices = selectedModel.supportedReasoningEfforts;
   assert.ok(models.some(row => !row.id.startsWith('webbridge/')), 'E_NATIVE_MODELS_MISSING');
   evidence.ownedAndNativeCatalog = true;
-  if (option === '--reasoning') {
+  if (option === '--reasoning-trace') {
+    await verifyPublicReasoning();
+  } else if (['--web-tools', '--web-tools-deferred'].includes(option)) {
+    await verifyWebTools();
+  } else if (option === '--reasoning') {
     const pro = selectedModel.supportedReasoningEfforts.find(row => row.reasoningEffort === 'max')?.description;
     assert.ok(['Pro', '6 PRO'].includes(pro), 'E_REASONING_PRO_LABEL');
     const expected = [['low', 'Instant'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'Extra High'], ['max', pro]];
@@ -541,6 +616,12 @@ try {
   evidence.configUnchanged = sha256(await readFile(configPath)) === configBefore;
   evidence.executableUnchanged = sha256(await readFile(client)) === hash;
   evidence.observedAt = new Date().toISOString();
+  evidence.reasoningEvents = Object.fromEntries([...new Set(events.map(event => event.method).filter(method => typeof method === 'string' && /reasoning/i.test(method)))].map(method => [method, events.filter(event => event.method === method).length]));
+  evidence.rawOutputKinds = Object.fromEntries([...new Set(events.filter(event => event.method === 'rawResponseItem/completed').map(event => event.params?.item?.type).filter(Boolean))].map(type => [type, events.filter(event => event.method === 'rawResponseItem/completed' && event.params?.item?.type === type).length]));
+  if (evidence.nativeMcpSearch) evidence.nativeMcpSearch.deferredToolDiscovery = (evidence.rawOutputKinds.tool_search_call ?? 0) > 0;
+  if (deferred && evidence.result === 'PASS' && !evidence.nativeMcpSearch?.deferredToolDiscovery) {
+    evidence.result = 'FAIL'; evidence.error = 'E_DEFERRED_TOOL_DISCOVERY_NOT_OBSERVED'; process.exitCode = 1;
+  }
   if (toolRun?.sourceProposal) await writeFile(cwd + '.patch.txt', toolRun.sourceProposal, { flag: 'wx' });
   if (!evidence.configUnchanged || !evidence.executableUnchanged) { evidence.result = 'FAIL'; process.exitCode = 1; }
   await writeFile(join(cwd, 'evidence.json'), JSON.stringify(evidence, null, 2) + '\n');

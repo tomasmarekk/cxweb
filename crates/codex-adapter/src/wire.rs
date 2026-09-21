@@ -13,7 +13,18 @@ pub fn encode(
     response_id: &str,
     created_at: u64,
 ) -> Result<CompletedResponse, &'static str> {
-    let items: Vec<Value> = match output {
+    encode_with_summary(output, model, response_id, created_at, &[])
+}
+
+/// Summaries must come from the attributed public browser DOM, never an envelope.
+pub fn encode_with_summary(
+    output: &ValidatedOutput,
+    model: &str,
+    response_id: &str,
+    created_at: u64,
+    summary: &[String],
+) -> Result<CompletedResponse, &'static str> {
+    let mut items: Vec<Value> = match output {
         ValidatedOutput::Final(text) => vec![
             json!({"id":format!("{response_id}_message"),"type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":text,"annotations":[]}]}),
         ],
@@ -30,6 +41,17 @@ pub fn encode(
             .collect(),
         ValidatedOutput::Checkpoint(_) => return Err("E_COMPACTION_CODEC_REQUIRED"),
     };
+    if !summary.is_empty() {
+        if summary.len() > 64
+            || summary
+                .iter()
+                .any(|text| text.is_empty() || text.len() > 8192)
+        {
+            return Err("E_REASONING_SUMMARY_LIMIT");
+        }
+        items.insert(0, json!({"type":"reasoning","id":format!("{response_id}_reasoning"),
+            "summary":summary.iter().map(|text| json!({"type":"summary_text","text":text})).collect::<Vec<_>>() }));
+    }
     encode_items(items, model, response_id, created_at)
 }
 
@@ -68,7 +90,24 @@ fn encode_items(
         let mut initial = item.clone();
         initial["status"] = json!("in_progress");
         match item["type"].as_str() {
-            Some("compaction") => {
+            Some("reasoning") => {
+                initial["summary"] = json!([]);
+                events.push(
+                    json!({"type":"response.output_item.added","output_index":i,"item":initial}),
+                );
+                for (index, part) in item["summary"]
+                    .as_array()
+                    .ok_or("E_UNSUPPORTED_OUTPUT")?
+                    .iter()
+                    .enumerate()
+                {
+                    events.push(json!({"type":"response.reasoning_summary_part.added","item_id":item["id"],"output_index":i,"summary_index":index,"part":{"type":"summary_text","text":""}}));
+                    events.push(json!({"type":"response.reasoning_summary_text.delta","item_id":item["id"],"output_index":i,"summary_index":index,"delta":part["text"]}));
+                    events.push(json!({"type":"response.reasoning_summary_text.done","item_id":item["id"],"output_index":i,"summary_index":index,"text":part["text"]}));
+                    events.push(json!({"type":"response.reasoning_summary_part.done","item_id":item["id"],"output_index":i,"summary_index":index,"part":part}));
+                }
+            }
+            Some("compaction" | "tool_search_call") => {
                 events.push(
                     json!({"type":"response.output_item.added","output_index":i,"item":item}),
                 );

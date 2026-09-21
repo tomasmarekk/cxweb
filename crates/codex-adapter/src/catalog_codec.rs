@@ -106,7 +106,7 @@ impl CatalogCodec {
         // service tier, multi-agent policy or image capability is copied.
         let levels = route.reasoning_levels()?;
         let label = format!("ChatGPT Web · {}", route.observed_label);
-        let mut description = format!("{label}. Hosted search unavailable");
+        let mut description = format!("{label}. Connected through cxweb");
         if levels
             .iter()
             .any(|level| level.effort == "low" && level.description == "Instant")
@@ -129,11 +129,11 @@ impl CatalogCodec {
             "availability_nux":null,"upgrade":null,
             "base_instructions":"Follow the user's task and applicable instructions. Use client-provided tools when needed. Tool execution is performed by the client. Report unavailable capabilities accurately.",
             "support_verbosity":false,"default_verbosity":null,
-            "supports_reasoning_summary_parameter":false,
+            "supports_reasoning_summary_parameter":true,
             "truncation_policy":{"mode":"bytes","limit":10000},
             "input_modalities":["text"],"tool_mode":"direct",
             "experimental_supported_tools":[],"additional_speed_tiers":[],"service_tiers":[],
-            "supports_search_tool":false,"supports_experimental_context":false,"use_responses_lite":false
+            "supports_search_tool":true,"supports_experimental_context":false,"use_responses_lite":false
         }))
     }
 }

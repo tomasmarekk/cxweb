@@ -74,6 +74,7 @@ function (baselineIds, expectedPrompt) {
     pendingUtf16 = true;
   }
   return {
+    summary: readPublicSummary(assistant, content),
     attribution_diagnostic: {
       expected_length: expected.length, plain_length: plain.length, rendered_length: rendered.length,
       common_prefix_length: prefix, actual_character_kind: characterKind(plain[prefix]), expected_character_kind: characterKind(expected[prefix]),

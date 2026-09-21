@@ -10,6 +10,8 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Public web search over MCP stdio, for Codex client-executed tools.
+    WebTools,
     /// Run the next frozen protocol case once. Uses ChatGPT allowance; preserves all first attempts.
     RuntimeQualifyProtocol {
         #[arg(long)]
@@ -164,6 +166,7 @@ enum BrowserAction {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match Args::parse().command {
+        Command::WebTools => cxweb_runtime::web_tools::serve().await?,
         Command::RuntimeQualifyProtocol {
             installation,
             run,

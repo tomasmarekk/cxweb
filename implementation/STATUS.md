@@ -2,12 +2,11 @@
 
 ## Acceptance and current gate
 
-Current delivery scope, narrowed by the user on 2026-09-21: make the ChatGPT Web
-model and all five reasoning choices work in the actual Codex CLI and Codex App,
-with saved sign-in and no visible Chrome required during normal operation. Finish
-and deliver that working local integration. No subagents. The broader PRD release
-certification below is retained as historical engineering scope, not a condition
-for this local handoff. No claim of full G0–G5 certification is made.
+Immediate delivery priority, restated by the user on 2026-09-21: make ChatGPT Web
+work in actual Codex CLI and Codex App with coding tools, MCP, web research, public
+reasoning and all five effort choices. Preserve saved sign-in and background
+operation. No subagents. This priority does not establish completion of the full
+PRD or its release gates; those remain open wherever evidence below is incomplete.
 Manual login and managed reuse of the saved session are user-confirmed. Scoped
 background text generation and native read/apply_patch cycles now pass through
 both actual native backends. The actual CLI picker passed isolated synthetic and
@@ -23,7 +22,7 @@ pass web/native/web text generation in one process through the installed runtime
 Scheduled browser recovery now passes after removing an MSIX data-path ambiguity.
 Earlier installed CLI and App-backend read/patch/final scenarios and a fixed GUI
 message passed with the owned model and effort corroborated by native turn
-context. Current live state (2026-09-21, 06:48 UTC): the user completed the new
+context. Earlier live state (2026-09-21, 06:48 UTC): the user completed the new
 ordinary-Chrome login and closed its window. Same-account, model, reasoning and
 English background recovery passed. Both actual native backend catalogs include
 all five choices alongside native models; a fresh xhigh text round trip passed
@@ -47,6 +46,41 @@ task delegated to the original App backend, which retained its old catalog and
 used fallback metadata; that attempt failed before generation. Broader coding
 qualification remains in progress; no release gate is certified.
 
+## Client tools, public status and cold startup (2026-09-21)
+
+- Added native client-executed tool discovery, including definitions returned in
+  `tool_search_output`. Loaded function/namespace schemas now enter the next
+  request's callable registry; explicit current definitions take precedence.
+  Discovery calls retain their native wire type, object arguments and correlated
+  results. Structured MCP text results and public reasoning survive follow-up
+  history and websocket reconstruction.
+- Added `cxweb web-tools`, a standard stdio MCP server for public Bing search.
+  It returns actual source titles, URLs and snippets without account credentials.
+  Both installed native backends completed real MCP search and exact result recall.
+  A separate scheduled-process test verified the executable/config outside the
+  Codex MSIX container. The stable binary location is under `.cxweb-runtime/bin`.
+  This is client MCP search, not OpenAI-hosted `web_search`; automatic MCP setup
+  for a new machine is not yet part of the installer.
+- Public ChatGPT status is delivered as native reasoning-summary events. The live
+  App-backend test returned the exact expected answer and the actual rendered
+  `Thinking` status. It does not prove detailed reasoning or live streaming:
+  delivery remains buffered until completion and scope revalidation.
+- Actual deferred MCP discovery exposed a missing historical-definition merge;
+  that failure is preserved in the development report. The fix passes the five
+  adapter regression tests. Its live retest is pending user verification requested
+  by ChatGPT after the latest cold startup, rather than being reported as passed.
+- A visible local diagnostic repeatedly saw a missing model control and later
+  became ready without interaction. Background restoration now allows 90 seconds
+  for composer/model hydration instead of 15. All account, language and model
+  checks remain required. A failed hydration offers an explicit background retry.
+- Validation: adapter unit/contract suites passed; runtime 225 passed / 10 ignored;
+  runtime clippy passed; public-summary and installed-panel JavaScript tests 35
+  passed; all three Windows release binaries built successfully. Latest daemon
+  SHA-256: `57ace28b540e50b4124e54e843ec1146f6a87fc81ae4749c8b970d643c5ad309`.
+  The updated panel and runtime are installed. Current live health requires the
+  ChatGPT user verification step; prior Ready observations are historical.
+- Evidence: `integration-tests/quality/client-tools-development-sep21.json`.
+  Full PRD release gates and unrestricted native feature parity remain unproven.
 ## Windows permissions and control panel (2026-09-21)
 
 - CI exposed an inherited-DACL replacement difference absent on this Windows

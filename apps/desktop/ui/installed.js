@@ -63,7 +63,7 @@ window.cxwebInstalled = (() => {
     node('installed-choice').disabled = pending || Boolean(confirmation);
     node('installed-remove').disabled = pending || Boolean(confirmation) || !snapshot || ['disconnecting', 'removal_pending_restart', 'disconnected_complete'].includes(snapshot.health.overall);
     const retryable = snapshot?.health.overall === 'unavailable' && snapshot.health.active_web_turns === 0 && snapshot.health.components.runtime?.state === 'healthy' &&
-      ['E_ALREADY_RUNNING', 'E_BROWSER_RUNTIME_MISSING', 'E_BROWSER_START', 'E_BACKGROUND_NAVIGATION', 'E_BROWSER_OBSERVATION'].includes(snapshot.health.components.browser?.code);
+      ['E_ALREADY_RUNNING', 'E_BROWSER_RUNTIME_MISSING', 'E_BROWSER_START', 'E_BACKGROUND_NAVIGATION', 'E_BROWSER_OBSERVATION', 'E_BROWSER_BASELINE_MODEL', 'E_BROWSER_BASELINE_COMPOSER'].includes(snapshot.health.components.browser?.code);
     node('installed-retry').hidden = !retryable;
     node('installed-retry').disabled = !retryable || pending || Boolean(confirmation);
     const canQualify = canQualifyReasoning();

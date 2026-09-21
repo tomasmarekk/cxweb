@@ -290,6 +290,7 @@ impl Coordinator {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(1800);
         let mut progress_at = tokio::time::Instant::now();
         let mut previous_text_hash = String::new();
+        let mut summary = Vec::new();
         let mut state = TurnState::Submitting;
         loop {
             if cancel.is_cancelled() {
@@ -333,6 +334,7 @@ impl Coordinator {
                 previous_text_hash = text_hash;
                 progress_at = tokio::time::Instant::now();
             }
+            let observed_summary = observation.summary.clone();
             let progress = match tracker.observe(observation) {
                 Ok(progress) => progress,
                 Err(error) => {
@@ -346,6 +348,20 @@ impl Coordinator {
                     return Err(error);
                 }
             };
+            if matches!(
+                tracker.state(),
+                TurnState::Generating | TurnState::Completed
+            ) {
+                for text in observed_summary {
+                    if !text.is_empty()
+                        && text.len() <= 8192
+                        && summary.len() < 64
+                        && !summary.contains(&text)
+                    {
+                        summary.push(text);
+                    }
+                }
+            }
             if state == TurnState::Submitting && tracker.state() != TurnState::Submitting {
                 self.ledger.transition(id, TurnState::Submitted).await?;
                 state = TurnState::Submitted;
@@ -403,9 +419,17 @@ impl Coordinator {
                     ) => codec.seal(summary, pending).and_then(|token| {
                         wire::encode_checkpoint(&token, &request.model, &response_id, created_at)
                     }),
-                    (_, None, None) => {
-                        wire::encode(&output, &request.model, &response_id, created_at)
-                    }
+                    (_, None, None) => wire::encode_with_summary(
+                        &output,
+                        &request.model,
+                        &response_id,
+                        created_at,
+                        if request.public_summary {
+                            &summary
+                        } else {
+                            &[]
+                        },
+                    ),
                     _ => Err("E_COMPACTION_CODEC_REQUIRED"),
                 };
                 let encoded = match encoded {
@@ -583,6 +607,7 @@ mod tests {
                     user_matches: true,
                     assistant_id: Some(assistant.into()),
                     text,
+                    summary: vec![],
                     generating,
                     completion_control: !generating,
                     fenced_output: false,

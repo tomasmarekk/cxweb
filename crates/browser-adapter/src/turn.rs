@@ -19,6 +19,9 @@ pub struct Observation {
     pub user_matches: bool,
     pub assistant_id: Option<String>,
     pub text: String,
+    /// Public, rendered ChatGPT progress only. Never private model state.
+    #[serde(default)]
+    pub summary: Vec<String>,
     pub generating: bool,
     pub completion_control: bool,
     pub fenced_output: bool,
@@ -190,6 +193,7 @@ mod tests {
             user_matches: true,
             assistant_id: Some("answer-new".into()),
             text: "answer".into(),
+            summary: vec![],
             generating: false,
             completion_control: true,
             fenced_output: false,

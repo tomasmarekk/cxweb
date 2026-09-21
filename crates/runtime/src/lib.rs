@@ -69,6 +69,7 @@ pub mod turn;
 pub mod web_provider;
 #[cfg(windows)]
 mod web_recovery;
+pub mod web_tools;
 mod web_ws;
 #[cfg(test)]
 mod web_ws_tests;
