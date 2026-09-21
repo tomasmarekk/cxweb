@@ -84,12 +84,24 @@ earlier successful observations do not establish current readiness.
   UI tests derive installed command names from the actual invoke calls, checking
   the registered handler, generated permission and capability together. The
   preceding CLI-driven managed login opened but encountered the user-reported
-  challenge loop; the ordinary-browser replacement has not yet been deployed.
+  challenge loop. After the old window was closed, the installed finish operation
+  safely released its owner; background recovery still requested verification.
+- Deployed the ordinary-login daemon, SHA-256
+  371fa59efbf998ae7664cb9913d7297e4ca601b6a2acd29f3636d44a17b2545b,
+  after checking the dedicated profile had no browser process and the runtime
+  had no active web turn. Source/installed hashes match. Its native connection
+  handshake was observed after restart. This daemon contains e12db8f's login
+  changes; the diagnostics desktop/CLI are from 48fe243.
+- The actual desktop Open ChatGPT sign-in button succeeded. The new dedicated
+  Chrome process was checked for no remote-debugging/headless flags, English
+  locale flags, the official URL and last-window process exit configuration.
+  Health correctly reports E_LOGIN_WINDOW_OPEN. User authentication and subsequent
+  same-account background validation are still pending; no generation was sent.
 - Validation: 326 workspace tests passed with 22 opt-in tests ignored, plus all
   72 desktop UI tests. Clippy with denied warnings, formatting and diff checks
   passed. Tests cover non-auth/cancelled refusal, instance binding, open/finish
   receipt separation, deduplication, ordinary-browser launch arguments and explicit
-  UI sequencing. Live sign-in recovery remains to be verified after deploying.
+  UI sequencing. Live authentication and saved-session recovery remain unverified.
 
 ## Installed-client presence (2026-09-21)
 

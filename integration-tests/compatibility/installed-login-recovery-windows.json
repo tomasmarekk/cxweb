@@ -1,0 +1,30 @@
+{
+  "schema": "cxweb.installed-login-recovery.v1",
+  "date": "2026-09-21",
+  "result": "PASS ordinary Chrome launch from installed desktop; authentication and background reuse NOT_VERIFIED",
+  "daemon_sha256": "371fa59efbf998ae7664cb9913d7297e4ca601b6a2acd29f3636d44a17b2545b",
+  "daemon_login_source": "e12db8f",
+  "desktop_source": "48fe243",
+  "observed_at": "2026-09-21T06:45:14.914Z",
+  "checks": {
+    "old_login_owner_released_after_window_close": true,
+    "no_profile_browser_before_deployment": true,
+    "no_active_web_turn_at_deployment": true,
+    "installed_daemon_matches_built_hash": true,
+    "native_handshake_after_restart": true,
+    "actual_desktop_login_button_opened_browser": true,
+    "one_owned_root_browser_process": true,
+    "remote_debugging": false,
+    "headless": false,
+    "english_launch_locale": true,
+    "official_chatgpt_url": true,
+    "background_mode_disabled_for_login": true,
+    "health_code": "E_LOGIN_WINDOW_OPEN",
+    "automatic_generation": false
+  },
+  "not_verified": [
+    "Successful user completion of Cloudflare verification in the new window",
+    "Saved-session handoff after the user closes the ordinary Chrome window",
+    "Fresh native-client catalog and generation availability after authentication"
+  ]
+}
