@@ -4430,3 +4430,9 @@ model discovery, native WebSocket preservation and actual pickers are proven.
 - All three installed executable hashes match the extracted CI installer payload. Installation exited with code 0.
 - Codex config.toml hash and the private daemon process IDs remained unchanged. Private IPC health remained ready. Reopened the installed desktop executable; no login or session deletion was performed.
 - Local verification receipt was updated under .local/github-release-v0.1.1/verification.json. The private host remains its existing version; replacing the desktop payload does not hot-swap running hosts.
+
+## Portable contract CI
+
+- Added the PRD-required Linux Rust contract job for the workspace excluding the Windows desktop package, and made Windows CI discover every JavaScript test using the same directories as release CI. This does not claim Linux desktop or browser support.
+- First Linux run 35606854365 exposed Windows-only clock imports in portable gateway/native health code and a health accessor unavailable to WebSocket tests. Added UTC observations on non-Windows using the already locked time 0.3.55 package; existing Windows time behavior is retained. Gateway health is also compiled for tests on every platform.
+- Local format check, clock contract test, all ten WebSocket tests, platform/runtime Clippy with warnings denied and the complete JavaScript suite passed. Linux verification of the fix remains pending the next CI run.

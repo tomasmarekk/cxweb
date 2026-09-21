@@ -7,7 +7,6 @@ pub mod browser_process;
 mod browser_window;
 #[cfg(windows)]
 pub mod child_job;
-#[cfg(windows)]
 pub mod clock;
 #[cfg(windows)]
 mod config_access;

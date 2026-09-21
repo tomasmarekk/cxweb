@@ -45,7 +45,7 @@ pub enum ProviderHealth {
     Unavailable { code: &'static str },
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct GatewayHealth {
     pub accepting: bool,
@@ -242,7 +242,7 @@ impl Gateway {
         Ok(())
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, test))]
     pub(crate) fn health(&self) -> GatewayHealth {
         let provider = self.web.health();
         let mut clients = self

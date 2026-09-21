@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[target.'cfg(not(windows))'.dependencies]
+time = { version = "0.3.55", default-features = false, features = ["std"] }
+
 [target.'cfg(windows)'.dependencies]
 tokio.workspace = true
 serde.workspace = true
