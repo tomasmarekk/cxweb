@@ -362,6 +362,31 @@ pub(crate) mod tests {
     use super::*;
 
     #[test]
+    fn inherited_config_replacement_preserves_permissions() {
+        let fixture = Fixture::new();
+        let config = fixture.config();
+        std::fs::write(&config, b"original").unwrap();
+        let before = Snapshot::capture(&config).unwrap();
+        let staged = before.stage(".cxweb-inherited.tmp", b"updated").unwrap();
+        let result = before.commit(&staged, b"updated");
+        let after = Snapshot::capture(&config).unwrap();
+        assert!(
+            result.is_ok(),
+            "{result:?}; fixture policy before: {}; after: {}",
+            before.access.as_ref().unwrap().fixture_descriptor(),
+            after.access.as_ref().unwrap().fixture_descriptor()
+        );
+        assert_eq!(after.original(), b"updated");
+        assert!(
+            !before
+                .access
+                .as_ref()
+                .unwrap()
+                .descriptor_differs(after.access.as_ref().unwrap())
+        );
+    }
+
+    #[test]
     fn native_config_preserves_readers_without_relaxing_private_files_or_allowing_writers() {
         let fixture = Fixture::new();
         let config = fixture.config();

@@ -65,6 +65,12 @@ pub(crate) struct AccessSnapshot {
     owner: String,
 }
 impl AccessSnapshot {
+    #[cfg(test)]
+    pub(crate) fn fixture_descriptor(&self) -> String {
+        self.descriptor
+            .replace(&current_sid().expect("fixture user"), "CURRENT_USER")
+    }
+
     pub(crate) fn owner(&self) -> &str {
         &self.owner
     }
