@@ -599,6 +599,30 @@ struct InstalledLogin {
     _ownership: std::fs::File,
 }
 impl RecoveryController {
+    /// Called only after web admission is closed and all admitted work drained.
+    /// Retain the driver on failure: an enqueue or a closed window is not proof
+    /// that its browser process and profile lock have been released.
+    pub(crate) async fn release_browser(&self) -> Result<(), &'static str> {
+        self.release_login().await?;
+        let driver = self
+            .pending
+            .1
+            .lock()
+            .map_err(|_| "E_WEB_RECOVERY_STATE")?
+            .as_ref()
+            .map(|(driver, _)| driver.clone());
+        if let Some(driver) = driver {
+            driver
+                .shutdown()
+                .await
+                .map_err(|_| "E_WEB_RECOVERY_CLEANUP")?;
+            *self.pending.1.lock().map_err(|_| "E_WEB_RECOVERY_STATE")? = None;
+        }
+        *self.pending.0.lock().map_err(|_| "E_WEB_RECOVERY_STATE")? =
+            Some(Err("E_WEB_DISCONNECTED"));
+        Ok(())
+    }
+
     pub(crate) async fn web_login(
         &self,
         finish: bool,
@@ -1288,6 +1312,116 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(pending.ready(), Err("E_CANCELLED")));
+    }
+
+    #[tokio::test]
+    async fn disconnect_retains_browser_until_shutdown_acknowledgement_and_preserves_failure() {
+        for success in [true, false] {
+            let (started, observed) = tokio::sync::oneshot::channel();
+            let (finish, completion) = tokio::sync::oneshot::channel();
+            let driver = ManagedDriver::shutdown_fixture(started, completion);
+            let coordinator = CoordinatorProvider::new(
+                Coordinator::new(Ledger::in_memory(), Arc::new(driver.clone())),
+                ProviderScope {
+                    installation: "fixture".into(),
+                    account: "account".into(),
+                    workspace: "workspace".into(),
+                    epoch: 1,
+                },
+                vec!["webbridge/fixture".into()],
+            )
+            .unwrap();
+            let pending = PendingProvider::active(driver, coordinator, None);
+            let recovery = RecoveryController::new(
+                pending.clone(),
+                Receipt::fixture("fixture"),
+                PathBuf::new(),
+            );
+            let waiting = tokio::spawn({
+                let recovery = recovery.clone();
+                async move { recovery.release_browser().await }
+            });
+            observed.await.unwrap();
+            assert!(!waiting.is_finished());
+            assert!(pending.1.lock().unwrap().is_some());
+            finish
+                .send(if success {
+                    Ok(())
+                } else {
+                    Err("fixture browser cleanup failed")
+                })
+                .unwrap();
+            let result = waiting.await.unwrap();
+            if success {
+                assert!(result.is_ok());
+                assert!(pending.1.lock().unwrap().is_none());
+                assert!(matches!(pending.ready(), Err("E_WEB_DISCONNECTED")));
+                recovery.release_browser().await.unwrap();
+            } else {
+                assert_eq!(result, Err("E_WEB_RECOVERY_CLEANUP"));
+                assert!(pending.1.lock().unwrap().is_some());
+                assert_eq!(
+                    recovery.release_browser().await,
+                    Err("E_WEB_RECOVERY_CLEANUP")
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires installed Chrome or Edge; uses a fresh signed-out profile without navigating to ChatGPT"]
+    async fn disconnect_closes_real_fixture_browser_and_releases_profile_lock() {
+        use cxweb_platform::state::protected_directory;
+        let root = StatePaths::installations().unwrap().join(format!(
+            "browser-release-fixture-{:032x}",
+            rand::random::<u128>()
+        ));
+        protected_directory(&root).unwrap();
+        let paths = StatePaths {
+            root: root.clone(),
+            profile: root.join("profile"),
+            state: root.join("state"),
+        };
+        protected_directory(&paths.profile).unwrap();
+        protected_directory(&paths.state).unwrap();
+        let profile = paths.profile.clone();
+        let ownership = paths.lock().unwrap();
+        let receipt = Receipt::fixture("fixture");
+        let binding = receipt.binding.clone();
+        let driver = tokio::task::spawn_blocking(move || {
+            let browser =
+                ManagedBrowser::launch_offscreen(&installed_browser().unwrap(), &profile).unwrap();
+            ManagedDriver::start(browser, binding, ownership).unwrap()
+        })
+        .await
+        .unwrap();
+        assert!(paths.lock().is_err());
+        let coordinator = CoordinatorProvider::new(
+            Coordinator::new(Ledger::in_memory(), Arc::new(driver.clone())),
+            ProviderScope {
+                installation: "fixture".into(),
+                account: "account".into(),
+                workspace: "workspace".into(),
+                epoch: 1,
+            },
+            vec!["webbridge/fixture".into()],
+        )
+        .unwrap();
+        let pending = PendingProvider::active(driver.clone(), coordinator, None);
+        let recovery = RecoveryController::new(pending, receipt, root.clone());
+        tokio::time::timeout(Duration::from_secs(30), recovery.release_browser())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(driver.is_closed());
+        drop(
+            paths
+                .lock()
+                .expect("browser ownership must be released before acknowledgement"),
+        );
+        recovery.release_browser().await.unwrap();
+        // Only this newly created fixture directory is removed; no saved profile was opened.
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[tokio::test]
     async fn installed_login_refuses_non_auth_states_and_cancelled_operations() {

@@ -664,6 +664,23 @@ impl ManagedDriver {
         self.request(Command::Shutdown)
     }
 
+    #[cfg(test)]
+    pub(crate) fn shutdown_fixture(
+        started: oneshot::Sender<()>,
+        completion: oneshot::Receiver<Result<(), &'static str>>,
+    ) -> Self {
+        let (commands, mut incoming) = mpsc::channel(1);
+        tokio::spawn(async move {
+            let Some(Command::Shutdown(reply)) = incoming.recv().await else {
+                panic!("expected browser shutdown");
+            };
+            let _ = started.send(());
+            let result = completion.await.expect("fixture completion");
+            let _ = reply.send(result);
+        });
+        Self { commands }
+    }
+
     /// Retire an unused diagnostic owner without closing other tabs or leases.
     /// The generation owner must hold its exclusive consumer lease throughout.
     pub(crate) fn retire_idle(&self) -> BrowserFuture<()> {

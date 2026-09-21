@@ -414,7 +414,7 @@ impl DisconnectController {
             return Err(error);
         }
         if let Some(recovery) = &self.recovery
-            && let Err(code) = recovery.release_login().await
+            && let Err(code) = recovery.release_browser().await
         {
             self.state.send_replace(DisconnectState::DrainFailed);
             return Err(code);

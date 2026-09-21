@@ -1,7 +1,7 @@
 # Windows release
 
 In GitHub, open **Actions → Windows release → Run workflow**. Select the source
-branch, enter its version as a tag (initially `v0.1.0`), and keep **Mark this release
+branch, enter its version as a tag (for example `v0.1.1`), and keep **Mark this release
 as a preview** enabled for development builds. The workflow runs Rust and
 JavaScript checks, builds the per-user installer, tests its lifecycle hooks, and
 publishes the installer and SHA-256 file to GitHub Releases. The build artifact is
@@ -31,5 +31,10 @@ The main payload contains sibling `cxweb-desktop.exe`, `cxweb-daemon.exe`, and
 replacing the GUI payload does not replace a running host. Uninstall calls
 `cxweb prepare-uninstall`; it never silently cancels active web tasks. The
 `--check` variant is read-only. Existing clients' native compatibility listeners
-and private profile data are retained. Managed browser delivery, profile deletion,
-and signed automatic runtime updates are not provided by this preview installer.
+are retained. Profile deletion is optional during interactive uninstall; silent
+uninstall keeps it unless `/CLEARSESSION` is supplied. `/UPDATE` always preserves
+the session. After removing all connections, **Clear local ChatGPT session** in
+cxweb or `cxweb clear-local-session` performs the same scoped deletion. A busy
+profile or uncertain connection ownership blocks deletion. This clears local
+sign-in data, not remote sessions or ChatGPT server records. Managed browser
+delivery and signed automatic runtime updates are not provided by this preview.

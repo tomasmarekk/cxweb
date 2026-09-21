@@ -27,6 +27,8 @@
       </section>
       <p>Closing this window keeps cxweb in the notification area and leaves your tasks running. Open cxweb again to return here. Removing the connection restores owned configuration changes and keeps your saved ChatGPT sign-in. Existing Codex clients may need a restart.</p>
       <button id="installed-remove" class="secondary" disabled>Remove connection</button>
+      <button id="installed-clear-session" class="secondary" hidden disabled>Clear local ChatGPT session</button>
+      <p id="installed-session-result" role="status" aria-live="polite"></p>
     </div></details>
     <p id="installed-error" role="alert" hidden></p>
     <dialog id="installed-confirm" aria-labelledby="installed-confirm-title" aria-describedby="installed-confirm-description">
@@ -34,6 +36,12 @@
       <p id="installed-confirm-description">The current response will be interrupted.</p>
       <button id="installed-keep" class="secondary" autofocus>Keep connected</button>
       <button id="installed-stop" class="primary">Stop and remove</button>
+    </dialog>
+    <dialog id="installed-session-confirm" aria-labelledby="installed-session-title" aria-describedby="installed-session-description">
+      <h2 id="installed-session-title">Clear the saved ChatGPT session?</h2>
+      <p id="installed-session-description">This deletes the dedicated cxweb browser profile on this device. Remove every cxweb connection first and close its sign-in windows. Your Codex sign-in and personal browser profiles are preserved. This does not sign out remote devices or delete conversations stored by ChatGPT.</p>
+      <button id="installed-session-keep" class="secondary" autofocus>Keep saved session</button>
+      <button id="installed-session-clear" class="primary">Clear local session</button>
     </dialog>
   </section>
   <section id="setup-view" hidden>

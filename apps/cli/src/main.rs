@@ -10,6 +10,8 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Clear the dedicated ChatGPT browser profile after every connection is removed.
+    ClearLocalSession,
     /// Restore cxweb-owned routing at idle before removing the desktop payload.
     PrepareUninstall {
         /// Read-only preflight; leave every connection and runtime running.
@@ -172,6 +174,17 @@ enum BrowserAction {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match Args::parse().command {
+        Command::ClearLocalSession => {
+            #[cfg(windows)]
+            {
+                cxweb_runtime::installed_control::clear_local_session().await?;
+                print_json(
+                    &serde_json::json!({"local_session_cleared":true,"remote_logout_verified":false}),
+                );
+            }
+            #[cfg(not(windows))]
+            return Err("local session removal requires Windows".into());
+        }
         Command::PrepareUninstall { check } => {
             #[cfg(windows)]
             {

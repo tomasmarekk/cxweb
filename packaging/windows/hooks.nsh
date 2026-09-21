@@ -1,5 +1,6 @@
 ; The installed desktop payload is separate from the private supervised host.
-; Never kill that host or delete its profile, journal, or compatibility listener.
+; Keep its journal and compatibility listener. Session removal is a separate opt-in.
+!include "FileFunc.nsh"
 !macro NSIS_HOOK_PREUNINSTALL
   ${If} $UpdateMode <> 1
     nsExec::ExecToStack '"$INSTDIR\cxweb.exe" prepare-uninstall'
@@ -10,7 +11,31 @@
       SetErrorLevel 1
       Abort
     ${EndIf}
-    DetailPrint "Codex connections removed. Private session data and compatibility runtimes are retained for already open clients."
+    StrCpy $2 0
+    ${GetParameters} $3
+    ClearErrors
+    ${GetOptions} $3 "/CLEARSESSION" $3
+    ${IfNot} ${Errors}
+      StrCpy $2 1
+    ${Else}
+      ${IfNot} ${Silent}
+        MessageBox MB_YESNO|MB_DEFBUTTON2|MB_ICONQUESTION "Also delete the saved ChatGPT session in cxweb? Codex sign-in and your personal browser profiles are preserved. Remote ChatGPT data is not deleted." /SD IDNO IDNO keep_local_session
+        StrCpy $2 1
+        keep_local_session:
+      ${EndIf}
+    ${EndIf}
+    ${If} $2 = 1
+      nsExec::ExecToStack '"$INSTDIR\cxweb.exe" clear-local-session'
+      Pop $0
+      Pop $1
+      ${If} $0 != 0
+        MessageBox MB_OK|MB_ICONEXCLAMATION "The local ChatGPT session could not be fully cleared. Close cxweb sign-in windows and check the connection in cxweb before trying again. Application files were kept so you can resolve this." /SD IDOK
+        SetErrorLevel 1
+        Abort
+      ${EndIf}
+      DetailPrint "The dedicated local ChatGPT session was cleared."
+    ${EndIf}
+    DetailPrint "Codex connections removed. Compatibility runtimes are retained for already open clients."
   ${EndIf}
 !macroend
 

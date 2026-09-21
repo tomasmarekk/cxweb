@@ -585,9 +585,9 @@ pub(crate) mod tests {
         }
     }
 
-    struct Junction(PathBuf);
+    pub(crate) struct Junction(PathBuf);
     impl Junction {
-        fn new(path: &Path, target: &Path) -> Self {
+        pub(crate) fn new(path: &Path, target: &Path) -> Self {
             use std::os::windows::process::CommandExt;
             let status = std::process::Command::new("powershell.exe")
                 .args([

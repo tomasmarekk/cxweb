@@ -62,6 +62,9 @@ window.cxwebInstalled = (() => {
     node('installed-refresh').disabled = pending || Boolean(confirmation);
     node('installed-choice').disabled = pending || Boolean(confirmation);
     node('installed-remove').disabled = pending || Boolean(confirmation) || !snapshot || ['disconnecting', 'removal_pending_restart', 'disconnected_complete'].includes(snapshot.health.overall);
+    const removed = snapshot && ['removal_pending_restart', 'disconnected_complete'].includes(snapshot.health.overall);
+    node('installed-clear-session').hidden = !removed;
+    node('installed-clear-session').disabled = !removed || pending || Boolean(confirmation);
     const retryable = snapshot?.health.overall === 'unavailable' && snapshot.health.active_web_turns === 0 && snapshot.health.components.runtime?.state === 'healthy' &&
       ['E_ALREADY_RUNNING', 'E_BROWSER_RUNTIME_MISSING', 'E_BROWSER_START', 'E_BACKGROUND_NAVIGATION', 'E_BROWSER_OBSERVATION', 'E_BROWSER_BASELINE_MODEL', 'E_BROWSER_BASELINE_COMPOSER'].includes(snapshot.health.components.browser?.code);
     node('installed-retry').hidden = !retryable;
@@ -301,6 +304,39 @@ window.cxwebInstalled = (() => {
   node('installed-confirm').addEventListener('cancel', event => { event.preventDefault(); closeDialog(); });
   node('installed-stop').addEventListener('click', async () => {
     const receipt = confirmation; closeDialog(); await remove(true, receipt);
+  });
+  function closeSessionDialog() {
+    confirmation = null;
+    node('installed-session-confirm').close();
+    controls(); node('installed-clear-session').focus(); schedule();
+  }
+  node('installed-clear-session').addEventListener('click', () => {
+    if (pending || confirmation || node('installed-clear-session').disabled) return;
+    confirmation = { localSession: true };
+    clearTimer(); controls();
+    node('installed-session-confirm').showModal();
+    node('installed-session-keep').focus();
+  });
+  node('installed-session-keep').addEventListener('click', closeSessionDialog);
+  node('installed-session-confirm').addEventListener('cancel', event => { event.preventDefault(); closeSessionDialog(); });
+  node('installed-session-clear').addEventListener('click', async () => {
+    if (pending || !confirmation?.localSession) return;
+    confirmation = null; pending = true; ++epoch; clearTimer(); controls();
+    node('installed-session-confirm').close();
+    const result = node('installed-session-result');
+    result.textContent = 'Clearing the dedicated local browser profile.';
+    try {
+      await invoke('clear_local_session');
+      result.textContent = 'The local ChatGPT session was cleared. Your Codex sign-in was preserved. Remote logout and server-side deletion were not performed.';
+    } catch (code) {
+      result.textContent = code === 'E_SESSION_CONNECTED'
+        ? 'Remove every cxweb connection before clearing the shared local ChatGPT session. Nothing was deleted.'
+        : code === 'E_SESSION_IN_USE'
+        ? 'The dedicated profile is still in use. Close cxweb sign-in windows and finish disconnecting before trying again. Nothing was deleted.'
+        : code === 'E_INSTALLED_JOURNAL'
+        ? 'Connection ownership could not be verified. Nothing was deleted.'
+        : 'The local profile could not be fully cleared. Some local data may remain. No automatic retry was made.';
+    } finally { pending = false; controls(); node('installed-clear-session').focus(); schedule(); }
   });
   document.addEventListener('visibilitychange', () => {
     clearTimer();

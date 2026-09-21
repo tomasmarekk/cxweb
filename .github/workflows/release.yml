@@ -6,7 +6,7 @@ on:
       tag:
         description: 'Release tag matching the source version (for example v0.1.0)'
         required: true
-        default: v0.1.0
+        default: v0.1.1
         type: string
       prerelease:
         description: Mark this release as a preview

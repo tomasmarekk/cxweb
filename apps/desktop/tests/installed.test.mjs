@@ -41,6 +41,55 @@ function panel(respond, clipboard = async () => {}) {
 }
 const list = (targets = [target], diagnostics = []) => ({ targets, diagnostics });
 
+test('local session deletion is available only after disconnect and requires explicit confirmation', async () => {
+  for (const state of ['ready', 'auth_required', 'disconnecting']) {
+    const ui = panel(async command => command === 'installed_list' ? list() : health(state));
+    await flush();
+    assert.equal(ui.nodes.get('installed-clear-session').hidden, true);
+    await ui.nodes.get('installed-clear-session').click();
+    assert.ok(!ui.calls.some(call => call.command === 'clear_local_session'));
+  }
+  const ui = panel(async command => command === 'installed_list' ? list() : health('removal_pending_restart'));
+  await flush();
+  await ui.nodes.get('installed-clear-session').click();
+  assert.equal(ui.nodes.get('installed-session-confirm').open, true);
+  assert.equal(ui.focus, 'installed-session-keep');
+  assert.ok(!ui.calls.some(call => call.command === 'clear_local_session'));
+  ui.nodes.get('installed-session-confirm').cancel({ preventDefault() {} });
+  assert.equal(ui.nodes.get('installed-session-confirm').open, false);
+  assert.ok(!ui.calls.some(call => call.command === 'clear_local_session'));
+});
+
+test('confirmed local session deletion sends once without a caller-selected path and reports local scope', async () => {
+  let finish;
+  const ui = panel(async command => command === 'installed_list' ? list()
+    : command === 'clear_local_session' ? new Promise(resolve => { finish = resolve; }) : health('removal_pending_restart'));
+  await flush();
+  await ui.nodes.get('installed-clear-session').click();
+  const work = ui.nodes.get('installed-session-clear').click();
+  await ui.nodes.get('installed-session-clear').click();
+  assert.equal(ui.nodes.get('installed-refresh').disabled, true);
+  assert.equal(ui.calls.filter(call => call.command === 'clear_local_session').length, 1);
+  assert.equal(ui.calls.at(-1).params, undefined);
+  finish(null); await work;
+  assert.match(ui.nodes.get('installed-session-result').textContent, /local ChatGPT session was cleared/);
+  assert.match(ui.nodes.get('installed-session-result').textContent, /Codex sign-in was preserved/);
+  assert.match(ui.nodes.get('installed-session-result').textContent, /Remote logout.*not performed/);
+});
+
+test('session deletion failures do not disconnect other homes or retry removal', async () => {
+  for (const code of ['E_SESSION_CONNECTED', 'E_SESSION_IN_USE', 'E_INSTALLED_JOURNAL', 'E_SESSION_CLEAR_INCOMPLETE']) {
+    const ui = panel(async command => command === 'installed_list' ? list()
+      : command === 'clear_local_session' ? Promise.reject(code) : health('removal_pending_restart'));
+    await flush();
+    await ui.nodes.get('installed-clear-session').click();
+    await ui.nodes.get('installed-session-clear').click();
+    assert.equal(ui.calls.filter(call => call.command === 'clear_local_session').length, 1);
+    assert.ok(!ui.calls.some(call => call.command === 'installed_disconnect'));
+    assert.match(ui.nodes.get('installed-session-result').textContent, code === 'E_SESSION_CLEAR_INCOMPLETE' ? /could not be fully cleared/ : /Nothing was deleted/);
+  }
+});
+
 test('diagnostics copy only the backend report and never the connection identity or local paths', async () => {
   const copied = [];
   const report = '{"schema":"cxweb.support.v1","health":{"overall":"auth_required"}}';

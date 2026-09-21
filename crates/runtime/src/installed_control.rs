@@ -144,6 +144,33 @@ pub async fn prepare_uninstall(check_only: bool) -> Result<usize, &'static str> 
     Ok(count)
 }
 
+/// Explicit local session deletion never disconnects a connection implicitly.
+pub async fn clear_local_session() -> Result<(), &'static str> {
+    let found = list_for(true).await?;
+    require_disconnected(&found)?;
+    tokio::task::spawn_blocking(|| {
+        cxweb_platform::session_data::clear_local_session().map_err(|error| {
+            if error.to_string() == "E_SESSION_IN_USE" {
+                "E_SESSION_IN_USE"
+            } else {
+                "E_SESSION_CLEAR_INCOMPLETE"
+            }
+        })
+    })
+    .await
+    .map_err(|_| "E_SESSION_CLEAR_INCOMPLETE")?
+}
+
+fn require_disconnected(found: &Inventory) -> Result<(), &'static str> {
+    if !found.diagnostics.is_empty() {
+        return Err("E_INSTALLED_JOURNAL");
+    }
+    if !found.targets.is_empty() {
+        return Err("E_SESSION_CONNECTED");
+    }
+    Ok(())
+}
+
 fn uninstall_idle(snapshot: &Snapshot) -> Result<(), &'static str> {
     use cxweb_domain::health::Overall;
     if snapshot.health.active_web_turns != 0
@@ -487,6 +514,10 @@ mod tests {
         assert!(inventory(&root).unwrap().targets.is_empty());
         journal.apply().unwrap();
         let applied_config = std::fs::read(&config).unwrap();
+        assert_eq!(
+            require_disconnected(&inventory_for(&root, true).unwrap()),
+            Err("E_SESSION_CONNECTED")
+        );
         let discovered = inventory(&root).unwrap();
         assert_eq!(discovered.targets.len(), 1);
         assert_eq!(
@@ -552,6 +583,7 @@ mod tests {
         assert_eq!(inventory(&root).unwrap().targets.len(), 1);
         assert!(read(&id).await.is_err());
         assert!(inventory_for(&root, true).unwrap().targets.is_empty());
+        assert!(require_disconnected(&inventory_for(&root, true).unwrap()).is_ok());
         std::fs::write(
             &config,
             "# PRIVATE_CONFIG_SENTINEL\n# User edit after disconnect\n",

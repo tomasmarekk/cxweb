@@ -1,5 +1,10 @@
 Windows x64 preview of cxweb, connecting ChatGPT web models to Codex App and Codex CLI.
 
+This update closes the dedicated browser when disconnecting and adds optional
+local ChatGPT session removal in the app and uninstaller. Session removal refuses
+active profiles and connected Codex homes. Native forwarding for already open
+clients remains available after disconnecting.
+
 Download the `-setup.exe` installer. It installs for the current Windows user and
 includes the desktop app, background runtime, CLI support, and the WebView2
 bootstrapper. No Rust, Node.js, or Python installation is required to run it.
@@ -13,7 +18,11 @@ The installer is currently unsigned. The accompanying SHA-256 file checks downlo
 integrity; it does not replace publisher signing. This is a Windows preview, not a
 claim of complete V1 qualification or a signed automatic update channel.
 
-Uninstall restores cxweb-owned Codex configuration when web work is idle. Private
-session data and native compatibility runtimes are retained for already open
-clients. Restart those clients after disconnecting. Unavailable hosts or active
-web work stop removal rather than leaving an unverified configuration behind.
+Uninstall restores cxweb-owned Codex configuration when web work is idle. It
+offers to clear the dedicated local ChatGPT profile; keeping the profile is the
+default. The same option is available in cxweb after all connections are removed.
+Codex sign-in and personal browser profiles are preserved; remote logout and
+ChatGPT server-side deletion are not performed. Native compatibility runtimes
+are retained for already open clients. Restart those clients after disconnecting.
+Unavailable hosts or active web work stop removal rather than leaving an
+unverified configuration behind.

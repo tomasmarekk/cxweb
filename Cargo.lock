@@ -922,7 +922,7 @@ dependencies = [
 
 [[package]]
 name = "cxweb"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "clap",
@@ -936,7 +936,7 @@ dependencies = [
 
 [[package]]
 name = "cxweb-browser-adapter"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "cxweb-domain",
@@ -948,7 +948,7 @@ dependencies = [
 
 [[package]]
 name = "cxweb-codex-adapter"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cxweb-domain",
  "jsonschema",
@@ -961,7 +961,7 @@ dependencies = [
 
 [[package]]
 name = "cxweb-daemon"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "cxweb-platform",
@@ -972,7 +972,7 @@ dependencies = [
 
 [[package]]
 name = "cxweb-desktop"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cxweb-runtime",
  "tauri",
@@ -983,7 +983,7 @@ dependencies = [
 
 [[package]]
 name = "cxweb-domain"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "thiserror 2.0.20",
@@ -991,7 +991,7 @@ dependencies = [
 
 [[package]]
 name = "cxweb-platform"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "tokio",
@@ -1002,7 +1002,7 @@ dependencies = [
 
 [[package]]
 name = "cxweb-runtime"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aes-gcm",
  "axum",

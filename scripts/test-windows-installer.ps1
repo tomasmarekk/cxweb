@@ -12,7 +12,8 @@ $stub = @'
 fn main() {
     let dir = std::env::current_exe().unwrap().parent().unwrap().to_owned();
     std::fs::write(dir.join("called.txt"), std::env::args().skip(1).collect::<Vec<_>>().join(" ")).unwrap();
-    let code = std::fs::read_to_string(dir.join("exit.txt")).unwrap().trim().parse::<i32>().unwrap();
+    let exit_file = if std::env::args().nth(1).as_deref() == Some("clear-local-session") && dir.join("clear-exit.txt").exists() { "clear-exit.txt" } else { "exit.txt" };
+    let code = std::fs::read_to_string(dir.join(exit_file)).unwrap().trim().parse::<i32>().unwrap();
     std::process::exit(code);
 }
 '@
@@ -23,6 +24,9 @@ $cases = @(
     @{ Name='remove-success'; Hook='PREUNINSTALL'; Exit=0; Update=0; Success=$true; Called=$true; Args='prepare-uninstall' },
     @{ Name='remove-refused'; Hook='PREUNINSTALL'; Exit=1; Update=0; Success=$false; Called=$true; Args='prepare-uninstall' },
     @{ Name='remove-missing-helper'; Hook='PREUNINSTALL'; Exit=0; Update=0; Missing=$true; Success=$false; Called=$false },
+    @{ Name='remove-clear-session'; Hook='PREUNINSTALL'; Exit=0; Update=0; Clear=$true; ClearExit=0; Success=$true; Called=$true; Args='clear-local-session' },
+    @{ Name='remove-clear-refused'; Hook='PREUNINSTALL'; Exit=0; Update=0; Clear=$true; ClearExit=1; Success=$false; Called=$true; Args='clear-local-session' },
+    @{ Name='update-does-not-clear'; Hook='PREUNINSTALL'; Exit=1; Update=1; Clear=$true; Success=$true; Called=$false },
     @{ Name='update-retains-connection'; Hook='PREUNINSTALL'; Exit=1; Update=1; Success=$true; Called=$false },
     @{ Name='install-idle'; Hook='PREINSTALL'; Exit=0; Update=0; Success=$true; Called=$true; Args='prepare-uninstall --check' },
     @{ Name='install-busy'; Hook='PREINSTALL'; Exit=1; Update=0; Success=$false; Called=$true; Args='prepare-uninstall --check' },
@@ -51,12 +55,15 @@ foreach ($case in $cases) {
     New-Item -ItemType Directory -Path $caseDir | Out-Null
     if (-not $case.Missing) { Copy-Item -LiteralPath (Join-Path $fixtureRoot 'stub.exe') -Destination (Join-Path $caseDir 'cxweb.exe') }
     $case.Exit | Set-Content -LiteralPath (Join-Path $caseDir 'exit.txt')
+    if ($case.ContainsKey('ClearExit')) { $case.ClearExit | Set-Content -LiteralPath (Join-Path $caseDir 'clear-exit.txt') }
     $fixtureExe = Join-Path $caseDir 'fixture.exe'
     $source = $template.Replace('@HOOKS@', (Join-Path $repoRoot 'packaging/windows/hooks.nsh')).Replace('@OUT@', $fixtureExe).Replace('@DIR@', $caseDir).Replace('@UPDATE@', [string]$case.Update).Replace('@HOOK@', $case.Hook)
     $source | Set-Content -LiteralPath (Join-Path $caseDir 'fixture.nsi')
     & $MakeNsis /V1 (Join-Path $caseDir 'fixture.nsi')
     if ($LASTEXITCODE -ne 0) { throw "NSIS compilation failed: $($case.Name)" }
-    $process = Start-Process -FilePath $fixtureExe -WindowStyle Hidden -PassThru
+    $startOptions = @{ FilePath=$fixtureExe; WindowStyle='Hidden'; PassThru=$true }
+    if ($case['Clear']) { $startOptions.ArgumentList = '/CLEARSESSION' }
+    $process = Start-Process @startOptions
     if (-not $process.WaitForExit(20000)) { throw "Fixture did not finish: $($case.Name)" }
     $process.Refresh()
     $continued = Test-Path -LiteralPath (Join-Path $caseDir 'continued.txt')

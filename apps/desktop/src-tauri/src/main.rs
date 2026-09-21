@@ -41,6 +41,13 @@ mod desktop {
             .await
             .map_err(str::to_owned)
     }
+
+    #[tauri::command]
+    async fn clear_local_session() -> Result<(), String> {
+        cxweb_runtime::installed_control::clear_local_session()
+            .await
+            .map_err(str::to_owned)
+    }
     #[tauri::command]
     async fn installed_check(
         installation: String,
@@ -315,6 +322,7 @@ mod desktop {
                 native_cancel,
                 reset_test,
                 installed_list,
+                clear_local_session,
                 installed_check,
                 installed_disconnect,
                 installed_qualify_reasoning,
