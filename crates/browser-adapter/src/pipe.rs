@@ -547,10 +547,11 @@ impl ManagedBrowser {
         let model_families = include_str!("dom/model_families.js");
         let answer_content = include_str!("dom/answer_content.js");
         let answer_text = include_str!("dom/answer_text.js");
+        let answer_transport = include_str!("dom/answer_transport.js");
         let public_summary = include_str!("dom/public_summary.js");
         let well_formed_result = include_str!("dom/well_formed_result.js");
         let guarded = format!(
-            "function(expectedOrigin, args) {{ if (location.origin !== expectedOrigin || (expectedOrigin === 'null' && location.href !== 'about:blank')) throw new Error('E_OFFICIAL_ORIGIN_REQUIRED'); const readEffortLabel = ({effort_label}); const readModelFamilies = ({model_families}); const readAnswerContent = ({answer_content}); const readAnswerText = ({answer_text}); const readPublicSummary = ({public_summary}); const assertWellFormedResult = ({well_formed_result}); const result = ({function})(...args); assertWellFormedResult(result); return result; }}"
+            "function(expectedOrigin, args) {{ if (location.origin !== expectedOrigin || (expectedOrigin === 'null' && location.href !== 'about:blank')) throw new Error('E_OFFICIAL_ORIGIN_REQUIRED'); const readEffortLabel = ({effort_label}); const readModelFamilies = ({model_families}); const readAnswerContent = ({answer_content}); const readAnswerText = ({answer_text}); const readAnswerTransport = ({answer_transport}); const readPublicSummary = ({public_summary}); const assertWellFormedResult = ({well_formed_result}); const result = ({function})(...args); assertWellFormedResult(result); return result; }}"
         );
         let result = self.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":guarded,"arguments":[{"value":if page.fixture {"null"} else {"https://chatgpt.com"}},{"value":arguments}],"returnByValue":true}), Some(&page.session));
         let _ = self.call(
@@ -2492,9 +2493,28 @@ mod tests {
             generating: false,
         };
         let observation = browser.observe(&page, &baseline, "Exact fixture").unwrap();
+        assert_eq!(observation.text, expected);
+        let command = "await tab.goto(\"https://example.test\");\nconst path = \"C:\\\\fixture\";";
+        let envelope = json!({"protocol":"webbridge.tool.v1","turn_nonce":"11111111111111111111111111111111","kind":"tool_calls","calls":[{"tool_key":"tool_0001","input":{"code":command}}]}).to_string();
+        browser.dom(&page, "function (text) { const pre=document.createElement('pre'); const header=document.createElement('div'); header.textContent='json'; const copy=document.createElement('button'); copy.textContent='Copy code'; header.append(copy); const code=document.createElement('code'); const highlight=document.createElement('span'); highlight.textContent=text; code.append(highlight); pre.append(header,code); document.querySelector('#answer').replaceChildren(pre); return true; }", vec![json!(envelope)]).unwrap();
+        let observation = browser.observe(&page, &baseline, "Exact fixture").unwrap();
+        assert!(!observation.fenced_output);
+        assert_eq!(observation.text, envelope);
+        let decoded: Value = serde_json::from_str(&observation.text).unwrap();
+        assert_eq!(decoded["calls"][0]["input"]["code"], command);
+        browser.dom(&page, "function () { const code=document.querySelector('#answer code'); const viewer=document.createElement('pre'); viewer.className='cm-content'; code.replaceWith(viewer); viewer.append(code); return true; }", vec![]).unwrap();
+        let nested = browser.observe(&page, &baseline, "Exact fixture").unwrap();
+        assert!(!nested.fenced_output);
+        assert_eq!(nested.text, envelope);
+        browser.dom(&page, "function () { document.querySelector('#answer').append(document.createTextNode('Extra prose')); return true; }", vec![]).unwrap();
+        assert!(
+            browser
+                .observe(&page, &baseline, "Exact fixture")
+                .unwrap()
+                .fenced_output
+        );
         browser.close_page_checked(&page).unwrap();
         browser.close().unwrap();
-        assert_eq!(observation.text, expected);
     }
 
     #[test]

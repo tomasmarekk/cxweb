@@ -1,5 +1,14 @@
 Windows x64 preview of cxweb, connecting ChatGPT web models to Codex App and Codex CLI.
 
+Fixes tool-envelope transport failures during real Codex App tasks. A single JSON
+code block preserves quoted MCP arguments, Windows paths and patch text through
+ChatGPT's renderer, including its nested code viewer. Envelope, nonce and tool
+schema validation remain enforced. Codex App cross-task context is also retained
+without treating it as an executed tool result.
+
+Verified in an existing Codex App task: the web model discovered Chrome MCP tools,
+opened the requested page, read its snapshot and completed the answer.
+
 Manual releases now select the next unused version automatically. Release assets
 include provenance linking the packaged version to its source commit and CI run.
 

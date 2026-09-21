@@ -4444,3 +4444,17 @@ model discovery, native WebSocket preservation and actual pickers are proven.
 - Artifacts include only the selected version's installer, checksum and source/version provenance. Publishing verifies the checksum before creating a new immutable release.
 - Four release regression tests and the complete JavaScript suite passed. An isolated copy of the real source successfully staged v0.1.2 and passed locked offline Cargo metadata; external dependency entries were unchanged. CI publication verification follows the pushed fix.
 - Separately, portability CI run 35607390918 passed on Windows and Linux; the Linux job ran 158 passing tests with no failures.
+
+### Release allocation verified
+
+- Run 35610482615 succeeded and published v0.1.2 from a1d71689c1d46bd8e105c2479aa8def64d1892bf. Downloaded installer SHA-256 matched 89b65d93444854b6e76e9adc26dab21cf24396add471afe4c4181451bc11bf71; provenance matched the source and staged version.
+
+## Lossless tool-envelope transport and live App verification
+
+- The reported task failed with E_TOOL_ENVELOPE_JSON. Its original raw response was no longer available, so its exact malformed bytes were not recovered. Replaced fragile Markdown-rendered plain JSON with one code block whose literal code text preserves escaping; plain JSON remains compatible. Multiple blocks and surrounding prose are rejected, and contextual Rust validation is unchanged.
+- A temporary structural diagnostic established that the current ChatGPT code viewer nests PRE elements. Count outer blocks, excluding language/copy controls. The diagnostic captured only DOM structure and fixed labels, was removed from source, and is absent from the optimized deployed runtime.
+- Accept the observed Codex App send_message_to_thread context shape without a call_id only for its exact namespace/name and string output. Preserve it in history without resolving any pending tool execution; arbitrary uncorrelated outputs remain rejected.
+- Regression coverage includes quoted MCP JavaScript, paths, patches, nested code viewers, prose/multiple-block refusal and App context correlation. Complete JavaScript suite, cargo test --locked --workspace, cargo clippy --locked --workspace --all-targets -- -D warnings and the opt-in real Chrome answer_projection_preserves_dom_whitespace_inside_json_strings test passed.
+- Deployed the optimized daemon to the existing idle private host with its scheduler restored and Codex configuration hash unchanged. Browser login was preserved. Binary SHA-256: fad13b54861689392a9300596ccd19ada90ceeb76c3ada19749d51cb6e785653.
+- Actual user task 01a0c4d3-11ef-7d23-9202-87e17f765a58 completed in turn 01a0c4e8-46d1-7202-b23a-5e7a7050888f (120679 ms). The web model discovered tools, called Chrome MCP new_page and take_snapshot on the requested Migrolino page, and returned the requested Czech explanation. Earlier failed attempts are preserved. Post-run runtime health was ready with zero active web turns.
+- This verifies the reported App/MCP task and shared transport, not all possible tool/model combinations or complete V1 qualification. Signed distribution and automatic updates remain incomplete.

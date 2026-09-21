@@ -59,12 +59,26 @@ impl Summary {
     }
 }
 
+/// Observed Codex App context, not a receipt for an executed tool call.
+pub(crate) fn is_app_context(item: &Value) -> bool {
+    item["type"] == "function_call_output"
+        && item.get("call_id").is_none()
+        && item["namespace"] == "codex_app"
+        && item["name"] == "send_message_to_thread"
+        && item["output"].is_string()
+}
+
 /// Completed results, including denials and errors, remain in the summary input.
 /// Unresolved calls additionally survive verbatim inside the authenticated token.
 pub fn pending_calls(history: &[Value]) -> Result<Vec<Value>, &'static str> {
     let mut calls = BTreeMap::new();
     let mut seen = BTreeSet::new();
     for (index, item) in history.iter().enumerate() {
+        // Codex App supplies cross-task context without an initiating tool call.
+        // Keep it in history, but it cannot resolve any pending execution.
+        if is_app_context(item) {
+            continue;
+        }
         let kind = item["type"].as_str().unwrap_or("message");
         match kind {
             "function_call" | "custom_tool_call" | "tool_search_call" => {

@@ -220,28 +220,31 @@ fn rendered_safe_tool_strings_keep_paths_quotes_and_literal_patch_newlines() {
     let request = CanonicalRequest::decode(body.to_string().as_bytes()).unwrap();
     let nonce = "11111111111111111111111111111111";
     let prompt = request.browser_prompt(nonce, 100000).unwrap();
-    assert!(
-        prompt.contains("including nested function arguments, custom tool input and final text")
-    );
-    assert!(prompt.contains(r"C:\u005cfixture\u005cinput.txt"));
+    assert!(prompt.contains("exactly one fenced json code block"));
+    assert!(prompt.contains("Use standard JSON string escaping inside the code block"));
     let rendered = br#"{"protocol":"webbridge.tool.v1","turn_nonce":"11111111111111111111111111111111","kind":"tool_calls","calls":[{"tool_key":"tool_0001","input":{"cmd":"Get-Content -LiteralPath \u0022C:\u005cfixture\u005cinput.txt\u0022","cwd":"C:\u005cfixture"}},{"tool_key":"tool_0002","input":"\u002a\u002a\u002a Begin Patch\n\u002a\u002a\u002a Add File: output.txt\n+\u0060quoted\u0060 C:\u005cfixture\n\u002a\u002a\u002a End Patch\n"}]}"#;
-    let ValidatedOutput::Calls(calls) =
-        validate_detailed(rendered, &request.context(nonce)).unwrap()
-    else {
-        panic!("expected exact tool calls");
-    };
-    let arguments: Value = serde_json::from_str(
-        native_call(&calls[0], "item1", "call1")["arguments"]
-            .as_str()
-            .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        arguments,
-        json!({"cmd":r#"Get-Content -LiteralPath "C:\fixture\input.txt""#,"cwd":r"C:\fixture"})
-    );
-    assert_eq!(
-        native_call(&calls[1], "item2", "call2")["input"],
-        "*** Begin Patch\n*** Add File: output.txt\n+`quoted` C:\\fixture\n*** End Patch\n"
-    );
+    let standard = serde_json::from_slice::<Value>(rendered)
+        .unwrap()
+        .to_string();
+    for rendered in [rendered.as_slice(), standard.as_bytes()] {
+        let ValidatedOutput::Calls(calls) =
+            validate_detailed(rendered, &request.context(nonce)).unwrap()
+        else {
+            panic!("expected exact tool calls");
+        };
+        let arguments: Value = serde_json::from_str(
+            native_call(&calls[0], "item1", "call1")["arguments"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            arguments,
+            json!({"cmd":r#"Get-Content -LiteralPath "C:\fixture\input.txt""#,"cwd":r"C:\fixture"})
+        );
+        assert_eq!(
+            native_call(&calls[1], "item2", "call2")["input"],
+            "*** Begin Patch\n*** Add File: output.txt\n+`quoted` C:\\fixture\n*** End Patch\n"
+        );
+    }
 }

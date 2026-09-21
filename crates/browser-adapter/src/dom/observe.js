@@ -53,7 +53,8 @@ function (baselineIds, expectedPrompt) {
   let prefix = 0;
   while (prefix < plain.length && prefix < expected.length && plain[prefix] === expected[prefix]) prefix++;
   const characterKind = c => c === undefined ? 0 : c === '\n' ? 1 : c === '\r' ? 2 : c === ' ' ? 3 : c === '\t' ? 4 : c === '\u00a0' ? 5 : 6;
-  let text = readAnswerText(content);
+  const transport = readAnswerTransport(content);
+  let text = transport.text;
   const answerRendered = content?.innerText ?? '';
   const answerDomDiffers = text !== answerRendered;
   if (text.length > 4 * 1024 * 1024) throw new Error('E_PAYLOAD_LIMIT');
@@ -96,7 +97,7 @@ function (baselineIds, expectedPrompt) {
     text,
     generating,
     completion_control: complete && answer.candidates === 1,
-    fenced_output: !!content?.querySelector('pre'),
+    fenced_output: transport.fenced,
     selected_model: model.textContent.trim().slice(0, 120),
     ambiguous: users.length > 1 || assistants.length > 1 || (complete && !generating && answer.candidates !== 1) || afterUser.some(node => node !== user && (node.matches(userSelector) || node.querySelector(userSelector)))
   };

@@ -1,4 +1,4 @@
-function (root) {
+function (root, excluded = null) {
   // Preserve text-node whitespace. innerText folds consecutive spaces under
   // normal CSS, including indentation inside a serialized custom tool input.
   // This projects the visible DOM; it does not reconstruct Markdown source.
@@ -11,6 +11,7 @@ function (root) {
   };
   const block = node => node.nodeType === 1 && ['DIV', 'P', 'PRE', 'LI'].includes(node.tagName);
   const visit = (node, depth) => {
+    if (node === excluded) return false;
     if (++nodes > 65536 || depth > 64) throw new Error('E_PAYLOAD_LIMIT');
     if (node.nodeType === 3) { append(node.textContent); return true; }
     if (node.nodeType !== 1) return false;

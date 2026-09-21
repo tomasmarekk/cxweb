@@ -132,7 +132,7 @@ impl TurnTracker {
         }
         if observation.completion_control && !observation.generating {
             // Intermediate rendering is not a completed protocol reply. Refuse
-            // fenced final output without cancelling an in-progress answer.
+            // ambiguous fenced output without cancelling an in-progress answer.
             if observation.fenced_output {
                 return self.fail("E_TOOL_ENVELOPE_FENCED");
             }
