@@ -456,6 +456,90 @@ async fn one_socket_preserves_native_bytes_and_dispatches_owned_warmup_and_conti
 }
 
 #[tokio::test]
+async fn idle_native_disconnect_does_not_cancel_web_response_or_its_continuation() {
+    native_disconnect_preserves_web(false).await;
+}
+
+#[tokio::test]
+async fn idle_native_error_does_not_cancel_web_response_or_its_continuation() {
+    native_disconnect_preserves_web(true).await;
+}
+
+async fn native_disconnect_preserves_web(error_event: bool) {
+    let fixture = Fixture::start(false).await;
+    let mut socket = fixture.connect().await;
+    let mut request = frame("native-disconnect");
+    request["instructions"] = json!("fixture-public-status");
+    socket
+        .send(Message::Text(request.to_string().into()))
+        .await
+        .unwrap();
+    fixture.provider.started.notified().await;
+    // Drop the actual upstream TCP peer while the browser provider is working.
+    if error_event {
+        fixture
+            .native_events
+            .send(
+                r#"{"type":"error","error":{"code":"websocket_connection_limit_reached"}}"#.into(),
+            )
+            .await
+            .unwrap();
+    } else {
+        fixture.tasks[0].abort();
+    }
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    fixture.provider.release.notify_one();
+    let first = terminal(&mut socket).await;
+    assert_eq!(first["type"], "response.completed");
+    assert_eq!(fixture.provider.calls.load(Ordering::SeqCst), 1);
+    socket
+        .send(Message::Ping(vec![1, 2, 3].into()))
+        .await
+        .unwrap();
+    assert!(matches!(
+        socket.next().await.unwrap().unwrap(),
+        Message::Pong(_)
+    ));
+    let mut continuation = frame("after-native-disconnect");
+    continuation["instructions"] = request["instructions"].clone();
+    continuation["previous_response_id"] = first["response"]["id"].clone();
+    socket
+        .send(Message::Text(continuation.to_string().into()))
+        .await
+        .unwrap();
+    fixture.provider.release.notify_one();
+    assert_eq!(terminal(&mut socket).await["type"], "response.completed");
+    assert_eq!(fixture.provider.calls.load(Ordering::SeqCst), 2);
+    assert!(fixture.native.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn web_socket_has_no_absolute_generation_deadline() {
+    let fixture = Fixture::start(false).await;
+    let mut socket = fixture.connect().await;
+    let mut request = frame("long-pro");
+    request["instructions"] = json!("fixture-public-status");
+    socket
+        .send(Message::Text(request.to_string().into()))
+        .await
+        .unwrap();
+    fixture.provider.started.notified().await;
+    // Read the first progress frame to ensure serve_owned has been polled.
+    assert!(socket.next().await.unwrap().is_ok());
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(6 * 60 * 60)).await;
+    tokio::time::resume();
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    fixture.provider.release.notify_one();
+    assert_eq!(terminal(&mut socket).await["type"], "response.completed");
+    assert_eq!(fixture.provider.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn buffered_keepalive_has_no_response_claim_and_preserves_cancellation() {
     let fixture = Fixture::start(true).await;
     let mut socket = fixture.connect().await;

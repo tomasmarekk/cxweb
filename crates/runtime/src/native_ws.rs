@@ -199,16 +199,9 @@ async fn relay(
     observation: Option<(crate::native_health::Tracker, u64)>,
 ) {
     let mut native_pending = 0usize;
+    let mut upstream_alive = true;
     loop {
-        // Leave room for the coordinator's 30-minute generation ceiling,
-        // preparation, submission, completion verification and cleanup.
-        // Buffered keepalives do not extend either coordinator deadline.
-        let seconds = if route == SocketRoute::Responses {
-            2100
-        } else {
-            300
-        };
-        let outcome = tokio::time::timeout(Duration::from_secs(seconds), async {
+        let next = async {
             tokio::select! {
                 incoming = local.next() => {
                     let Some(Ok(message)) = incoming else { return false; };
@@ -223,7 +216,7 @@ async fn relay(
                                     let _ = local.send(LocalMessage::Text(crate::web_ws::error(409, "E_WEBSOCKET_BUSY").to_string().into())).await;
                                     return false;
                                 }
-                                return serve_owned(&mut local, &mut upstream, web, value, &observation).await;
+                                return serve_owned(&mut local, &mut upstream, &mut upstream_alive, web, value, &observation).await;
                             }
                             // Validate model fields on every message, including
                             // reused connections. Client binary frames remain unqualified.
@@ -238,6 +231,10 @@ async fn relay(
                             }
                             Message::Text(text.to_string().into())
                         }
+                        LocalMessage::Ping(data) if !upstream_alive => {
+                            return local.send(LocalMessage::Pong(data)).await.is_ok();
+                        }
+                        LocalMessage::Pong(_) if !upstream_alive => return true,
                         LocalMessage::Ping(data) => Message::Ping(data),
                         LocalMessage::Pong(data) => Message::Pong(data),
                         LocalMessage::Close(frame) => {
@@ -247,13 +244,13 @@ async fn relay(
                         }
                         LocalMessage::Binary(_) => return false,
                     };
-                    let sent = upstream.send(message).await.is_ok();
+                    let sent = upstream_alive && upstream.send(message).await.is_ok();
                     if !sent && let Some((health, sequence)) = &observation {
                         health.observe(*sequence, crate::native_health::Outcome::StreamError);
                     }
                     sent
                 }
-                incoming = upstream.next() => {
+                incoming = upstream.next(), if upstream_alive => {
                     if matches!(&incoming, Some(Err(_)))
                         && let Some((health, sequence)) = &observation
                     {
@@ -281,8 +278,17 @@ async fn relay(
                     local.send(message).await.is_ok()
                 }
             }
-        }).await;
-        if outcome != Ok(true) {
+        };
+        // A Responses connection can own arbitrarily long web generation.
+        // Only the unrelated realtime relay retains its idle timeout.
+        let keep_open = if route == SocketRoute::Responses {
+            next.await
+        } else {
+            tokio::time::timeout(Duration::from_secs(300), next)
+                .await
+                .unwrap_or(false)
+        };
+        if !keep_open {
             break;
         }
     }
@@ -291,6 +297,7 @@ async fn relay(
 async fn serve_owned(
     local: &mut WebSocket,
     upstream: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
+    upstream_alive: &mut bool,
     web: &mut crate::web_ws::Connection,
     value: serde_json::Value,
     observation: &Option<(crate::native_health::Tracker, u64)>,
@@ -364,13 +371,13 @@ async fn serve_owned(
                     _ => return false,
                 }
             }
-            incoming = upstream.next() => {
+            incoming = upstream.next(), if *upstream_alive => {
                 if matches!(&incoming, Some(Err(_))) && let Some((health, sequence)) = observation {
                     health.observe(*sequence, crate::native_health::Outcome::StreamError);
                 }
                 match incoming {
                     Some(Ok(Message::Ping(data))) => {
-                        if upstream.send(Message::Pong(data)).await.is_err() { return false; }
+                        if upstream.send(Message::Pong(data)).await.is_err() { *upstream_alive = false; }
                     }
                     Some(Ok(Message::Pong(_))) => (),
                     Some(Ok(Message::Text(text))) if strict_json::parse(text.as_bytes(), LIMIT)
@@ -380,8 +387,13 @@ async fn serve_owned(
                         // to the browser generation or entering browser code.
                         if local.send(LocalMessage::Text(text.to_string().into())).await.is_err() { return false; }
                     }
-                    // An idle native peer must not inject events into a web turn.
-                    // Dropping delivery cancels and drains the admitted worker.
+                    // Native idle closure/failure is independent of this web
+                    // response. Keep its client, context and single submission
+                    // alive; a later native request needs a fresh connection.
+                    None | Some(Err(_)) | Some(Ok(Message::Close(_))) => *upstream_alive = false,
+                    Some(Ok(Message::Text(text))) if strict_json::parse(text.as_bytes(), LIMIT)
+                        .is_ok_and(|value| value["type"] == "error") => *upstream_alive = false,
+                    // Never inject unrelated native response events into a web turn.
                     _ => return false,
                 }
             }
