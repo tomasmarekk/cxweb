@@ -4417,3 +4417,9 @@ model discovery, native WebSocket preservation and actual pickers are proven.
 - The subsequent complete JavaScript suite caught missing desktop command permissions. 5c34e49 registers the command in the Tauri build manifest, grants it only to the main local window and includes the generated permission file. Complete JavaScript suite, desktop Clippy and formatting then passed.
 - Superseded release run 35604844730 was cancelled before publication. Replacement release run: https://github.com/tomasmarekk/cxweb/actions/runs/35605062591 (pending at this observation). Do not claim 0.1.1 publication until GitHub confirms success and assets.
 - v0.1.0 is published. The user's existing runtime and signed-in profile were not replaced or cleared during this patch. Signed distribution, automatic updates and full V1 qualification remain incomplete.
+
+### 0.1.1 publication confirmed
+
+- Release run 35605062591 completed successfully and published v0.1.1 from 5c34e49aea2353e25c242a23e656ab63d02968ae. The release has exactly the expected installer and checksum assets.
+- Downloaded the published 15,343,603-byte installer and verified SHA-256: 70fedeaac1fcf91add9248fda67dafbd5362a4db7e30b081e46e83f514ada08a. Authenticode reports NotSigned, as disclosed in release notes.
+- Private download receipt: .local/github-release-v0.1.1/verification.json. This patch release has not replaced the user's running private runtime or cleared their session.
