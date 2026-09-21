@@ -19,10 +19,36 @@ pass web/native/web text generation in one process through the installed runtime
 Scheduled browser recovery now passes after removing an MSIX data-path ambiguity.
 Earlier installed CLI and App-backend read/patch/final scenarios and a fixed GUI
 message passed with the owned model and effort corroborated by native turn
-context. Current live state (2026-09-21): background recovery requires ChatGPT
-verification. The user reports a repeating Cloudflare challenge in the login
-window. Authentication and background reuse are not currently verified; the
-earlier successful observations do not establish current readiness.
+context. Current live state (2026-09-21, 06:48 UTC): the user completed the new
+ordinary-Chrome login and closed its window. Same-account, model, reasoning and
+English background recovery passed. Both actual native backend catalogs include
+all five choices alongside native models; a fresh xhigh text round trip passed
+on each backend without config overrides. Health reached Ready with independent
+request-success observations for App and CLI. That installation was subsequently
+removed manually by the user during network troubleshooting, including its profile
+and journal; the user also edited config.toml. At 07:42 UTC the native backend
+preflight passed against the user's current configuration without modification,
+and no cxweb/loopback override remained. The now-orphaned scheduled action was
+disabled after checking its exact former runtime path. A new ordinary-Chrome
+setup login is open; fresh authentication and activation are pending. Broader coding
+qualification remains in progress; no release gate is certified.
+
+## Interrupted coding observation and manual state removal (2026-09-21)
+
+- The CLI absolute-distance exercise ended at 06:52:56 UTC with E_SESSION_SCOPE
+  after an attributed file read and real failing test (2 of 4 passed). No patch
+  was approved. The terminal report is preserved as arithmetic-distance-sep21.json;
+  the absent process handle and completed evidence file were checked before doing
+  further work. It was not silently restarted or counted as passed.
+- On continuation the old runtime executable, profile and journal were absent.
+  The user confirmed deleting .cxweb-runtime and editing Codex configuration.
+  The exact relation between network trouble/removal and the earlier scope error
+  is unknown. The current native subscription/catalog preflight passed with zero
+  model requests, unchanged configuration and verified executable identity.
+- Recreated setup state through the application's normal private control path.
+  One ordinary English login Chrome process was observed without debugging flags.
+  No stale journal was invented and the user's unrelated configuration remains
+  the baseline for a new installation. Saved native Codex authentication is intact.
 
 ## Safe support diagnostics (2026-09-21)
 
@@ -95,13 +121,17 @@ earlier successful observations do not establish current readiness.
 - The actual desktop Open ChatGPT sign-in button succeeded. The new dedicated
   Chrome process was checked for no remote-debugging/headless flags, English
   locale flags, the official URL and last-window process exit configuration.
-  Health correctly reports E_LOGIN_WINDOW_OPEN. User authentication and subsequent
-  same-account background validation are still pending; no generation was sent.
+  Health initially reported E_LOGIN_WINDOW_OPEN. The user then confirmed successful
+  sign-in and closing the window. The finish operation verified the original
+  account/workspace, English and all model variants in the background. Fresh
+  non-generative catalog checks and one explicit xhigh text probe passed on each
+  actual native backend. Configuration and executable hashes stayed unchanged.
 - Validation: 326 workspace tests passed with 22 opt-in tests ignored, plus all
   72 desktop UI tests. Clippy with denied warnings, formatting and diff checks
   passed. Tests cover non-auth/cancelled refusal, instance binding, open/finish
   receipt separation, deduplication, ordinary-browser launch arguments and explicit
-  UI sequencing. Live authentication and saved-session recovery remain unverified.
+  UI sequencing. Live authentication, saved-session recovery and both backend
+  text probes passed; fresh GUI-picker and full coding acceptance remain separate.
 
 ## Installed-client presence (2026-09-21)
 

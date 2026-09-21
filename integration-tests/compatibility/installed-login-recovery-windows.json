@@ -1,11 +1,11 @@
 {
   "schema": "cxweb.installed-login-recovery.v1",
   "date": "2026-09-21",
-  "result": "PASS ordinary Chrome launch from installed desktop; authentication and background reuse NOT_VERIFIED",
+  "result": "PASS ordinary Chrome login, user-confirmed sign-in, closed-window background recovery, both actual native catalogs and text round trips",
   "daemon_sha256": "371fa59efbf998ae7664cb9913d7297e4ca601b6a2acd29f3636d44a17b2545b",
   "daemon_login_source": "e12db8f",
   "desktop_source": "48fe243",
-  "observed_at": "2026-09-21T06:45:14.914Z",
+  "observed_at": "2026-09-21T06:48:17.615Z",
   "checks": {
     "old_login_owner_released_after_window_close": true,
     "no_profile_browser_before_deployment": true,
@@ -19,12 +19,316 @@
     "english_launch_locale": true,
     "official_chatgpt_url": true,
     "background_mode_disabled_for_login": true,
-    "health_code": "E_LOGIN_WINDOW_OPEN",
-    "automatic_generation": false
+    "health_code": null,
+    "automatic_generation": false,
+    "user_confirmed_signed_in_and_closed": true,
+    "same_account_model_language_background_verification": true
   },
   "not_verified": [
-    "Successful user completion of Cloudflare verification in the new window",
-    "Saved-session handoff after the user closes the ordinary Chrome window",
-    "Fresh native-client catalog and generation availability after authentication"
+    "Fresh GUI picker observation after this login; both backend catalogs are verified",
+    "Full G2 coding suite and later release gates"
+  ],
+  "explicit_text_probes": 2,
+  "client_evidence": [
+    {
+      "schema": "cxweb.installed-client.v1",
+      "startedAt": "2026-09-21T06:47:49.720Z",
+      "build": "0.155.0-alpha.9.2",
+      "executableSha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+      "synthetic": false,
+      "configurationOverride": false,
+      "actualGuiPicker": "not observed",
+      "text": "passed",
+      "installedLoopbackRoute": true,
+      "subscriptionAuthentication": true,
+      "models": [
+        {
+          "id": "gpt-6-astra",
+          "name": "GPT-6-Astra"
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "name": "GPT-5.6-Sol"
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "name": "GPT-5.6-Terra"
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "name": "GPT-5.6-Luna"
+        },
+        {
+          "id": "gpt-daybreak-blue-latest",
+          "name": "Daybreak Blue"
+        },
+        {
+          "id": "gpt-5.5",
+          "name": "GPT-5.5"
+        },
+        {
+          "id": "webbridge/402f0b19d5610fcbee25b681",
+          "name": "ChatGPT Web · Latest"
+        }
+      ],
+      "selectedEffort": "xhigh",
+      "reasoningChoices": [
+        {
+          "reasoningEffort": "low",
+          "description": "Instant"
+        },
+        {
+          "reasoningEffort": "medium",
+          "description": "Medium"
+        },
+        {
+          "reasoningEffort": "high",
+          "description": "High"
+        },
+        {
+          "reasoningEffort": "xhigh",
+          "description": "Extra High"
+        },
+        {
+          "reasoningEffort": "max",
+          "description": "Pro"
+        }
+      ],
+      "ownedAndNativeCatalog": true,
+      "textChecks": [
+        {
+          "model": "webbridge/402f0b19d5610fcbee25b681",
+          "effort": "xhigh",
+          "route": "web",
+          "result": "passed",
+          "unicode": false,
+          "expectedUtf8Sha256": "07d19e4d19181f37121587ffd3f42772252b5b40508b778988dd391da3d64a02"
+        }
+      ],
+      "result": "PASS",
+      "configUnchanged": true,
+      "executableUnchanged": true,
+      "observedAt": "2026-09-21T06:48:17.615Z"
+    },
+    {
+      "schema": "cxweb.installed-client.v1",
+      "startedAt": "2026-09-21T06:47:09.048Z",
+      "build": "0.155.1",
+      "executableSha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+      "synthetic": false,
+      "configurationOverride": false,
+      "actualGuiPicker": "not observed",
+      "text": "passed",
+      "installedLoopbackRoute": true,
+      "subscriptionAuthentication": true,
+      "models": [
+        {
+          "id": "gpt-6-astra",
+          "name": "GPT-6-Astra"
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "name": "GPT-5.6-Sol"
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "name": "GPT-5.6-Terra"
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "name": "GPT-5.6-Luna"
+        },
+        {
+          "id": "gpt-daybreak-blue-latest",
+          "name": "Daybreak Blue"
+        },
+        {
+          "id": "gpt-5.5",
+          "name": "GPT-5.5"
+        },
+        {
+          "id": "webbridge/402f0b19d5610fcbee25b681",
+          "name": "ChatGPT Web · Latest"
+        }
+      ],
+      "selectedEffort": "xhigh",
+      "reasoningChoices": [
+        {
+          "reasoningEffort": "low",
+          "description": "Instant"
+        },
+        {
+          "reasoningEffort": "medium",
+          "description": "Medium"
+        },
+        {
+          "reasoningEffort": "high",
+          "description": "High"
+        },
+        {
+          "reasoningEffort": "xhigh",
+          "description": "Extra High"
+        },
+        {
+          "reasoningEffort": "max",
+          "description": "Pro"
+        }
+      ],
+      "ownedAndNativeCatalog": true,
+      "textChecks": [
+        {
+          "model": "webbridge/402f0b19d5610fcbee25b681",
+          "effort": "xhigh",
+          "route": "web",
+          "result": "passed",
+          "unicode": false,
+          "expectedUtf8Sha256": "52454e4f0bb7fbf379ac8f0cd934c586c17dd4529bb8899e88763f1f367cb714"
+        }
+      ],
+      "result": "PASS",
+      "configUnchanged": true,
+      "executableUnchanged": true,
+      "observedAt": "2026-09-21T06:47:32.264Z"
+    },
+    {
+      "schema": "cxweb.installed-client.v1",
+      "startedAt": "2026-09-21T06:46:52.457Z",
+      "build": "0.155.0-alpha.9.2",
+      "executableSha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+      "synthetic": false,
+      "configurationOverride": false,
+      "actualGuiPicker": "not observed",
+      "text": "not requested",
+      "installedLoopbackRoute": true,
+      "subscriptionAuthentication": true,
+      "models": [
+        {
+          "id": "gpt-6-astra",
+          "name": "GPT-6-Astra"
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "name": "GPT-5.6-Sol"
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "name": "GPT-5.6-Terra"
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "name": "GPT-5.6-Luna"
+        },
+        {
+          "id": "gpt-daybreak-blue-latest",
+          "name": "Daybreak Blue"
+        },
+        {
+          "id": "gpt-5.5",
+          "name": "GPT-5.5"
+        },
+        {
+          "id": "webbridge/402f0b19d5610fcbee25b681",
+          "name": "ChatGPT Web · Latest"
+        }
+      ],
+      "selectedEffort": "xhigh",
+      "reasoningChoices": [
+        {
+          "reasoningEffort": "low",
+          "description": "Instant"
+        },
+        {
+          "reasoningEffort": "medium",
+          "description": "Medium"
+        },
+        {
+          "reasoningEffort": "high",
+          "description": "High"
+        },
+        {
+          "reasoningEffort": "xhigh",
+          "description": "Extra High"
+        },
+        {
+          "reasoningEffort": "max",
+          "description": "Pro"
+        }
+      ],
+      "ownedAndNativeCatalog": true,
+      "result": "PASS",
+      "configUnchanged": true,
+      "executableUnchanged": true,
+      "observedAt": "2026-09-21T06:46:53.590Z"
+    },
+    {
+      "schema": "cxweb.installed-client.v1",
+      "startedAt": "2026-09-21T06:46:52.637Z",
+      "build": "0.155.1",
+      "executableSha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+      "synthetic": false,
+      "configurationOverride": false,
+      "actualGuiPicker": "not observed",
+      "text": "not requested",
+      "installedLoopbackRoute": true,
+      "subscriptionAuthentication": true,
+      "models": [
+        {
+          "id": "gpt-6-astra",
+          "name": "GPT-6-Astra"
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "name": "GPT-5.6-Sol"
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "name": "GPT-5.6-Terra"
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "name": "GPT-5.6-Luna"
+        },
+        {
+          "id": "gpt-daybreak-blue-latest",
+          "name": "Daybreak Blue"
+        },
+        {
+          "id": "gpt-5.5",
+          "name": "GPT-5.5"
+        },
+        {
+          "id": "webbridge/402f0b19d5610fcbee25b681",
+          "name": "ChatGPT Web · Latest"
+        }
+      ],
+      "selectedEffort": "xhigh",
+      "reasoningChoices": [
+        {
+          "reasoningEffort": "low",
+          "description": "Instant"
+        },
+        {
+          "reasoningEffort": "medium",
+          "description": "Medium"
+        },
+        {
+          "reasoningEffort": "high",
+          "description": "High"
+        },
+        {
+          "reasoningEffort": "xhigh",
+          "description": "Extra High"
+        },
+        {
+          "reasoningEffort": "max",
+          "description": "Pro"
+        }
+      ],
+      "ownedAndNativeCatalog": true,
+      "result": "PASS",
+      "configUnchanged": true,
+      "executableUnchanged": true,
+      "observedAt": "2026-09-21T06:46:53.160Z"
+    }
   ]
 }

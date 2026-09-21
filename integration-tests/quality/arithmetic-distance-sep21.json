@@ -1,0 +1,181 @@
+{
+  "schema": "cxweb.arithmetic-observation.v1",
+  "date": "2026-09-21",
+  "daemon_sha256": "371fa59efbf998ae7664cb9913d7297e4ca601b6a2acd29f3636d44a17b2545b",
+  "result": "FAIL retained; no automatic retry",
+  "failure": {
+    "schema": "cxweb.installed-client.v1",
+    "startedAt": "2026-09-21T06:48:44.765Z",
+    "build": "0.155.1",
+    "executableSha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+    "synthetic": false,
+    "configurationOverride": false,
+    "actualGuiPicker": "not observed",
+    "text": "not requested",
+    "installedLoopbackRoute": true,
+    "subscriptionAuthentication": true,
+    "models": [
+      {
+        "id": "gpt-6-astra",
+        "name": "GPT-6-Astra"
+      },
+      {
+        "id": "gpt-5.6-sol",
+        "name": "GPT-5.6-Sol"
+      },
+      {
+        "id": "gpt-5.6-terra",
+        "name": "GPT-5.6-Terra"
+      },
+      {
+        "id": "gpt-5.6-luna",
+        "name": "GPT-5.6-Luna"
+      },
+      {
+        "id": "gpt-daybreak-blue-latest",
+        "name": "Daybreak Blue"
+      },
+      {
+        "id": "gpt-5.5",
+        "name": "GPT-5.5"
+      },
+      {
+        "id": "webbridge/402f0b19d5610fcbee25b681",
+        "name": "ChatGPT Web · Latest"
+      }
+    ],
+    "selectedEffort": "xhigh",
+    "reasoningChoices": [
+      {
+        "reasoningEffort": "low",
+        "description": "Instant"
+      },
+      {
+        "reasoningEffort": "medium",
+        "description": "Medium"
+      },
+      {
+        "reasoningEffort": "high",
+        "description": "High"
+      },
+      {
+        "reasoningEffort": "xhigh",
+        "description": "Extra High"
+      },
+      {
+        "reasoningEffort": "max",
+        "description": "Pro"
+      }
+    ],
+    "ownedAndNativeCatalog": true,
+    "nativeCoding": {
+      "result": "failed",
+      "case": "absolute-distance",
+      "corpusVersion": "cxweb.arithmetic-repairs.v1",
+      "corpusSha256": "b073abc6cc040afaf32f3b72621c5aaf8ec73c07682a086ec774744e05291af5",
+      "testRunnerSha256": "6ec042e52764680f0bc881cfac4668ddc46435db00571f7c01667e30cb780478",
+      "nodeVersion": "v26.2.0",
+      "nodeExecutableSha256": "96f768b95e8e9d443f5eead1cb2d199744923320bb8240d2c3129362e7ae2a5d",
+      "harnessExecutedNativeTools": false,
+      "actualNativeProcess": true,
+      "before": {
+        "total": 4,
+        "passed": 2,
+        "failed": 2
+      },
+      "completedPrefix": 2,
+      "approvedSteps": [
+        0,
+        1
+      ],
+      "approvalDiagnostics": [
+        {
+          "phase": 0,
+          "command": true,
+          "patch": false,
+          "exactRead": true,
+          "exactTest": false,
+          "testCommandDiagnostic": {
+            "cwdMatches": true,
+            "shellWrapped": true,
+            "payloadDifference": "other",
+            "payloadLength": 54,
+            "expectedLength": 50
+          },
+          "kindIsCommand": true,
+          "extraPermissions": false,
+          "explicitLocalEnvironment": true,
+          "alternateEnvironment": false,
+          "alternateApproval": false,
+          "networkContext": false,
+          "ordinaryAcceptOffered": true
+        },
+        {
+          "phase": 1,
+          "command": true,
+          "patch": false,
+          "exactRead": false,
+          "exactTest": true,
+          "testCommandDiagnostic": {
+            "cwdMatches": true,
+            "shellWrapped": true,
+            "payloadDifference": "exact",
+            "payloadLength": 50,
+            "expectedLength": 50
+          },
+          "kindIsCommand": true,
+          "extraPermissions": false,
+          "explicitLocalEnvironment": true,
+          "alternateEnvironment": false,
+          "alternateApproval": false,
+          "networkContext": false,
+          "ordinaryAcceptOffered": true
+        }
+      ],
+      "patchDiagnostic": null,
+      "completedItems": [
+        {
+          "type": "commandExecution",
+          "status": "completed",
+          "exitCode": 0,
+          "exactRead": true,
+          "exactTest": false,
+          "testResult": null,
+          "exactReadOutput": true,
+          "outputLength": 205
+        },
+        {
+          "type": "commandExecution",
+          "status": "failed",
+          "exitCode": 1,
+          "exactRead": false,
+          "exactTest": true,
+          "testResult": {
+            "total": 4,
+            "passed": 2,
+            "failed": 2,
+            "error": null
+          },
+          "exactReadOutput": false,
+          "outputLength": 34
+        }
+      ]
+    },
+    "result": "FAIL",
+    "error": "E_TURN_FAILED",
+    "providerErrorCodes": [
+      "E_SESSION_SCOPE"
+    ],
+    "turnStatuses": [
+      "failed"
+    ],
+    "errorKinds": [
+      "responseStreamDisconnected",
+      "other"
+    ],
+    "configUnchanged": true,
+    "executableUnchanged": true,
+    "observedAt": "2026-09-21T06:52:56.436Z"
+  },
+  "follow_up": "The user subsequently reported deleting the runtime directory and editing native config during network troubleshooting. Exact causal timing relative to the scope failure is unknown. Native preflight after those changes passed without config edits."
+}
