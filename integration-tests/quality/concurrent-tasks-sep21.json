@@ -1,0 +1,208 @@
+{
+  "schema": "cxweb.concurrent-native-tasks.v1",
+  "daemonSha256": "6bbdf9054900f933fb29fb9582c8984a31b28d31aeffa9fa063564a24feb06a3",
+  "attempts": [
+    {
+      "schema": "cxweb.installed-client.v1",
+      "startedAt": "2026-09-21T09:14:46.087Z",
+      "build": "0.155.0-alpha.9.2",
+      "executableSha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+      "synthetic": false,
+      "configurationOverride": false,
+      "actualGuiPicker": "not observed",
+      "text": "passed",
+      "installedLoopbackRoute": true,
+      "subscriptionAuthentication": true,
+      "models": [
+        {
+          "id": "gpt-6-astra",
+          "name": "GPT-6-Astra"
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "name": "GPT-5.6-Sol"
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "name": "GPT-5.6-Terra"
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "name": "GPT-5.6-Luna"
+        },
+        {
+          "id": "gpt-daybreak-blue-latest",
+          "name": "Daybreak Blue"
+        },
+        {
+          "id": "gpt-5.5",
+          "name": "GPT-5.5"
+        },
+        {
+          "id": "webbridge/402f0b19d5610fcbee25b681",
+          "name": "ChatGPT Web · Latest"
+        }
+      ],
+      "selectedEffort": "xhigh",
+      "reasoningChoices": [
+        {
+          "reasoningEffort": "low",
+          "description": "Instant"
+        },
+        {
+          "reasoningEffort": "medium",
+          "description": "Medium"
+        },
+        {
+          "reasoningEffort": "high",
+          "description": "High"
+        },
+        {
+          "reasoningEffort": "xhigh",
+          "description": "Extra High"
+        },
+        {
+          "reasoningEffort": "max",
+          "description": "Pro"
+        }
+      ],
+      "ownedAndNativeCatalog": true,
+      "textChecks": [
+        {
+          "model": "webbridge/402f0b19d5610fcbee25b681",
+          "effort": "xhigh",
+          "route": "web",
+          "result": "passed",
+          "unicode": false,
+          "expectedUtf8Sha256": "ebb17394b75f58430a7440aca29683fa1998c470120b55559a20ebaefd97e7f8",
+          "threadSha256": "dceb786c8fcf73e2a7c3f036be17b1f1cb10ad514147a7216469ae4038c1f4ee",
+          "startedAt": "2026-09-21T09:14:46.827Z",
+          "completedAt": "2026-09-21T09:15:28.796Z"
+        },
+        {
+          "model": "webbridge/402f0b19d5610fcbee25b681",
+          "effort": "medium",
+          "route": "web",
+          "result": "passed",
+          "unicode": false,
+          "expectedUtf8Sha256": "e9e165d2b1e8108f307d2614ee6ab0531b7e3e60e5027162cf89cf926b5e7d80",
+          "threadSha256": "caf3374f7a40cc99e5670c3f1edde0be47423f99ab34a065c293fb14f3d99f2b",
+          "startedAt": "2026-09-21T09:14:46.832Z",
+          "completedAt": "2026-09-21T09:15:06.062Z"
+        }
+      ],
+      "concurrentTasks": {
+        "result": "passed",
+        "oneNativeProcess": true,
+        "overlappingTurns": true,
+        "exactDistinctAnswers": true,
+        "distinctEfforts": true
+      },
+      "result": "PASS",
+      "configUnchanged": true,
+      "executableUnchanged": true,
+      "observedAt": "2026-09-21T09:15:29.051Z"
+    },
+    {
+      "schema": "cxweb.installed-client.v1",
+      "startedAt": "2026-09-21T09:12:47.209Z",
+      "build": "0.155.1",
+      "executableSha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+      "synthetic": false,
+      "configurationOverride": false,
+      "actualGuiPicker": "not observed",
+      "text": "passed",
+      "installedLoopbackRoute": true,
+      "subscriptionAuthentication": true,
+      "models": [
+        {
+          "id": "gpt-6-astra",
+          "name": "GPT-6-Astra"
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "name": "GPT-5.6-Sol"
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "name": "GPT-5.6-Terra"
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "name": "GPT-5.6-Luna"
+        },
+        {
+          "id": "gpt-daybreak-blue-latest",
+          "name": "Daybreak Blue"
+        },
+        {
+          "id": "gpt-5.5",
+          "name": "GPT-5.5"
+        },
+        {
+          "id": "webbridge/402f0b19d5610fcbee25b681",
+          "name": "ChatGPT Web · Latest"
+        }
+      ],
+      "selectedEffort": "xhigh",
+      "reasoningChoices": [
+        {
+          "reasoningEffort": "low",
+          "description": "Instant"
+        },
+        {
+          "reasoningEffort": "medium",
+          "description": "Medium"
+        },
+        {
+          "reasoningEffort": "high",
+          "description": "High"
+        },
+        {
+          "reasoningEffort": "xhigh",
+          "description": "Extra High"
+        },
+        {
+          "reasoningEffort": "max",
+          "description": "Pro"
+        }
+      ],
+      "ownedAndNativeCatalog": true,
+      "textChecks": [
+        {
+          "model": "webbridge/402f0b19d5610fcbee25b681",
+          "effort": "xhigh",
+          "route": "web",
+          "result": "passed",
+          "unicode": false,
+          "expectedUtf8Sha256": "724822b2f55b312fe0f72bb2b4b1b07cd0a5c9b64144c7957036f2c523604678",
+          "threadSha256": "00b1fe314a9b203c73c12c0a796a44eab29fe1e6419ae967432953ac718cf8ff",
+          "startedAt": "2026-09-21T09:12:47.842Z",
+          "completedAt": "2026-09-21T09:13:31.961Z"
+        },
+        {
+          "model": "webbridge/402f0b19d5610fcbee25b681",
+          "effort": "medium",
+          "route": "web",
+          "result": "passed",
+          "unicode": false,
+          "expectedUtf8Sha256": "0f406e61f4a7d2737cae31421e9ed56a9eca11e53cd13374f5c23f43e25fba81",
+          "threadSha256": "639da2d10c36498d9ee0620c20caa4f079c59494e46fd971cb8d4f3c4e447f4b",
+          "startedAt": "2026-09-21T09:12:47.855Z",
+          "completedAt": "2026-09-21T09:13:09.852Z"
+        }
+      ],
+      "concurrentTasks": {
+        "result": "passed",
+        "oneNativeProcess": true,
+        "overlappingTurns": true,
+        "exactDistinctAnswers": true,
+        "distinctEfforts": true
+      },
+      "result": "PASS",
+      "configUnchanged": true,
+      "executableUnchanged": true,
+      "observedAt": "2026-09-21T09:13:32.199Z"
+    }
+  ]
+}

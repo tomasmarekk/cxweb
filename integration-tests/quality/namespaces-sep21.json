@@ -1,0 +1,438 @@
+{
+  "schema": "cxweb.native-namespaces.v1",
+  "daemonSha256": "6bbdf9054900f933fb29fb9582c8984a31b28d31aeffa9fa063564a24feb06a3",
+  "attempts": [
+    {
+      "schema": "cxweb.installed-client.v1",
+      "startedAt": "2026-09-21T09:09:38.400Z",
+      "build": "0.155.0-alpha.9.2",
+      "executableSha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+      "synthetic": false,
+      "configurationOverride": false,
+      "actualGuiPicker": "not observed",
+      "text": "not requested",
+      "installedLoopbackRoute": true,
+      "subscriptionAuthentication": true,
+      "models": [
+        {
+          "id": "gpt-6-astra",
+          "name": "GPT-6-Astra"
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "name": "GPT-5.6-Sol"
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "name": "GPT-5.6-Terra"
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "name": "GPT-5.6-Luna"
+        },
+        {
+          "id": "gpt-daybreak-blue-latest",
+          "name": "Daybreak Blue"
+        },
+        {
+          "id": "gpt-5.5",
+          "name": "GPT-5.5"
+        },
+        {
+          "id": "webbridge/402f0b19d5610fcbee25b681",
+          "name": "ChatGPT Web · Latest"
+        }
+      ],
+      "selectedEffort": "xhigh",
+      "reasoningChoices": [
+        {
+          "reasoningEffort": "low",
+          "description": "Instant"
+        },
+        {
+          "reasoningEffort": "medium",
+          "description": "Medium"
+        },
+        {
+          "reasoningEffort": "high",
+          "description": "High"
+        },
+        {
+          "reasoningEffort": "xhigh",
+          "description": "Extra High"
+        },
+        {
+          "reasoningEffort": "max",
+          "description": "Pro"
+        }
+      ],
+      "ownedAndNativeCatalog": true,
+      "nativeNamespaces": {
+        "result": "passed",
+        "fixtureValuesInPrompt": false,
+        "bridgeExecutesTools": false,
+        "namespaces": [
+          "cxweb_alpha",
+          "cxweb_beta"
+        ],
+        "exactUnicodeArguments": true,
+        "distinctCallIds": true,
+        "exactResultAssociation": true,
+        "finalAfterBothResults": true,
+        "noFileChanges": true
+      },
+      "result": "PASS",
+      "configUnchanged": true,
+      "executableUnchanged": true,
+      "observedAt": "2026-09-21T09:10:27.254Z"
+    },
+    {
+      "schema": "cxweb.installed-client.v1",
+      "startedAt": "2026-09-21T09:11:03.857Z",
+      "build": "0.155.1",
+      "executableSha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+      "synthetic": false,
+      "configurationOverride": false,
+      "actualGuiPicker": "not observed",
+      "text": "not requested",
+      "installedLoopbackRoute": true,
+      "subscriptionAuthentication": true,
+      "models": [
+        {
+          "id": "gpt-6-astra",
+          "name": "GPT-6-Astra"
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "name": "GPT-5.6-Sol"
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "name": "GPT-5.6-Terra"
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "name": "GPT-5.6-Luna"
+        },
+        {
+          "id": "gpt-daybreak-blue-latest",
+          "name": "Daybreak Blue"
+        },
+        {
+          "id": "gpt-5.5",
+          "name": "GPT-5.5"
+        },
+        {
+          "id": "webbridge/402f0b19d5610fcbee25b681",
+          "name": "ChatGPT Web · Latest"
+        }
+      ],
+      "selectedEffort": "xhigh",
+      "reasoningChoices": [
+        {
+          "reasoningEffort": "low",
+          "description": "Instant"
+        },
+        {
+          "reasoningEffort": "medium",
+          "description": "Medium"
+        },
+        {
+          "reasoningEffort": "high",
+          "description": "High"
+        },
+        {
+          "reasoningEffort": "xhigh",
+          "description": "Extra High"
+        },
+        {
+          "reasoningEffort": "max",
+          "description": "Pro"
+        }
+      ],
+      "ownedAndNativeCatalog": true,
+      "nativeNamespaces": {
+        "result": "failed",
+        "fixtureValuesInPrompt": false,
+        "bridgeExecutesTools": false,
+        "requireParallel": true,
+        "acceptedCalls": 2
+      },
+      "result": "FAIL",
+      "error": "E_PARALLEL_DISPATCH_TIMEOUT",
+      "providerErrorCodes": [],
+      "turnStatuses": [],
+      "errorKinds": [],
+      "configUnchanged": true,
+      "executableUnchanged": true,
+      "observedAt": "2026-09-21T09:11:45.897Z"
+    },
+    {
+      "schema": "cxweb.installed-client.v1",
+      "startedAt": "2026-09-21T09:08:02.359Z",
+      "build": "0.155.1",
+      "executableSha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+      "synthetic": false,
+      "configurationOverride": false,
+      "actualGuiPicker": "not observed",
+      "text": "not requested",
+      "installedLoopbackRoute": true,
+      "subscriptionAuthentication": true,
+      "models": [
+        {
+          "id": "gpt-6-astra",
+          "name": "GPT-6-Astra"
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "name": "GPT-5.6-Sol"
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "name": "GPT-5.6-Terra"
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "name": "GPT-5.6-Luna"
+        },
+        {
+          "id": "gpt-daybreak-blue-latest",
+          "name": "Daybreak Blue"
+        },
+        {
+          "id": "gpt-5.5",
+          "name": "GPT-5.5"
+        },
+        {
+          "id": "webbridge/402f0b19d5610fcbee25b681",
+          "name": "ChatGPT Web · Latest"
+        }
+      ],
+      "selectedEffort": "xhigh",
+      "reasoningChoices": [
+        {
+          "reasoningEffort": "low",
+          "description": "Instant"
+        },
+        {
+          "reasoningEffort": "medium",
+          "description": "Medium"
+        },
+        {
+          "reasoningEffort": "high",
+          "description": "High"
+        },
+        {
+          "reasoningEffort": "xhigh",
+          "description": "Extra High"
+        },
+        {
+          "reasoningEffort": "max",
+          "description": "Pro"
+        }
+      ],
+      "ownedAndNativeCatalog": true,
+      "nativeNamespaces": {
+        "result": "passed",
+        "fixtureValuesInPrompt": false,
+        "bridgeExecutesTools": false,
+        "namespaces": [
+          "cxweb_alpha",
+          "cxweb_beta"
+        ],
+        "exactUnicodeArguments": true,
+        "distinctCallIds": true,
+        "exactResultAssociation": true,
+        "finalAfterBothResults": true,
+        "noFileChanges": true
+      },
+      "result": "PASS",
+      "configUnchanged": true,
+      "executableUnchanged": true,
+      "observedAt": "2026-09-21T09:08:57.892Z"
+    },
+    {
+      "schema": "cxweb.installed-client.v1",
+      "startedAt": "2026-09-21T09:17:59.409Z",
+      "build": "0.155.1",
+      "executableSha256": "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316",
+      "synthetic": false,
+      "configurationOverride": false,
+      "actualGuiPicker": "not observed",
+      "text": "not requested",
+      "installedLoopbackRoute": true,
+      "subscriptionAuthentication": true,
+      "models": [
+        {
+          "id": "gpt-6-astra",
+          "name": "GPT-6-Astra"
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "name": "GPT-5.6-Sol"
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "name": "GPT-5.6-Terra"
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "name": "GPT-5.6-Luna"
+        },
+        {
+          "id": "gpt-daybreak-blue-latest",
+          "name": "Daybreak Blue"
+        },
+        {
+          "id": "gpt-5.5",
+          "name": "GPT-5.5"
+        },
+        {
+          "id": "webbridge/402f0b19d5610fcbee25b681",
+          "name": "ChatGPT Web · Latest"
+        }
+      ],
+      "selectedEffort": "xhigh",
+      "reasoningChoices": [
+        {
+          "reasoningEffort": "low",
+          "description": "Instant"
+        },
+        {
+          "reasoningEffort": "medium",
+          "description": "Medium"
+        },
+        {
+          "reasoningEffort": "high",
+          "description": "High"
+        },
+        {
+          "reasoningEffort": "xhigh",
+          "description": "Extra High"
+        },
+        {
+          "reasoningEffort": "max",
+          "description": "Pro"
+        }
+      ],
+      "ownedAndNativeCatalog": true,
+      "nativeNamespaces": {
+        "result": "passed",
+        "fixtureValuesInPrompt": false,
+        "bridgeExecutesTools": false,
+        "requireSingleResponseBatch": true,
+        "namespaces": [
+          "cxweb_alpha",
+          "cxweb_beta"
+        ],
+        "exactUnicodeArguments": true,
+        "distinctCallIds": true,
+        "exactResultAssociation": true,
+        "finalAfterBothResults": true,
+        "noFileChanges": true,
+        "sameResponseBatch": true,
+        "nativeExecutionPolicyUnchanged": true
+      },
+      "result": "PASS",
+      "configUnchanged": true,
+      "executableUnchanged": true,
+      "observedAt": "2026-09-21T09:19:02.013Z"
+    },
+    {
+      "schema": "cxweb.installed-client.v1",
+      "startedAt": "2026-09-21T09:19:49.843Z",
+      "build": "0.155.0-alpha.9.2",
+      "executableSha256": "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226",
+      "synthetic": false,
+      "configurationOverride": false,
+      "actualGuiPicker": "not observed",
+      "text": "not requested",
+      "installedLoopbackRoute": true,
+      "subscriptionAuthentication": true,
+      "models": [
+        {
+          "id": "gpt-6-astra",
+          "name": "GPT-6-Astra"
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "name": "GPT-5.6-Sol"
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "name": "GPT-5.6-Terra"
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "name": "GPT-5.6-Luna"
+        },
+        {
+          "id": "gpt-daybreak-blue-latest",
+          "name": "Daybreak Blue"
+        },
+        {
+          "id": "gpt-5.5",
+          "name": "GPT-5.5"
+        },
+        {
+          "id": "webbridge/402f0b19d5610fcbee25b681",
+          "name": "ChatGPT Web · Latest"
+        }
+      ],
+      "selectedEffort": "xhigh",
+      "reasoningChoices": [
+        {
+          "reasoningEffort": "low",
+          "description": "Instant"
+        },
+        {
+          "reasoningEffort": "medium",
+          "description": "Medium"
+        },
+        {
+          "reasoningEffort": "high",
+          "description": "High"
+        },
+        {
+          "reasoningEffort": "xhigh",
+          "description": "Extra High"
+        },
+        {
+          "reasoningEffort": "max",
+          "description": "Pro"
+        }
+      ],
+      "ownedAndNativeCatalog": true,
+      "nativeNamespaces": {
+        "result": "passed",
+        "fixtureValuesInPrompt": false,
+        "bridgeExecutesTools": false,
+        "requireSingleResponseBatch": true,
+        "namespaces": [
+          "cxweb_alpha",
+          "cxweb_beta"
+        ],
+        "exactUnicodeArguments": true,
+        "distinctCallIds": true,
+        "exactResultAssociation": true,
+        "finalAfterBothResults": true,
+        "noFileChanges": true,
+        "sameResponseBatch": true,
+        "nativeExecutionPolicyUnchanged": true
+      },
+      "result": "PASS",
+      "configUnchanged": true,
+      "executableUnchanged": true,
+      "observedAt": "2026-09-21T09:20:40.762Z"
+    }
+  ],
+  "failedParallelExperiment": {
+    "preserved": true,
+    "conclusion": "The barrier test required simultaneous dispatch from native dynamic tools, which the reviewed Codex executor intentionally serializes. This failure is not a batch transport failure or a passing concurrency result.",
+    "sources": [
+      "https://github.com/openai/codex/blob/rust-v0.155.1/codex-rs/core/src/tools/handlers/dynamic.rs",
+      "https://github.com/openai/codex/blob/rust-v0.155.1/codex-rs/tools/src/tool_executor.rs",
+      "https://github.com/openai/codex/blob/rust-v0.155.1/codex-rs/core/src/tools/parallel.rs"
+    ]
+  }
+}

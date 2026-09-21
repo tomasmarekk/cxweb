@@ -43,6 +43,32 @@ task delegated to the original App backend, which retained its old catalog and
 used fallback metadata; that attempt failed before generation. Broader coding
 qualification remains in progress; no release gate is certified.
 
+## Native namespace and task isolation (2026-09-21)
+
+- Added installed-client exercises for two dynamic tools with the same leaf name,
+  one-response call batches and overlapping native tasks. Fixture outputs are
+  generated independently and not included in the prompt. Exact namespace,
+  Unicode arguments, unique call IDs, actual results and final-answer order are
+  checked. No shell or model-provided code runs in the dynamic fixture handlers.
+- Both actual native backends passed namespace/result isolation and a batch whose
+  two call IDs identify the same production response. Both also passed two
+  overlapping tasks in one process with distinct xhigh/medium selections and
+  exact independent answers. Configurations and executables remained unchanged.
+- Preserved one failed parallel-dispatch experiment. Its barrier incorrectly
+  required concurrent execution of dynamic tools; the reviewed native executor
+  intentionally serializes those tools. The replacement batch test proves a
+  different claim: both calls originate in one response and native execution
+  policy remains authoritative. No native capability was patched or overridden.
+- Evidence: namespaces-sep21.json and concurrent-tasks-sep21.json. Four fixture
+  regression tests pass, including foreign scope, altered arguments, duplicate
+  execution and false batch attribution. Other fixture/approval tests passed.
+  These exercises add G2 coverage without completing its full acceptance suite.
+- A new frozen protocol cohort, restored-xhigh-sep21, runs on daemon
+  6bbdf9054900f933fb29fb9582c8984a31b28d31aeffa9fa063564a24feb06a3.
+  The first case passed. The serial runner preserves every attempt, respects the
+  journal's spacing and stops on a transport failure or extended backoff. Earlier
+  failed cohorts remain archived; the current 200-case result is incomplete.
+
 ## Fresh activation maintenance and protocol diagnostics (2026-09-21)
 
 - Preserved the first bootstrap text failure (E_QUALIFICATION_PROTOCOL). Its old

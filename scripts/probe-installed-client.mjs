@@ -7,6 +7,9 @@
 // --denial refuses one exact read and verifies the model receives that refusal.
 // --repair observes a failing test, approves one exact correction, then retests.
 // --coding=<id> repairs one bounded arithmetic function and runs native tests.
+// --namespaces invokes two same-named dynamic tools in separate namespaces.
+// --batch requires one response containing both calls, with native serial dispatch.
+// --concurrent overlaps two tasks in one native process and checks result isolation.
 // No auth files, routing overrides, model catalogs or client binaries are changed.
 import { spawn, execFileSync } from 'node:child_process';
 import { readFile, readdir, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
@@ -20,11 +23,12 @@ import { approveFixtureCommand, fixtureCommandDiagnostic } from './probe-client-
 import { cases as codingCases, fixtureFiles, fingerprint as codingFingerprint, version as codingVersion } from './coding-fixture.mjs';
 import codingRunner from './coding-fixture-runner.cjs';
 import * as codingApproval from './coding-fixture-approval.mjs';
+import { NamespaceFixture, definitions as namespaceTools, namespaces, argument as namespaceArgument } from './namespace-fixture.mjs';
 
 const [client, home, model, option] = process.argv.slice(2);
 const codingCase = option?.startsWith('--coding=') ? codingCases.find(fixture => fixture.id === option.slice(9)) : undefined;
 assert.ok(client && home && model?.startsWith('webbridge/') && isAbsolute(client) && isAbsolute(home));
-assert.ok(process.argv.length <= 6 && (!option || codingCase || ['--text', '--unicode', '--coexistence', '--tools', '--reasoning', '--denial', '--repair'].includes(option)));
+assert.ok(process.argv.length <= 6 && (!option || codingCase || ['--text', '--unicode', '--coexistence', '--tools', '--reasoning', '--denial', '--repair', '--namespaces', '--batch', '--concurrent'].includes(option)));
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const builds = new Map([
   ['eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316', '0.155.1'],
@@ -46,6 +50,7 @@ const pending = new Map();
 const events = [];
 let failure, bytes = 0, id = 0;
 let toolRun;
+let namespaceRun;
 const send = value => child.stdin.write(JSON.stringify(value) + '\n');
 const lines = createInterface({ input: child.stdout });
 lines.on('line', line => {
@@ -54,6 +59,14 @@ lines.on('line', line => {
   let message;
   try { message = JSON.parse(line); } catch { failure = 'E_PROTOCOL'; child.kill(); return; }
   if (message.method && message.id !== undefined) {
+    if (message.method === 'item/tool/call' && namespaceRun) {
+      try { send({ id: message.id, result: namespaceRun.answer(message.params) }); }
+      catch (error) {
+        failure = error.message?.match(/E_[A-Z_]+/)?.[0] ?? 'E_DYNAMIC_TOOL';
+        send({ id: message.id, error: { code: -32602, message: failure } });
+      }
+      return;
+    }
     const command = message.method === 'item/commandExecution/requestApproval';
     const patch = message.method === 'item/fileChange/requestApproval';
     const params = message.params;
@@ -131,6 +144,9 @@ lines.on('line', line => {
     pending.delete(message.id);
     callback?.(message);
   } else {
+    if (namespaceRun && message.method === 'turn/started' && message.params?.threadId === namespaceRun.thread) {
+      try { namespaceRun.bindTurn(message.params.turn?.id); } catch { failure = 'E_TURN_IDENTITY'; }
+    }
     if (toolRun && message.method === 'turn/started' && message.params?.threadId === toolRun.thread) {
       const turn = message.params.turn?.id;
       if (!turn || (toolRun.turn && toolRun.turn !== turn)) failure = 'E_TURN_IDENTITY';
@@ -164,10 +180,12 @@ async function verifyText(selectedModel, effort) {
   assert.equal(started.model, selectedModel.id, 'E_SELECTED_MODEL');
   assert.equal(started.modelProvider, 'openai', 'E_NATIVE_PROVIDER');
   const thread = started.thread.id;
+  if (option === '--concurrent') check.threadSha256 = sha256(thread);
   const text = option === '--unicode'
     ? `Use no tools. Return a final answer containing exactly this JSON-decoded string: ${JSON.stringify(expected)}`
     : `Use no tools. Return a final answer with exactly this text: ${expected}`;
   const turn = (await rpc('turn/start', { threadId: thread, effort, input: [{ type: 'text', text, text_elements: [] }] })).turn.id;
+  if (option === '--concurrent') check.startedAt = new Date().toISOString();
   const deadline = Date.now() + 240000;
   let completed;
   while (Date.now() < deadline) {
@@ -183,6 +201,45 @@ async function verifyText(selectedModel, effort) {
   assert.equal(answers[0].params.item.text, expected, 'E_ANSWER_TEXT');
   assert.ok(!events.some(event => event.method === 'item/started' && event.params?.threadId === thread && event.params?.turnId === turn && ['commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall'].includes(event.params?.item?.type)), 'E_UNEXPECTED_TOOL');
   check.result = 'passed';
+  if (option === '--concurrent') check.completedAt = new Date().toISOString();
+}
+
+async function verifyNamespaces(selectedModel) {
+  evidence.nativeNamespaces = { result: 'started', fixtureValuesInPrompt: false, bridgeExecutesTools: false, requireSingleResponseBatch: option === '--batch' };
+  const values = Object.fromEntries(namespaces.map(name => [name, `value-${randomBytes(12).toString('hex')}`]));
+  const started = await rpc('thread/start', { cwd, model, ephemeral: true, approvalPolicy: 'untrusted', sandbox: 'read-only', dynamicTools: namespaceTools });
+  assert.equal(started.model, model, 'E_SELECTED_MODEL');
+  assert.equal(started.modelProvider, 'openai', 'E_NATIVE_PROVIDER');
+  namespaceRun = new NamespaceFixture(started.thread.id, values);
+  const parallel = option === '--batch' ? ' Emit both calls together in one response without waiting for the first result. Native Codex decides their execution order.' : '';
+  const prompt = `This is a namespace isolation test. Invoke cxweb_alpha.read and cxweb_beta.read exactly once each with arguments ${JSON.stringify({ key: namespaceArgument })}.${parallel} These are two different tools with the same leaf name. Use no other tools. Read both actual results, then return exactly two lines in this order: cxweb_alpha=<its returned value> and cxweb_beta=<its returned value>. Do not guess either value. Do not modify files.`;
+  const turn = (await rpc('turn/start', { threadId: namespaceRun.thread, effort: selectedModel.defaultReasoningEffort, input: [{ type: 'text', text: prompt, text_elements: [] }] })).turn.id;
+  namespaceRun.bindTurn(turn);
+  console.log(JSON.stringify({ phase: 'native namespace collision', model }));
+  const deadline = Date.now() + 600000;
+  let done;
+  while (Date.now() < deadline) {
+    assert.ok(!failure, failure);
+    done = events.find(event => event.method === 'turn/completed' && event.params?.threadId === namespaceRun.thread && event.params?.turn?.id === turn);
+    if (done) break;
+    assert.equal(child.exitCode, null, 'E_CLIENT_EXIT');
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  assert.equal(done?.params?.turn?.status, 'completed', 'E_TURN_FAILED');
+  assert.deepEqual(namespaceRun.calls.map(call => call.namespace).sort(), namespaces, 'E_NAMESPACE_CALLS');
+  if (option === '--batch') assert.ok(namespaceRun.sameResponseBatch(), 'E_RESPONSE_BATCH');
+  const completed = events.filter(event => event.method === 'item/completed' && event.params?.threadId === namespaceRun.thread && event.params?.turnId === turn).map(event => event.params.item);
+  const tools = completed.filter(item => !['userMessage', 'agentMessage', 'reasoning'].includes(item.type));
+  assert.deepEqual(tools.map(item => item.type), ['dynamicToolCall', 'dynamicToolCall'], 'E_TOOL_ORDER');
+  assert.ok(tools.every(item => item.status === 'completed' && item.success === true), 'E_DYNAMIC_COMPLETION');
+  const answers = completed.filter(item => item.type === 'agentMessage');
+  assert.equal(answers.length, 1, 'E_ANSWER_COUNT');
+  assert.equal(answers[0].text, namespaceRun.expected(), 'E_NAMESPACE_RESULT');
+  assert.ok(tools.every(item => completed.indexOf(item) < completed.indexOf(answers[0])), 'E_RESULT_ORDER');
+  assert.deepEqual(await readdir(cwd), [], 'E_UNEXPECTED_FILE');
+  evidence.nativeNamespaces = { ...evidence.nativeNamespaces, result: 'passed', namespaces: namespaceRun.calls.map(call => call.namespace), exactUnicodeArguments: true, distinctCallIds: true, exactResultAssociation: true, finalAfterBothResults: true, noFileChanges: true,
+    sameResponseBatch: namespaceRun.sameResponseBatch(), nativeExecutionPolicyUnchanged: true };
+  namespaceRun = undefined;
 }
 async function verifyTools(selectedModel) {
   evidence.nativeTools = { result: 'started', harnessExecutedTools: false, fixtureMarkerInPrompt: false };
@@ -387,6 +444,23 @@ try {
     evidence.text = 'started';
     for (const [effort] of expected) await verifyText(selectedModel, effort);
     evidence.text = 'passed';
+  } else if (option === '--concurrent') {
+    evidence.text = 'started';
+    assert.ok(selectedModel.supportedReasoningEfforts.some(row => row.reasoningEffort === 'medium'), 'E_MODEL_EFFORT');
+    const outcomes = await Promise.allSettled([
+      verifyText(selectedModel, selectedModel.defaultReasoningEffort),
+      verifyText(selectedModel, 'medium'),
+    ]);
+    const rejected = outcomes.find(outcome => outcome.status === 'rejected');
+    if (rejected) throw rejected.reason;
+    const [first, second] = evidence.textChecks;
+    assert.notEqual(first.threadSha256, second.threadSha256, 'E_THREAD_ISOLATION');
+    assert.notEqual(first.expectedUtf8Sha256, second.expectedUtf8Sha256, 'E_FIXTURE_COLLISION');
+    assert.ok(Math.max(Date.parse(first.startedAt), Date.parse(second.startedAt)) < Math.min(Date.parse(first.completedAt), Date.parse(second.completedAt)), 'E_TASKS_DID_NOT_OVERLAP');
+    evidence.concurrentTasks = { result: 'passed', oneNativeProcess: true, overlappingTurns: true, exactDistinctAnswers: true, distinctEfforts: first.effort !== second.effort };
+    evidence.text = 'passed';
+  } else if (['--namespaces', '--batch'].includes(option)) {
+    await verifyNamespaces(selectedModel);
   } else if (codingCase) {
     await verifyCoding(selectedModel);
   } else if (option === '--repair') {
@@ -419,6 +493,7 @@ try {
     const info = event.params?.turn?.error?.codexErrorInfo ?? event.params?.error?.codexErrorInfo;
     return typeof info === 'string' && /^[A-Za-z]{1,64}$/.test(info) ? [info] : info && typeof info === 'object' ? Object.keys(info).filter(key => /^[A-Za-z]{1,64}$/.test(key)) : [];
   }))];
+  if (namespaceRun) evidence.nativeNamespaces = { ...evidence.nativeNamespaces, result: 'failed', acceptedCalls: namespaceRun.calls.length };
   if (toolRun?.coding) {
     evidence.nativeCoding = { ...evidence.nativeCoding, result: 'failed',
       completedPrefix: codingApproval.completedProgress(events, toolRun, cwd, shells), approvedSteps: [...toolRun.approvedSteps],
