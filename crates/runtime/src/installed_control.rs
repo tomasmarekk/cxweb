@@ -193,6 +193,16 @@ pub async fn retry_web(installation: &str, instance: String) -> Result<Snapshot,
     read(installation).await
 }
 
+pub async fn web_login(
+    installation: &str,
+    instance: String,
+    finish: bool,
+) -> Result<Snapshot, &'static str> {
+    selected(installation).await?;
+    mutate(installation, instance, Action::WebLogin(finish)).await?;
+    read(installation).await
+}
+
 pub async fn verify_compaction(
     installation: &str,
     instance: String,
@@ -224,6 +234,7 @@ pub async fn qualify_protocol(
 
 #[derive(Clone)]
 enum Action {
+    WebLogin(bool),
     QualifyProtocol(crate::protocol_qualification::Target),
     VerifyCompaction(Option<crate::native_probe::CheckpointTarget>),
     QualifyReasoning,
@@ -243,6 +254,11 @@ async fn remove(
 async fn mutate(installation: &str, instance: String, action: Action) -> Result<(), &'static str> {
     let operation = format!("{:032x}", rand::random::<u128>());
     let command = match action.clone() {
+        Action::WebLogin(finish) => Command::WebLogin {
+            instance: instance.clone(),
+            operation: operation.clone(),
+            finish,
+        },
         Action::QualifyProtocol(target) => Command::QualifyProtocol {
             instance: instance.clone(),
             operation: operation.clone(),
@@ -285,7 +301,7 @@ async fn mutate(installation: &str, instance: String, action: Action) -> Result<
                 Action::QualifyReasoning | Action::QualifyProtocol(_) | Action::VerifyCompaction(_)
             ) {
                 2700
-            } else if matches!(action, Action::RetryWeb) {
+            } else if matches!(action, Action::RetryWeb | Action::WebLogin(_)) {
                 90
             } else {
                 45
@@ -309,7 +325,9 @@ async fn mutate(installation: &str, instance: String, action: Action) -> Result<
                 outcome: Outcome::Failed {},
                 ..
             }) => {
-                return Err(if matches!(action, Action::QualifyProtocol(_)) {
+                return Err(if matches!(action, Action::WebLogin(_)) {
+                    "E_INSTALLED_LOGIN"
+                } else if matches!(action, Action::QualifyProtocol(_)) {
                     "E_INSTALLED_QUALITY"
                 } else if matches!(action, Action::VerifyCompaction(_)) {
                     "E_INSTALLED_COMPACTION"

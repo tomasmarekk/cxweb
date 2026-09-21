@@ -34,6 +34,9 @@ window.cxwebInstalled = (() => {
   };
   function connectionWords(health) {
     const components = health.components;
+    if (health.overall === 'auth_required' && components.web_auth?.code === 'E_LOGIN_WINDOW_OPEN') {
+      return ['Complete ChatGPT sign-in', 'Finish sign-in or verification in the browser, close its window, then select Verify sign-in. Use the same account and workspace as this connection.'];
+    }
     if (health.overall === 'unavailable') {
       if (components.runtime?.state !== 'healthy') return ['Runtime needs attention', 'Response cleanup or runtime availability could not be confirmed. Review the connection details.'];
       if (components.config?.state === 'unavailable') return ['Configuration unavailable', 'The Codex configuration could not be checked. Review the connection details.'];
@@ -63,6 +66,11 @@ window.cxwebInstalled = (() => {
     node('installed-retry').hidden = !retryable;
     node('installed-retry').disabled = !retryable || pending || Boolean(confirmation);
     const canQualify = canQualifyReasoning();
+    const login = snapshot?.health.overall === 'auth_required' && snapshot.health.components.runtime?.state === 'healthy' &&
+      ['E_LOGIN_REQUIRED', 'E_BROWSER_VERIFICATION_REQUIRED', 'E_SESSION_SCOPE', 'E_LOGIN_WINDOW_OPEN'].includes(snapshot.health.components.web_auth?.code);
+    node('installed-login').hidden = !login;
+    node('installed-login').disabled = !login || pending || Boolean(confirmation) || snapshot.health.active_web_turns !== 0;
+    node('installed-login').textContent = snapshot?.health.components.web_auth?.code === 'E_LOGIN_WINDOW_OPEN' ? 'Verify sign-in' : 'Open ChatGPT sign-in';
     node('installed-qualify-reasoning').hidden = !canQualify;
     node('installed-qualify-reasoning').disabled = !canQualify || pending || Boolean(confirmation);
     node('installed-reasoning-help').hidden = !canQualify;
@@ -71,6 +79,7 @@ window.cxwebInstalled = (() => {
     const messages = {
       E_INSTALLED_CHANGED: 'The runtime restarted. Check its current status before taking further action.',
       E_INSTALLED_RECOVERY: 'Background verification could not be restarted. Check status for the current sign-in or compatibility requirement.',
+      E_INSTALLED_LOGIN: 'Sign-in could not be completed. Finish signing in, close the managed browser window and any extra tabs, then check status before trying again.',
       E_INSTALLED_UNAVAILABLE: 'The installed runtime is not responding. No replacement process was started.',
       E_INSTALLED_REMOVE: 'Removal could not be completed. Check status for the configuration or cleanup error.',
       E_INSTALLED_TIMEOUT: 'The operation is still unconfirmed. Check status; it was not submitted again.',
@@ -226,6 +235,15 @@ window.cxwebInstalled = (() => {
     if (selected) await refresh();
   });
   node('installed-refresh').addEventListener('click', refresh);
+  node('installed-login').addEventListener('click', async () => {
+    if (pending || confirmation || !snapshot || node('installed-login').disabled) return;
+    const receipt = { installation: selected, instance: snapshot.instance, finish: snapshot.health.components.web_auth?.code === 'E_LOGIN_WINDOW_OPEN' };
+    pending = true; clearTimer(); ++epoch; controls(); node('installed-error').hidden = true;
+    node('installed-description').textContent = receipt.finish ? 'Verifying the saved account, workspace and models. No message is sent.' : 'Opening the official ChatGPT sign-in window.';
+    try { render(await invoke('installed_web_login', receipt)); }
+    catch (code) { unavailable(); error(code); }
+    finally { pending = false; controls(); schedule(); }
+  });
   node('installed-qualify-reasoning').addEventListener('click', async () => {
     if (pending || confirmation || !canQualifyReasoning()) return;
     const receipt = { installation: selected, instance: snapshot.instance };

@@ -74,6 +74,12 @@ fn failure(code: &str) -> (Overall, State, Action, &'static str) {
         );
     }
     match code {
+        "E_LOGIN_WINDOW_OPEN" => (
+            Overall::AuthRequired,
+            State::AuthRequired,
+            Action::Check,
+            "E_LOGIN_WINDOW_OPEN",
+        ),
         "E_BROWSER_RATE_LIMITED" => (
             Overall::RateLimited,
             State::Unavailable,
@@ -256,9 +262,10 @@ impl Tracker {
                     Some(fixed),
                 );
                 match fixed {
-                    "E_LOGIN_REQUIRED" | "E_BROWSER_VERIFICATION_REQUIRED" | "E_SESSION_SCOPE" => {
-                        health.components.web_auth = failed
-                    }
+                    "E_LOGIN_REQUIRED"
+                    | "E_BROWSER_VERIFICATION_REQUIRED"
+                    | "E_SESSION_SCOPE"
+                    | "E_LOGIN_WINDOW_OPEN" => health.components.web_auth = failed,
                     "E_MODEL_SELECTION" => health.components.web_models = failed,
                     _ => health.components.browser = failed,
                 }

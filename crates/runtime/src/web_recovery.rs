@@ -570,8 +570,134 @@ pub(crate) struct RecoveryController {
     pending: PendingProvider,
     receipt: Arc<Mutex<Receipt>>,
     directory: PathBuf,
+    login: Arc<Mutex<Option<InstalledLogin>>>,
+}
+struct InstalledLogin {
+    browser: ManagedBrowser,
+    page: Option<cxweb_browser_adapter::ManagedPage>,
+    _ownership: std::fs::File,
 }
 impl RecoveryController {
+    pub(crate) async fn web_login(
+        &self,
+        finish: bool,
+        cancel: CancellationToken,
+    ) -> Result<(), &'static str> {
+        if cancel.is_cancelled() {
+            return Err("E_CANCELLED");
+        }
+        if finish {
+            if !matches!(
+                self.pending.health(),
+                crate::gateway::ProviderHealth::Unavailable {
+                    code: "E_LOGIN_WINDOW_OPEN"
+                }
+            ) {
+                return Err("E_WEB_RECOVERY_STATE");
+            }
+            self.release_login().await?;
+            *self.pending.0.lock().map_err(|_| "E_WEB_RECOVERY_STATE")? = None;
+            let receipt = self
+                .receipt
+                .lock()
+                .map_err(|_| "E_WEB_RECOVERY_STATE")?
+                .clone();
+            return self
+                .pending
+                .restore(receipt, self.directory.clone(), cancel)
+                .await;
+        }
+        let code = match self.pending.health() {
+            crate::gateway::ProviderHealth::Unavailable { code } => code,
+            _ => return Err("E_WEB_RECOVERY_STATE"),
+        };
+        if !matches!(
+            code,
+            "E_LOGIN_REQUIRED"
+                | "E_BROWSER_VERIFICATION_REQUIRED"
+                | "E_SESSION_SCOPE"
+                | "E_LOGIN_WINDOW_OPEN"
+        ) {
+            return Err("E_WEB_RECOVERY_STATE");
+        }
+        let driver = self
+            .pending
+            .1
+            .lock()
+            .map_err(|_| "E_WEB_RECOVERY_STATE")?
+            .clone();
+        if let Some((driver, _)) = driver {
+            driver.verify_idle().await?;
+            driver.shutdown().await?;
+            *self.pending.1.lock().map_err(|_| "E_WEB_RECOVERY_STATE")? = None;
+        }
+        let login = self.login.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut session = login.lock().map_err(|_| "E_WEB_RECOVERY_STATE")?;
+            if session.is_some() {
+                return Ok(());
+            }
+            if cancel.is_cancelled() {
+                return Err("E_CANCELLED");
+            }
+            let paths = StatePaths::open().map_err(|_| "E_STATE_PERMISSIONS")?;
+            let ownership = paths.lock().map_err(|_| "E_ALREADY_RUNNING")?;
+            let executable = installed_browser().map_err(|_| "E_BROWSER_RUNTIME_MISSING")?;
+            let browser = ManagedBrowser::launch(&executable, &paths.profile, true)
+                .map_err(|_| "E_BROWSER_START")?;
+            // Retain ownership even if opening the page has an uncertain outcome.
+            *session = Some(InstalledLogin {
+                browser,
+                page: None,
+                _ownership: ownership,
+            });
+            let session = session.as_mut().ok_or("E_WEB_RECOVERY_STATE")?;
+            session.page = Some(
+                session
+                    .browser
+                    .open_login()
+                    .map_err(|_| "E_BROWSER_RELEASE")?,
+            );
+            Ok(())
+        })
+        .await
+        .map_err(|_| "E_WEB_RECOVERY_WORKER")??;
+        *self.pending.0.lock().map_err(|_| "E_WEB_RECOVERY_STATE")? =
+            Some(Err("E_LOGIN_WINDOW_OPEN"));
+        Ok(())
+    }
+
+    pub(crate) async fn release_login(&self) -> Result<(), &'static str> {
+        let login = self.login.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut holder = login.lock().map_err(|_| "E_WEB_RECOVERY_STATE")?;
+            if let Some(session) = holder.as_mut() {
+                if !session
+                    .browser
+                    .has_exited()
+                    .map_err(|_| "E_BROWSER_RELEASE")?
+                {
+                    if let Some(page) = session.page.as_ref()
+                        && session
+                            .browser
+                            .page_exists(page)
+                            .map_err(|_| "E_BROWSER_RELEASE")?
+                    {
+                        return Err("E_LOGIN_WINDOW_OPEN");
+                    }
+                    // Never close another user-opened tab to obtain the profile.
+                    session
+                        .browser
+                        .close_for_replacement(None)
+                        .map_err(|_| "E_BROWSER_RELEASE")?;
+                }
+                *holder = None;
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|_| "E_WEB_RECOVERY_WORKER")?
+    }
     pub(crate) async fn qualify_protocol(
         &self,
         target: crate::protocol_qualification::Target,
@@ -662,6 +788,7 @@ impl RecoveryController {
             pending,
             receipt: Arc::new(Mutex::new(receipt)),
             directory,
+            login: Arc::default(),
         }
     }
     pub(crate) async fn retry(
@@ -1147,6 +1274,39 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(pending.ready(), Err("E_CANCELLED")));
+    }
+    #[tokio::test]
+    async fn installed_login_refuses_non_auth_states_and_cancelled_operations() {
+        for code in [
+            "E_BROWSER_RATE_LIMITED",
+            "E_MODEL_SELECTION",
+            "E_BROWSER_START",
+            "E_BROWSER_CLOSED",
+        ] {
+            let pending = PendingProvider::default();
+            pending.finish(Err(code), &CancellationToken::new());
+            let recovery = RecoveryController::new(
+                pending.clone(),
+                Receipt::fixture("installation"),
+                PathBuf::new(),
+            );
+            for finish in [false, true] {
+                assert_eq!(
+                    recovery.web_login(finish, CancellationToken::new()).await,
+                    Err("E_WEB_RECOVERY_STATE")
+                );
+            }
+            assert!(recovery.login.lock().unwrap().is_none());
+            assert!(matches!(pending.ready(), Err(observed) if observed == code));
+        }
+        let pending = PendingProvider::default();
+        pending.finish(Err("E_LOGIN_REQUIRED"), &CancellationToken::new());
+        let recovery =
+            RecoveryController::new(pending, Receipt::fixture("installation"), PathBuf::new());
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        assert_eq!(recovery.web_login(false, cancel).await, Err("E_CANCELLED"));
+        assert!(recovery.login.lock().unwrap().is_none());
     }
     #[test]
     fn only_completed_transient_failures_can_be_explicitly_retried() {

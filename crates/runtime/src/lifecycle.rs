@@ -54,6 +54,25 @@ fn supervision_error(error: std::io::Error) -> &'static str {
 }
 
 impl DisconnectController {
+    pub(crate) async fn web_login(&self, finish: bool) -> Result<DisconnectState, &'static str> {
+        let controller = self.clone();
+        tokio::spawn(async move {
+            {
+                let _operation = controller.serial.lock().await;
+                if *controller.state.borrow() != DisconnectState::Idle {
+                    return Err("E_WEB_RECOVERY_STATE");
+                }
+            }
+            let recovery = controller.recovery.as_ref().ok_or("E_WEB_RECOVERY_STATE")?;
+            controller
+                .gateway
+                .maintain_web(|cancel| recovery.web_login(finish, cancel))
+                .await?;
+            Ok(*controller.state.borrow())
+        })
+        .await
+        .map_err(|_| "E_WEB_RECOVERY_WORKER")?
+    }
     pub(crate) async fn qualify_protocol(
         &self,
         target: crate::protocol_qualification::Target,
@@ -393,6 +412,12 @@ impl DisconnectController {
         if let Err(error) = self.gateway.disconnect_web(timeout).await {
             self.state.send_replace(DisconnectState::DrainFailed);
             return Err(error);
+        }
+        if let Some(recovery) = &self.recovery
+            && let Err(code) = recovery.release_login().await
+        {
+            self.state.send_replace(DisconnectState::DrainFailed);
+            return Err(code);
         }
         self.state.send_replace(DisconnectState::Restoring);
         let journal = self.journal.clone();

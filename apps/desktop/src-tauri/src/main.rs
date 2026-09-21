@@ -56,6 +56,17 @@ mod desktop {
     }
 
     #[tauri::command]
+    async fn installed_web_login(
+        installation: String,
+        instance: String,
+        finish: bool,
+    ) -> Result<cxweb_runtime::installed_control::Snapshot, String> {
+        cxweb_runtime::installed_control::web_login(&installation, instance, finish)
+            .await
+            .map_err(str::to_owned)
+    }
+
+    #[tauri::command]
     async fn installed_qualify_reasoning(
         installation: String,
         instance: String,
@@ -247,7 +258,8 @@ mod desktop {
                 installed_check,
                 installed_disconnect,
                 installed_qualify_reasoning,
-                installed_retry_web
+                installed_retry_web,
+                installed_web_login
             ])
             .run(tauri::generate_context!())
             .expect("cxweb desktop runtime");

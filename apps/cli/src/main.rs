@@ -60,6 +60,12 @@ enum Command {
         installation: String,
     },
     /// Explicitly retry an eligible installed browser recovery without sending a message.
+    RuntimeWebLogin {
+        #[arg(long)]
+        installation: String,
+        #[arg(long)]
+        finish: bool,
+    },
     RuntimeRetryWeb {
         #[arg(long)]
         installation: String,
@@ -274,6 +280,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 let _ = installation;
                 return Err("runtime health requires Windows".into());
+            }
+        }
+        Command::RuntimeWebLogin {
+            installation,
+            finish,
+        } => {
+            #[cfg(windows)]
+            {
+                let current = cxweb_runtime::installed_control::check(&installation).await?;
+                let result = cxweb_runtime::installed_control::web_login(
+                    &installation,
+                    current.instance,
+                    finish,
+                )
+                .await?;
+                print_json(&serde_json::to_value(result.health)?);
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = (installation, finish);
+                return Err("runtime login requires Windows".into());
             }
         }
         Command::RuntimeRetryWeb { installation } => {

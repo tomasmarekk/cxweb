@@ -22,6 +22,9 @@ const EXCHANGE: Duration = Duration::from_secs(2);
 pub type Work = Pin<Box<dyn Future<Output = Result<DisconnectState, &'static str>> + Send>>;
 
 pub trait Lifecycle: Send + Sync + 'static {
+    fn web_login(&self, _finish: bool) -> Work {
+        Box::pin(async { Err("E_WEB_RECOVERY_STATE") })
+    }
     fn qualify_protocol(&self, _target: crate::protocol_qualification::Target) -> Work {
         Box::pin(async { Err("E_QUALITY_UNSUPPORTED") })
     }
@@ -94,6 +97,7 @@ impl LoginBackend for Control {
 }
 #[derive(Clone, PartialEq, Eq)]
 enum OperationKind {
+    WebLogin(bool),
     QualifyProtocol(crate::protocol_qualification::Target),
     VerifyCompaction(Option<crate::native_probe::CheckpointTarget>),
     QualifyReasoning,
@@ -105,6 +109,10 @@ enum OperationKind {
     NativeText(crate::setup_owner::NativeTarget),
 }
 impl Lifecycle for DisconnectController {
+    fn web_login(&self, finish: bool) -> Work {
+        let controller = self.clone();
+        Box::pin(async move { controller.web_login(finish).await })
+    }
     fn qualify_protocol(&self, target: crate::protocol_qualification::Target) -> Work {
         let controller = self.clone();
         Box::pin(async move { controller.qualify_protocol(target).await })
@@ -158,6 +166,11 @@ pub struct Request {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    WebLogin {
+        instance: String,
+        operation: String,
+        finish: bool,
+    },
     QualifyProtocol {
         instance: String,
         operation: String,
@@ -475,6 +488,11 @@ impl Service {
                 instance,
                 operation,
             } => (instance, operation, Some(OperationKind::QualifyReasoning)),
+            Command::WebLogin {
+                instance,
+                operation,
+                finish,
+            } => (instance, operation, Some(OperationKind::WebLogin(finish))),
             Command::RetryWeb {
                 instance,
                 operation,
@@ -602,6 +620,7 @@ impl Service {
             OperationKind::Disconnect
                 | OperationKind::DisconnectWhenIdle
                 | OperationKind::RetryWeb
+                | OperationKind::WebLogin(_)
                 | OperationKind::QualifyReasoning
                 | OperationKind::QualifyProtocol(_)
                 | OperationKind::VerifyCompaction(_)
@@ -690,6 +709,17 @@ impl Service {
                             },
                         }
                     }
+                    OperationKind::WebLogin(finish) => {
+                        match backend
+                            .expect("validated lifecycle backend")
+                            .web_login(finish)
+                            .await
+                        {
+                            Ok(result) => Outcome::Completed { result },
+                            Err("E_WEB_ACTIVE") => Outcome::ActiveWork {},
+                            Err(_) => Outcome::Failed {},
+                        }
+                    }
                     OperationKind::RetryWeb => {
                         match backend
                             .expect("validated lifecycle backend")
@@ -728,6 +758,7 @@ impl Service {
                             OperationKind::Disconnect
                             | OperationKind::DisconnectWhenIdle
                             | OperationKind::RetryWeb
+                            | OperationKind::WebLogin(_)
                             | OperationKind::QualifyReasoning
                             | OperationKind::QualifyProtocol(_)
                             | OperationKind::VerifyCompaction(_) => {
@@ -881,6 +912,7 @@ pub async fn exchange(installation: &str, request: &Request) -> io::Result<Reply
                 Command::Disconnect { operation, .. }
                 | Command::DisconnectWhenIdle { operation, .. }
                 | Command::RetryWeb { operation, .. }
+                | Command::WebLogin { operation, .. }
                 | Command::QualifyReasoning { operation, .. }
                 | Command::QualifyProtocol { operation, .. }
                 | Command::VerifyCompaction { operation, .. }
@@ -989,6 +1021,9 @@ mod tests {
         release: Arc<Semaphore>,
     }
     impl Lifecycle for Backend {
+        fn web_login(&self, _finish: bool) -> Work {
+            self.retry_web()
+        }
         fn qualify_protocol(&self, _: crate::protocol_qualification::Target) -> Work {
             self.retry_web()
         }
@@ -1434,6 +1469,63 @@ mod tests {
         ));
         assert_eq!(dispatch(&service, command()), terminal);
         assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+    }
+    #[tokio::test]
+    async fn installed_login_receipts_distinguish_open_finish_and_replacement_instances() {
+        for finish in [false, true] {
+            let (service, backend) = fixture();
+            let operation = "f".repeat(32);
+            let command = |instance: String, finish| Command::WebLogin {
+                instance,
+                operation: operation.clone(),
+                finish,
+            };
+            assert_eq!(
+                dispatch(&service, command("other".into(), finish)),
+                error(ErrorCode::Instance)
+            );
+            for _ in 0..2 {
+                assert!(matches!(
+                    dispatch(&service, command(service.instance.clone(), finish)),
+                    Reply::Operation {
+                        outcome: Outcome::Running {},
+                        ..
+                    }
+                ));
+            }
+            assert_eq!(
+                dispatch(&service, command(service.instance.clone(), !finish)),
+                error(ErrorCode::OperationConflict)
+            );
+            backend.release.add_permits(1);
+            let result = tokio::time::timeout(Duration::from_secs(2), async {
+                loop {
+                    let reply = dispatch(&service, command(service.instance.clone(), finish));
+                    if !matches!(
+                        reply,
+                        Reply::Operation {
+                            outcome: Outcome::Running {},
+                            ..
+                        }
+                    ) {
+                        break reply;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            assert!(matches!(
+                result,
+                Reply::Operation {
+                    outcome: Outcome::Completed {
+                        result: DisconnectState::Idle
+                    },
+                    ..
+                }
+            ));
+            assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+        }
     }
 
     #[tokio::test]

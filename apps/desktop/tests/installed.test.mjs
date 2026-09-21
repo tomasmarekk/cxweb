@@ -261,6 +261,51 @@ test('native failures cannot relabel a browser or configuration failure', async 
   }
 });
 
+test('installed login opens once and verifies only after a separate explicit action', async () => {
+  const value = health('auth_required');
+  value.health.components.web_auth = { state: 'auth_required', code: 'E_BROWSER_VERIFICATION_REQUIRED' };
+  let opened;
+  const ui = panel(async command => {
+    if (command === 'installed_list') return list();
+    if (command === 'installed_web_login') return new Promise(resolve => { opened = resolve; });
+    return value;
+  });
+  await flush();
+  const button = ui.nodes.get('installed-login');
+  assert.equal(button.hidden, false);
+  assert.equal(button.textContent, 'Open ChatGPT sign-in');
+  const opening = button.click(); await button.click();
+  assert.equal(button.disabled, true);
+  assert.deepEqual({ ...ui.calls.at(-1).params }, { installation: target.installation, instance: 'b'.repeat(32), finish: false });
+  value.health.components.web_auth.code = 'E_LOGIN_WINDOW_OPEN';
+  opened(value); await opening;
+  assert.equal(button.textContent, 'Verify sign-in');
+  assert.match(ui.nodes.get('installed-description').textContent, /close its window/);
+  await ui.nodes.get('installed-refresh').click();
+  assert.equal(ui.calls.filter(call => call.command === 'installed_web_login').length, 1);
+  const finishing = button.click(); await button.click();
+  assert.equal(ui.calls.at(-1).params.finish, true);
+  opened(health('preflight')); await finishing;
+  assert.equal(button.hidden, true);
+  assert.equal(ui.calls.filter(call => call.command === 'installed_web_login').length, 2);
+});
+
+test('native auth failures and active work cannot open managed ChatGPT login', async () => {
+  for (const mutate of [
+    value => { value.health.components.web_auth = { state: 'healthy' }; },
+    value => { value.health.active_web_turns = 1; },
+    value => { value.health.overall = 'removal_pending_restart'; },
+    value => { value.health.components.runtime.state = 'unavailable'; },
+  ]) {
+    const value = health('auth_required');
+    value.health.components.web_auth = { state: 'auth_required', code: 'E_LOGIN_REQUIRED' };
+    mutate(value);
+    const ui = panel(async command => command === 'installed_list' ? list() : value);
+    await flush(); await ui.nodes.get('installed-login').click();
+    assert.ok(ui.calls.every(call => call.command !== 'installed_web_login'));
+  }
+});
+
 test('installation presence distinguishes awaiting launch, absence and uncertainty without probes', async () => {
   for (const [state, code, label, detail] of [
     ['unknown', 'E_CLIENT_AWAITING_LAUNCH', 'Awaiting launch', /installation found; open this client/],
