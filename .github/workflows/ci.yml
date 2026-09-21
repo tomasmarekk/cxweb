@@ -1,12 +1,26 @@
 name: Rust checks
 on: [push, pull_request]
 jobs:
+  portable:
+    name: Portable Rust contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-contracts
+      - run: cargo test --locked --workspace --exclude cxweb-desktop
   windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - name: Install pinned Rust
         run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-checks
       - run: cargo fmt --all -- --check
       - run: cargo test --locked -p cxweb-platform
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
@@ -14,13 +28,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: node --test apps/desktop/tests/app.test.mjs
-      - run: node --test apps/desktop/tests/installed.test.mjs
-      - run: node --test crates/browser-adapter/tests/model_surface.test.mjs
-      - run: node --test crates/browser-adapter/tests/composer.test.mjs
-      - run: node --test crates/browser-adapter/tests/answer_content.test.mjs
-      - run: node --test crates/browser-adapter/tests/public_summary.test.mjs
-      - run: node --test crates/browser-adapter/tests/account_scope.test.mjs
-      - run: node --test crates/browser-adapter/tests/temporary_chat.test.mjs
-      - run: node --test scripts/probe-client-approval.test.mjs
-      - run: node --test scripts/coding-fixture.test.mjs scripts/coding-fixture-approval.test.mjs scripts/namespace-fixture.test.mjs
+      - name: Verify desktop and browser behavior
+        shell: pwsh
+        run: |
+          $tests = Get-ChildItem apps/desktop/tests, crates/browser-adapter/tests, scripts -Filter '*.test.mjs' -File | ForEach-Object { $_.FullName }
+          node --test @tests
+          if ($LASTEXITCODE -ne 0) { throw 'JavaScript tests failed.' }
