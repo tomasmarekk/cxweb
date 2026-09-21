@@ -1,5 +1,10 @@
 Windows x64 preview of cxweb, connecting ChatGPT web models to Codex App and Codex CLI.
 
+Removes the five-minute answer inactivity timeout and the thirty-minute total
+generation timeout. Long Pro reasoning can continue until ChatGPT completes,
+the user cancels, or an actual browser/protocol error occurs. Cancellation still
+stops the owned request and never automatically resubmits it.
+
 Fixes ordinary installer upgrades disconnecting Codex and leaving cxweb at
 "Finish removal" with missing web models. Replacing an installed version now
 preserves the connection, private runtime and signed-in browser profile without

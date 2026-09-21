@@ -4472,3 +4472,15 @@ model discovery, native WebSocket preservation and actual pickers are proven.
 - Direct observation of the owned browser showed a signed-out ChatGPT page with a visible English Log in button. The legacy data-testid/href selectors missed it, producing a startup timeout. Recognize exact visible English sign-in buttons outside message/article content, without clicking or reading credentials. New regression tests reject hidden buttons and quoted login text.
 - Health mapping also mislabeled E_BACKGROUND_NAVIGATION as Temporary Chat navigation. Preserve the startup code and Check action; a dedicated regression verifies both codes stay distinct.
 - All 157 JavaScript tests and nine health-related Rust tests passed. Temporary structural/screenshot diagnostics were removed from source and their opt-in marker was removed. Renewed account login is required for live verification; no claim that the existing session remains authenticated.
+
+### Live recovery verified after renewed sign-in
+
+- After the user signed in and closed the login window, recovery verified browser, account and all five reasoning choices. A restart of the optimized daemon preserved the session. CLI 0.155.1 returned the exact live text response with public reasoning events.
+- A byte-identical copy of Codex App's packaged 0.155.0-alpha.9.2 backend loaded native and owned models and completed native read/apply_patch with real file and final-answer checks. Direct spawning inside WindowsApps was denied; the packaged binary was copied unchanged for this test. The GUI picker was not directly observed. Both probes preserved configuration and executable hashes. Post-test health was ready, with both clients healthy and no active work.
+- Release 35633799632 succeeded and published the installer fixes. Installation of that downloaded artifact was superseded by the user's next timeout report before the final local upgrade check.
+
+## Remove generation time limits
+
+- The Pro task 01a0c525-fad8-7c81-8505-db460bf7a999 failed with E_GENERATION_TIMEOUT after an initial completed tool call. The coordinator terminated responses after five minutes without new answer text, independent of visible ongoing reasoning, and also enforced a thirty-minute total limit.
+- At the user's explicit request, remove both generation limits. Browser/protocol failure detection, scope validation, explicit cancellation, single-submission behavior and cleanup remain active. Long generation is not automatically retried.
+- All 16 coordinator tests passed, including virtual-clock regressions covering six hours of unchanged text followed by successful completion, and six hours followed by explicit cancellation with exactly one submission/stop/release. Runtime Clippy with warnings denied passed. This is deterministic long-duration simulation, not a six-hour live generation claim.

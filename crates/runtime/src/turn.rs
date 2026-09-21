@@ -304,9 +304,9 @@ impl Coordinator {
                 "E_SUBMISSION_UNCERTAIN"
             });
         }
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(1800);
-        let mut progress_at = tokio::time::Instant::now();
-        let mut previous_text_hash = String::new();
+        // Generation has no elapsed-time or text-inactivity deadline. Pro can
+        // think silently for a long time; completion, cancellation and actual
+        // browser/protocol failures determine when this request ends.
         let mut summary = Vec::new();
         let response_id = format!("resp_cxweb_{:x}", Sha256::digest(id.as_bytes()));
         let created_at = SystemTime::now()
@@ -326,14 +326,6 @@ impl Coordinator {
                     "E_CANCELLED_STOP_UNCONFIRMED"
                 });
             }
-            if tokio::time::Instant::now() >= deadline
-                || progress_at.elapsed() > Duration::from_secs(300)
-            {
-                let _: Result<(), _> = tracker.fail("E_GENERATION_TIMEOUT");
-                self.ledger.transition(id, tracker.state()).await?;
-                self.stop(&prepared.handle).await;
-                return Err("E_GENERATION_TIMEOUT");
-            }
             let observation = match tokio::time::timeout(
                 Duration::from_secs(5),
                 self.browser.observe(prepared.handle.clone()),
@@ -352,11 +344,6 @@ impl Coordinator {
                     });
                 }
             };
-            let text_hash = format!("{:x}", Sha256::digest(observation.text.as_bytes()));
-            if text_hash != previous_text_hash {
-                previous_text_hash = text_hash;
-                progress_at = tokio::time::Instant::now();
-            }
             let observed_summary = observation.summary.clone();
             let progress = match tracker.observe(observation) {
                 Ok(progress) => progress,
@@ -548,6 +535,7 @@ mod tests {
         Invalid,
         Uncertain,
         Waiting,
+        Stalled,
         WrongAssistant,
         ChangedScope,
         Checkpoint,
@@ -661,6 +649,7 @@ mod tests {
             let generating =
                 matches!(self.mode, Mode::Waiting) || self.hold_generation.load(Ordering::SeqCst);
             let summary = self.public_summary.lock().unwrap().clone();
+            let completion_control = !generating && !matches!(self.mode, Mode::Stalled);
             let assistant = if matches!(self.mode, Mode::WrongAssistant) {
                 "old"
             } else {
@@ -674,7 +663,7 @@ mod tests {
                     text,
                     summary,
                     generating,
-                    completion_control: !generating,
+                    completion_control,
                     fenced_output: false,
                     selected_model: "Observed text".into(),
                     ambiguous: false,
@@ -699,6 +688,58 @@ mod tests {
     }
     fn input() -> TurnInput {
         TurnInput { request_id:"request-1".into(), session:SessionKey { installation:"i".into(),native_session:"s".into(),account_scope:"a".into(),workspace_scope:"w".into(),route:"webbridge/test".into(),epoch:0 }, bytes:json!({"model":"webbridge/test","input":"synthetic task","tools":[{"type":"function","name":"read_file","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}}]}).to_string().into_bytes() }
+    }
+
+    #[tokio::test]
+    async fn active_reasoning_completes_after_hours_without_new_answer_text() {
+        let browser = MockBrowser::new(Mode::Final);
+        browser.hold_generation.store(true, Ordering::SeqCst);
+        *browser.public_summary.lock().unwrap() = vec!["Pro thinking".into()];
+        let coordinator = Coordinator::new(Ledger::in_memory(), browser.clone());
+        let task =
+            tokio::spawn(
+                async move { coordinator.execute(input(), CancellationToken::new()).await },
+            );
+        browser.observing.notified().await;
+        tokio::time::pause();
+        for _ in 0..72 {
+            tokio::time::advance(Duration::from_secs(300)).await;
+            tokio::task::yield_now().await;
+            assert!(
+                !task.is_finished(),
+                "active reasoning hit an elapsed-time limit"
+            );
+        }
+        browser.hold_generation.store(false, Ordering::SeqCst);
+        assert!(task.await.unwrap().is_ok());
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
+        assert_eq!(browser.stops.load(Ordering::SeqCst), 0);
+        assert_eq!(browser.releases.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn silent_generation_waits_for_user_cancellation_without_resubmission() {
+        for mode in [Mode::Stalled, Mode::Waiting] {
+            let browser = MockBrowser::new(mode);
+            let coordinator = Coordinator::new(Ledger::in_memory(), browser.clone());
+            let cancel = CancellationToken::new();
+            let worker_cancel = cancel.clone();
+            let task =
+                tokio::spawn(async move { coordinator.execute(input(), worker_cancel).await });
+            browser.observing.notified().await;
+            tokio::time::pause();
+            for _ in 0..72 {
+                tokio::time::advance(Duration::from_secs(300)).await;
+                tokio::task::yield_now().await;
+                assert!(!task.is_finished(), "silent generation was timed out");
+            }
+            cancel.cancel();
+            assert_eq!(task.await.unwrap().err(), Some("E_CANCELLED"));
+            assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
+            assert_eq!(browser.stops.load(Ordering::SeqCst), 1);
+            assert_eq!(browser.releases.load(Ordering::SeqCst), 1);
+            tokio::time::resume();
+        }
     }
 
     #[tokio::test]
