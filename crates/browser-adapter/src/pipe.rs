@@ -1631,7 +1631,7 @@ impl ManagedBrowser {
 
     pub fn insert_prompt(&mut self, page: &ManagedPage, prompt: &str) -> io::Result<()> {
         self.check_service_limit(page)?;
-        if prompt.len() > 512 * 1024 {
+        if prompt.len() > cxweb_codex_adapter::context_budget::MAX_PROMPT_BYTES {
             return Err(io::Error::other("E_CONTEXT_BUDGET"));
         }
         if self.dom(page, include_str!("dom/focus.js"), vec![])? != true {

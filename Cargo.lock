@@ -939,6 +939,7 @@ name = "cxweb-browser-adapter"
 version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
+ "cxweb-codex-adapter",
  "cxweb-domain",
  "cxweb-platform",
  "serde",
