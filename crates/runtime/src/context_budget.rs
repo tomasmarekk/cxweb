@@ -127,10 +127,14 @@ mod tests {
         let original = payload.clone();
         assert_eq!(check(&payload), Ok(true));
         assert_eq!(payload, original);
-        payload["input"][1]["content"] = json!("a".repeat(550_000));
+        payload["input"][1]["content"] = json!("a".repeat(1_100_000));
         assert_eq!(check(&payload), Err("E_CONTEXT_BUDGET"));
-        payload["input"][1]["content"] = json!("a".repeat(300_000));
+        payload["input"][1]["content"] = json!("a".repeat(180_000));
         assert_eq!(check(&payload), Ok(false));
+        // A large completed tool result remains summarizable even after the
+        // ordinary answer budget was exceeded in a prior release.
+        payload["input"][1]["content"] = json!("a".repeat(700_000));
+        assert_eq!(check(&payload), Ok(true));
         // Raw JSON fits, but Markdown-safe escaping pushes the full prompt over
         // the ordinary ceiling. The compaction prompt still fits the reserve.
         payload["input"][1]["content"] = json!("*".repeat(70_000));

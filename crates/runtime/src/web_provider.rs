@@ -672,7 +672,7 @@ mod tests {
         );
         // Unqualified providers do not gain a compaction recovery capability.
         let mut too_large = large_history.clone();
-        too_large["input"][1]["content"] = json!("a".repeat(550_000));
+        too_large["input"][1]["content"] = json!("a".repeat(1_100_000));
         assert_eq!(
             unqualified
                 .execute(make_request(too_large, "unqualified", "old", "task"))
@@ -681,7 +681,7 @@ mod tests {
             Some("E_CONTEXT_BUDGET")
         );
         assert!(browser.sessions.lock().unwrap().is_empty());
-        let oversized = json!({"model":"webbridge/test","input":[{"role":"user","content":"*".repeat(100_000)},{"type":"compaction_trigger"}]});
+        let oversized = json!({"model":"webbridge/test","input":[{"role":"user","content":"*".repeat(200_000)},{"type":"compaction_trigger"}]});
         assert_eq!(
             provider
                 .execute(make_request(oversized, "oversized-compact", "old", "task"))
@@ -960,7 +960,7 @@ mod tests {
         for location in ["history", "instructions", "schema"] {
             // These characters expand to Unicode escapes in the literal browser
             // transport. The unescaped input is below the browser byte ceiling.
-            let large = "*".repeat(100_000);
+            let large = "*".repeat(200_000);
             let mut payload = json!({"model":"webbridge/test","input":"fixture"});
             match location {
                 "history" => payload["input"] = json!(large),
