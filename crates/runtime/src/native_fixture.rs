@@ -27,6 +27,7 @@ pub(crate) struct Fixture {
     pub marker: String,
     shells: Vec<PathBuf>,
     deliveries: Mutex<BTreeMap<String, String>>,
+    rejection: Mutex<Option<Value>>,
 }
 impl Fixture {
     pub fn new(cwd: PathBuf, marker: String) -> Self {
@@ -58,6 +59,7 @@ impl Fixture {
             marker,
             shells,
             deliveries: Mutex::new(BTreeMap::new()),
+            rejection: Mutex::new(None),
         }
     }
     pub fn expected(&self) -> &str {
@@ -125,11 +127,15 @@ impl Fixture {
                 Err(ERROR)
             };
         }
-        let output = response["output"]
-            .as_array()
-            .filter(|v| v.len() == 1)
-            .ok_or(ERROR)?;
-        let item = &output[0];
+        let output = response["output"].as_array().ok_or(ERROR)?;
+        let item = match output.as_slice() {
+            [item] => item,
+            [reasoning, item] if public_reasoning(reasoning, id) => item,
+            _ => {
+                self.record_rejection(&response, delivered.len());
+                return Err(ERROR);
+            }
+        };
         let valid = if self.checkpoint {
             match delivered.len() {
                 0 => {
@@ -195,11 +201,61 @@ impl Fixture {
             }
         };
         if response["status"] != "completed" || !valid {
+            self.record_rejection(&response, delivered.len());
             return Err(ERROR);
         }
         delivered.insert(id.into(), hash);
         Ok(())
     }
+    pub fn rejection_diagnostic(&self) -> Option<Value> {
+        self.rejection.lock().ok().and_then(|value| value.clone())
+    }
+    fn record_rejection(&self, response: &Value, step: usize) {
+        let output = response["output"].as_array();
+        let public_reasoning_present = output.is_some_and(|items| {
+            items.len() == 2
+                && response["id"]
+                    .as_str()
+                    .is_some_and(|id| public_reasoning(&items[0], id))
+        });
+        let item = &response["output"][usize::from(public_reasoning_present)];
+        let arguments = item["arguments"]
+            .as_str()
+            .and_then(|text| strict_json::parse(text.as_bytes(), 16 * 1024).ok());
+        let args = arguments.as_ref().and_then(Value::as_object);
+        let known = [
+            "cmd",
+            "login",
+            "workdir",
+            "max_output_tokens",
+            "yield_time_ms",
+            "shell",
+            "sandbox_permissions",
+        ];
+        let present: Vec<_> = known
+            .iter()
+            .filter(|key| args.is_some_and(|args| args.contains_key(**key)))
+            .copied()
+            .collect();
+        let value = serde_json::json!({
+            "step":step, "status_completed":response["status"] == "completed",
+            "output_count":output.map(Vec::len), "public_reasoning_present":public_reasoning_present,
+            "function_call":item["type"] == "function_call", "custom_call":item["type"] == "custom_tool_call", "message":item["type"] == "message", "checkpoint":item["type"] == "compaction", "reasoning":item["type"] == "reasoning",
+            "exec_command":item["name"] == "exec_command", "apply_patch":item["name"] == "apply_patch", "namespace_allowed":namespace(item),
+            "arguments_object":args.is_some(), "known_present_arguments":present,
+            "unknown_argument_count":args.map(|args| args.keys().filter(|key| !known.contains(&key.as_str())).count()),
+            "cmd_matches_read":args.is_some_and(|args| args.get("cmd") == Some(&Value::String(READ.into()))),
+            "cmd_matches_test":args.is_some_and(|args| args.get("cmd") == Some(&Value::String(TEST.into()))),
+            "login_false":args.is_some_and(|args| args.get("login") == Some(&Value::Bool(false))),
+            "workdir_matches":args.and_then(|args| args.get("workdir")).and_then(Value::as_str).map(|path| same_path(path, &self.cwd)),
+            "max_output_tokens":args.and_then(|args| args.get("max_output_tokens")).and_then(Value::as_u64),
+            "yield_time_ms":args.and_then(|args| args.get("yield_time_ms")).and_then(Value::as_u64),
+        });
+        if let Ok(mut saved) = self.rejection.lock() {
+            *saved = Some(value);
+        }
+    }
+
     fn test_delivery(&self, item: &Value) -> bool {
         item["type"] == "function_call"
             && item["name"] == "exec_command"
@@ -301,6 +357,26 @@ impl Fixture {
                     }
         })
     }
+}
+
+// A public reasoning item is metadata, not an additional tool operation.
+// Accept only the exact shape our wire encoder emits, with bounded text and
+// response-scoped identity. The action that follows retains its full policy.
+fn public_reasoning(item: &Value, response_id: &str) -> bool {
+    item.as_object().is_some_and(|object| object.len() == 3)
+        && item["type"] == "reasoning"
+        && item["id"] == format!("{response_id}_reasoning")
+        && item["summary"].as_array().is_some_and(|parts| {
+            !parts.is_empty()
+                && parts.len() <= 64
+                && parts.iter().all(|part| {
+                    part.as_object().is_some_and(|object| object.len() == 2)
+                        && part["type"] == "summary_text"
+                        && part["text"]
+                            .as_str()
+                            .is_some_and(|text| !text.is_empty() && text.len() <= 8192)
+                })
+        })
 }
 
 fn final_text(item: &Value, expected: &str) -> bool {
@@ -584,6 +660,84 @@ mod tests {
             Err(ERROR)
         );
     }
+    #[test]
+    fn public_reasoning_preserves_exact_checkpoint_action_sequence() {
+        let mut fixture = fixture();
+        fixture.checkpoint = true;
+        let items = [
+            read(json!({"cmd":READ,"login":false})),
+            json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":READ_ACK}]}),
+            json!({"type":"compaction","encrypted_content":"wbr1:synthetic"}),
+            json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":fixture.marker}]}),
+        ];
+        for (index, item) in items.into_iter().enumerate() {
+            let id = format!("response-{index}");
+            let reasoning = json!({"type":"reasoning","id":format!("{id}_reasoning"),"summary":[{"type":"summary_text","text":"Thinking"}]});
+            let payload =
+                json!({"id":id,"status":"completed","output":[reasoning,item]}).to_string();
+            fixture.check_delivery(&payload).unwrap();
+            fixture.check_delivery(&payload).unwrap();
+        }
+        assert_eq!(fixture.deliveries.lock().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn reasoning_cannot_hide_extra_tools_invalid_arguments_or_unexpected_fields() {
+        let reasoning = json!({"type":"reasoning","id":"r_reasoning","summary":[{"type":"summary_text","text":"Thinking"}]});
+        let action = read(json!({"cmd":READ,"login":false}));
+        for items in [
+            json!([reasoning]),
+            json!([reasoning, action, action]),
+            json!([action, reasoning]),
+            json!([reasoning, read(json!({"cmd":"unapproved", "login":false}))]),
+        ] {
+            assert!(
+                fixture()
+                    .check_delivery(
+                        &json!({"id":"r","status":"completed","output":items}).to_string()
+                    )
+                    .is_err()
+            );
+        }
+        for (key, invalid) in [
+            ("id", json!("another_reasoning")),
+            ("extra", json!(true)),
+            (
+                "summary",
+                json!([{"type":"function_call","text":"Thinking"}]),
+            ),
+        ] {
+            let mut altered = reasoning.clone();
+            altered[key] = invalid;
+            assert!(
+                fixture()
+                    .check_delivery(
+                        &json!({"id":"r","status":"completed","output":[altered,action]})
+                            .to_string()
+                    )
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn rejected_action_diagnostic_identifies_shape_without_exporting_arguments() {
+        let fixture = fixture();
+        let payload = response(
+            "private-response",
+            read(
+                json!({"cmd":"private command", "login":false, "private-key":"private value", "max_output_tokens":3000}),
+            ),
+        );
+        assert!(fixture.check_delivery(&payload).is_err());
+        let report = fixture.rejection_diagnostic().unwrap();
+        assert_eq!(report["step"], 0);
+        assert_eq!(report["cmd_matches_read"], false);
+        assert_eq!(report["unknown_argument_count"], 1);
+        assert_eq!(report["max_output_tokens"], 3000);
+        assert!(!report.to_string().contains("private"));
+    }
+
     #[test]
     fn additional_commands_permissions_arguments_and_namespaces_never_reach_native_client() {
         for args in [

@@ -134,6 +134,9 @@ pub(crate) async fn qualify_installed_checkpoint(
     };
     let (runtime, client) = tokio::join!(server, client);
     report["tool_result_requested"] = json!(selected.tool_result);
+    if let Some(fixture) = &fixture {
+        report["action_rejection"] = json!(fixture.rejection_diagnostic());
+    }
     if selected.tool_result {
         report["native_tools_executed"] = Value::Null;
         report["tool_result_recall_verified"] = json!(false);

@@ -1,0 +1,28 @@
+{
+  "schema": "cxweb.native-checkpoint.v1",
+  "observed_at": "2026-09-23T15:32:46.436Z",
+  "completed": true,
+  "stage": "completed",
+  "client_build": "0.155.0-alpha.16.3",
+  "catalog_codec": "codex-model-info-v1-app",
+  "executable_sha256": "a19f8f6c3c9dd5b71b6b1e3eb1ec55d75aafb2fdfb686d9e1f7a5f47db07d0d2",
+  "websocket": true,
+  "saved_browser_reused": true,
+  "isolated_native_home": true,
+  "native_tools_executed": 1,
+  "production_capability_published": false,
+  "tool_result_requested": true,
+  "tool_result_recall_verified": true,
+  "transport": {
+    "checkpoint_continuations": 1,
+    "checkpoint_continuations_with_plaintext_assistant_or_tools": 0,
+    "compaction_requests": 1,
+    "context_refusals": 0,
+    "failures": [],
+    "native_websocket_frames": 0,
+    "websocket_requests": 4
+  },
+  "cleanup_confirmed": true,
+  "failure": null,
+  "action_rejection": null
+}
