@@ -13,6 +13,7 @@ assert.ok([executable, descriptorPath, reportPath].every(isAbsolute));
 const fingerprint = createHash('sha256').update(await readFile(executable)).digest('hex');
 const descriptor = JSON.parse(await readFile(descriptorPath, 'utf8'));
 const delayed = descriptor.delayed_response === true;
+const automatic = descriptor.automatic_context === true;
 const terminalRefusal = descriptor.terminal_refusal === true;
 const expectedError = descriptor.expected_error ?? null;
 assert.ok(!terminalRefusal || ['E_MODEL_FIDELITY', 'E_SUBMISSION_UNCERTAIN'].includes(expectedError));
@@ -85,7 +86,10 @@ try {
     if (completed.params.turn.error?.codexErrorInfo === 'contextWindowExceeded') report.context_errors++;
     if (expectedError && completed.params.turn.error?.message?.includes(expectedError)) report.local_error_visible = true;
   }
-  if (delayed) {
+  if (automatic) {
+    assert.deepEqual(report.turns, ['completed', 'completed', 'completed', 'completed'], 'overflow is summarized inside the original request');
+    assert.equal(report.context_errors, 0);
+  } else if (delayed) {
     assert.deepEqual(report.turns, ['completed'], 'buffered response survives a shorter native stream idle limit');
     assert.equal(report.context_errors, 0);
   } else if (terminalRefusal) {

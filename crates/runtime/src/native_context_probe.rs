@@ -59,30 +59,36 @@ impl WebProvider for ObservedProvider {
 #[tokio::test]
 #[ignore = "requires CXWEB_CONTEXT_PROBE_BACKEND pointing to a reviewed executable; uses synthetic content only"]
 async fn actual_backend_compacts_through_runtime_http_and_websocket() {
-    run_actual_backend_probe(None, false, false).await;
+    run_actual_backend_probe(None, false, false, false).await;
 }
 
 #[tokio::test]
 #[ignore = "requires CXWEB_CONTEXT_PROBE_BACKEND pointing to a reviewed executable; uses synthetic content only"]
 async fn actual_backend_stops_retrying_terminal_refusals() {
     for code in ["E_MODEL_FIDELITY", "E_SUBMISSION_UNCERTAIN"] {
-        run_actual_backend_probe(Some(code), false, false).await;
+        run_actual_backend_probe(Some(code), false, false, false).await;
     }
 }
 
 #[tokio::test]
 #[ignore = "requires CXWEB_CONTEXT_PROBE_BACKEND; 35-second local response with a 20-second native stream idle limit"]
 async fn actual_backend_waits_for_buffered_websocket_response() {
-    run_actual_backend_probe(None, true, false).await;
+    run_actual_backend_probe(None, true, false, false).await;
 }
 
 #[tokio::test]
 #[ignore = "requires CXWEB_CONTEXT_PROBE_BACKEND; staged summaries with a synthetic browser"]
 async fn actual_backend_continues_after_staged_compaction() {
-    run_actual_backend_probe(None, false, true).await;
+    run_actual_backend_probe(None, false, true, false).await;
 }
 
-async fn run_actual_backend_probe(expected_error: Option<&'static str>, delayed: bool, staged: bool) {
+#[tokio::test]
+#[ignore = "requires CXWEB_CONTEXT_PROBE_BACKEND; uninterrupted overflow with a synthetic browser"]
+async fn actual_backend_continues_without_context_failure() {
+    run_actual_backend_probe(None, false, true, true).await;
+}
+
+async fn run_actual_backend_probe(expected_error: Option<&'static str>, delayed: bool, staged: bool, automatic: bool) {
     use cxweb_codex_adapter::{
         catalog_codec::CatalogRoute,
         context_budget::LocalContextBudget,
@@ -135,12 +141,10 @@ async fn run_actual_backend_probe(expected_error: Option<&'static str>, delayed:
         } else {
             LocalContextBudget::new(96 * 1024, 256 * 1024).unwrap()
         };
+        let provider = provider.with_checkpoints(key, codec).unwrap().with_context_budget(budget).unwrap();
+        let provider = if automatic { provider.with_automatic_context().unwrap() } else { provider };
         let provider = Arc::new(ObservedProvider {
-            inner: provider
-                .with_checkpoints(key, codec)
-                .unwrap()
-                .with_context_budget(budget)
-                .unwrap(),
+            inner: provider,
             http: AtomicUsize::new(0),
             websocket: AtomicUsize::new(0),
             compactions: AtomicUsize::new(0),
@@ -217,7 +221,7 @@ async fn run_actual_backend_probe(expected_error: Option<&'static str>, delayed:
         let descriptor = directory.join("descriptor.json");
         std::fs::write(
             &descriptor,
-            json!({"base_url":gateway.base_url(),"catalog":{"models":[catalog]},"terminal_refusal":terminal_refusal,"expected_error":expected_error,"delayed_response":delayed}).to_string(),
+            json!({"base_url":gateway.base_url(),"catalog":{"models":[catalog]},"terminal_refusal":terminal_refusal,"expected_error":expected_error,"delayed_response":delayed,"automatic_context":automatic}).to_string(),
         )
         .unwrap();
         servers.spawn(axum::serve(listener, gateway.clone().router()).into_future());
@@ -249,6 +253,7 @@ async fn run_actual_backend_probe(expected_error: Option<&'static str>, delayed:
         }).count();
         report["staged_checkpoint_submissions"] = json!(stage_count);
         report["staged_fixture"] = json!(staged);
+        report["automatic_context"] = json!(automatic);
         report["schema"] = json!(if delayed {
             "cxweb.native-buffered-websocket-probe.v1"
         } else if terminal_refusal {
@@ -260,14 +265,21 @@ async fn run_actual_backend_probe(expected_error: Option<&'static str>, delayed:
         report["transport"] = json!(if websocket { "websocket" } else { "http" });
         report["fixture_limits"] = json!({"normal_prompt_bytes":budget.normal_bytes(),"summary_prompt_bytes":budget.summary_bytes(),"estimated_context_tokens":budget.estimated_tokens(),"browser_answer_bytes":answer_bytes});
         report["runtime"] = json!({"http_requests":provider.http.load(Ordering::SeqCst),"websocket_requests":provider.websocket.load(Ordering::SeqCst),"compactions":provider.compactions.load(Ordering::SeqCst),"encrypted_continuations":provider.continuations.load(Ordering::SeqCst),"browser_stub_submissions":browser.sends.load(Ordering::SeqCst),"native_upstream_frames":native_frames.load(Ordering::SeqCst),"summary_restored":summary_restored,"errors":*provider.failures.lock().unwrap()});
-        let expected_requests = if delayed {
+        let expected_requests = if automatic { 4 } else if delayed {
             1
         } else if terminal_refusal {
             2
         } else {
             5
         };
-        let outcome_verified = if delayed {
+        let outcome_verified = if automatic {
+            provider.compactions.load(Ordering::SeqCst) == 0
+                && provider.continuations.load(Ordering::SeqCst) == 0
+                && stage_count > 1
+                && browser.sends.load(Ordering::SeqCst) == 4 + stage_count
+                && summary_restored
+                && provider.failures.lock().unwrap().is_empty()
+        } else if delayed {
             provider.compactions.load(Ordering::SeqCst) == 0
                 && provider.continuations.load(Ordering::SeqCst) == 0
                 && browser.sends.load(Ordering::SeqCst) == 1

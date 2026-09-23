@@ -50,6 +50,8 @@ pub mod native_preflight;
 #[cfg(windows)]
 pub mod native_probe;
 mod native_ws;
+#[cfg(windows)]
+mod overflow_projection;
 mod probe_ws;
 #[cfg(windows)]
 pub mod protocol_qualification;

@@ -117,6 +117,8 @@ pub struct CoordinatorProvider {
     catalog: Option<Arc<crate::catalog_snapshot::CatalogSnapshot>>,
     context_budget: Option<cxweb_codex_adapter::context_budget::LocalContextBudget>,
     #[cfg(windows)]
+    automatic_context: bool,
+    #[cfg(windows)]
     native_fixture: Option<Arc<crate::native_fixture::Fixture>>,
     #[cfg(windows)]
     checkpoints: Option<(
@@ -157,6 +159,8 @@ impl CoordinatorProvider {
             routes: Arc::new(routes),
             catalog: None,
             context_budget: None,
+            #[cfg(windows)]
+            automatic_context: false,
             #[cfg(windows)]
             native_fixture: None,
             #[cfg(windows)]
@@ -207,6 +211,84 @@ impl CoordinatorProvider {
         self.checkpoints.is_some()
     }
 
+    #[cfg(windows)]
+    pub(crate) fn with_automatic_context(mut self) -> Result<Self, &'static str> {
+        if self.checkpoints.is_none() || self.context_budget.is_none() {
+            return Err("E_CONTEXT_BUDGET_CONFIG");
+        }
+        self.automatic_context = true;
+        Ok(self)
+    }
+
+    #[cfg(windows)]
+    async fn compact_overflow(
+        &self,
+        payload: &Value,
+        identity: &WebIdentity,
+        cancellation: tokio_util::sync::CancellationToken,
+    ) -> Result<Value, &'static str> {
+        let mut projection = crate::overflow_projection::plan(payload)?;
+        let checkpoint = self.prepare_payload(&mut projection.compact, identity)?;
+        if checkpoint.is_none() {
+            return Err("E_COMPACTION_UNQUALIFIED");
+        }
+        let object = projection
+            .compact
+            .as_object_mut()
+            .ok_or("E_INVALID_REQUEST")?;
+        object.remove("stream");
+        object.remove("client_metadata");
+        let bytes = serde_json::to_vec(&projection.compact).map_err(|_| "E_INVALID_REQUEST")?;
+        let session = SessionKey {
+            installation: self.scope.installation.clone(),
+            native_session: identity.native_session.clone(),
+            account_scope: self.scope.account.clone(),
+            workspace_scope: self.scope.workspace.clone(),
+            route: payload["model"]
+                .as_str()
+                .ok_or("E_MODEL_UNAVAILABLE")?
+                .into(),
+            epoch: self.scope.epoch,
+        };
+        let scope = serde_json::to_vec(&session).map_err(|_| "E_PROVIDER_SCOPE")?;
+        let request_id = digest(&[
+            b"overflow-summary-v1",
+            &scope,
+            identity.turn.as_bytes(),
+            &bytes,
+        ]);
+        let delivery = crate::staged_compaction::execute(
+            &self.coordinator,
+            TurnInput {
+                request_id,
+                session,
+                bytes,
+            },
+            cancellation,
+            checkpoint,
+            None,
+        )
+        .await?;
+        let response = strict_json::parse(delivery.json.as_bytes(), 2 * 1024 * 1024)?;
+        let output = response["output"]
+            .as_array()
+            .filter(|items| items.len() == 1)
+            .ok_or("E_CHECKPOINT_SUMMARY")?;
+        if output[0]["type"] != "compaction" {
+            return Err("E_CHECKPOINT_SUMMARY");
+        }
+        projection.continuation["input"][projection.checkpoint_index] = output[0].clone();
+        // Expansion authenticates scope and pending calls, then checks the
+        // complete call/result sequence before any answer can be submitted.
+        if self
+            .prepare_payload(&mut projection.continuation, identity)?
+            .is_some()
+        {
+            return Err("E_COMPACTION_TRIGGER");
+        }
+        Ok(projection.continuation)
+    }
+
     /// Installed App and CLI share one checkpoint domain and persistent key.
     /// Never regenerate an unreadable key: saved tasks must remain authenticated.
     #[cfg(windows)]
@@ -230,7 +312,8 @@ impl CoordinatorProvider {
                 256 * 1024,
                 cxweb_codex_adapter::context_budget::MAX_PROMPT_BYTES,
             )?,
-        )
+        )?
+        .with_automatic_context()
     }
 
     fn prepare_payload(
@@ -318,8 +401,19 @@ impl CoordinatorProvider {
         let identity = request.identity.ok_or("E_REQUEST_IDENTITY")?;
         let mut payload = request.payload;
         let checkpoint = self.prepare_payload(&mut payload, &identity)?;
+        // Bind final delivery to the complete original request, even if two
+        // different histories happen to produce the same lossy summary.
+        let mut identity_payload = payload.clone();
+        let identity_object = identity_payload
+            .as_object_mut()
+            .ok_or("E_INVALID_REQUEST")?;
+        identity_object.remove("stream");
+        identity_object.remove("client_metadata");
+        let identity_bytes =
+            serde_json::to_vec(&identity_payload).map_err(|_| "E_INVALID_REQUEST")?;
         let original = serde_json::to_vec(&payload).map_err(|_| "E_INVALID_REQUEST")?;
-        let decoded = if checkpoint.is_some() {
+        #[cfg_attr(not(windows), allow(unused_mut))]
+        let mut decoded = if checkpoint.is_some() {
             CanonicalRequest::decode_compaction(&original)?
         } else {
             CanonicalRequest::decode(&original)?
@@ -339,12 +433,24 @@ impl CoordinatorProvider {
                     return Err(code);
                 }
             } {
-                // Only the reviewed SSE contract has native recovery evidence.
-                // JSON callers and unqualified codecs keep the explicit local error.
-                if !decoded.stream {
-                    return Err("E_CONTEXT_BUDGET");
+                if self.automatic_context {
+                    payload = self
+                        .compact_overflow(&payload, &identity, request.cancellation.clone())
+                        .await?;
+                    decoded = CanonicalRequest::decode(
+                        &serde_json::to_vec(&payload).map_err(|_| "E_INVALID_REQUEST")?,
+                    )?;
+                    if crate::context_budget::needs_compaction(&payload, &decoded, budget)? {
+                        return Err("E_CONTEXT_BUDGET");
+                    }
+                } else {
+                    // Only the reviewed SSE contract has native recovery evidence.
+                    // JSON callers and unqualified codecs keep the explicit local error.
+                    if !decoded.stream {
+                        return Err("E_CONTEXT_BUDGET");
+                    }
+                    return Ok(crate::context_budget::failure_response());
                 }
-                return Ok(crate::context_budget::failure_response());
             }
         }
         let stream = decoded.stream;
@@ -364,7 +470,7 @@ impl CoordinatorProvider {
             epoch: self.scope.epoch,
         };
         let scope = serde_json::to_vec(&session).map_err(|_| "E_PROVIDER_SCOPE")?;
-        let request_id = digest(&[&scope, identity.turn.as_bytes(), &bytes]);
+        let request_id = digest(&[&scope, identity.turn.as_bytes(), &identity_bytes]);
         let delivery = crate::staged_compaction::execute(
             &self.coordinator,
             TurnInput {
@@ -688,6 +794,91 @@ mod tests {
 
     #[cfg(windows)]
     #[tokio::test]
+    async fn automatic_context_preserves_pending_results_replays_and_stops_uncertain_send() {
+        use crate::gateway::WebTransport;
+        let directory =
+            std::env::temp_dir().join(format!("cxweb-overflow-{:032x}", rand::random::<u128>()));
+        cxweb_platform::state::protected_directory(&directory).unwrap();
+        let make = |payload| {
+            let (parts, _) =
+                request("http://127.0.0.1:12345", "same-turn", "window", false).into_parts();
+            WebRequest {
+                payload,
+                identity: WebIdentity::from_headers(&parts.headers),
+                compact: false,
+                cancellation: tokio_util::sync::CancellationToken::new(),
+                transport: WebTransport::Http,
+                progress: None,
+            }
+        };
+        let policy = json!({"role":"developer","content":"Keep exact permission restrictions"});
+        let user = json!({"role":"user","content":"Read and explain the result"});
+        let call =
+            json!({"type":"function_call","name":"read","call_id":"pending","arguments":"{}"});
+        let result = json!({"type":"function_call_output","call_id":"pending","output":"Exact current result"});
+        let mut payload = json!({"model":"webbridge/test","tools":[{"type":"function","name":"read","parameters":{"type":"object","properties":{}}}],
+            "input":[policy,user,{"role":"assistant","content":"a".repeat(400_000)},call,result]});
+        let (provider, browser) = provider_fixture(false);
+        let provider = provider.with_installed_context(&directory).await.unwrap();
+        let first = provider
+            .execute(make(payload.clone()))
+            .await
+            .unwrap()
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes();
+        let sends = browser.sends.load(Ordering::SeqCst);
+        assert!(sends > 2);
+        let final_prompt = browser.prompt.lock().unwrap().clone();
+        let history = final_prompt["history"].as_array().unwrap();
+        assert!(history.contains(&policy));
+        assert!(history.contains(&user));
+        assert!(history.contains(&call));
+        assert_eq!(history.last(), Some(&result));
+        let replay = provider
+            .execute(make(payload.clone()))
+            .await
+            .unwrap()
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes();
+        assert_eq!(first, replay);
+        assert_eq!(browser.sends.load(Ordering::SeqCst), sends);
+        // The mock returns identical summaries for different source histories.
+        // The final request must still retain the complete original identity.
+        payload["input"][2]["content"] = json!("b".repeat(400_000));
+        let next = provider
+            .execute(make(payload.clone()))
+            .await
+            .unwrap()
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes();
+        assert_ne!(
+            serde_json::from_slice::<Value>(&first).unwrap()["id"],
+            serde_json::from_slice::<Value>(&next).unwrap()["id"]
+        );
+        assert!(browser.sends.load(Ordering::SeqCst) > sends);
+        let (provider, browser) = provider_fixture(false);
+        let provider = provider.with_installed_context(&directory).await.unwrap();
+        browser.uncertain_submission.store(true, Ordering::SeqCst);
+        assert_eq!(
+            provider.execute(make(payload)).await.err(),
+            Some("E_SUBMISSION_UNCERTAIN")
+        );
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
+        std::fs::remove_file(directory.join("checkpoint-key.dpapi")).unwrap();
+        std::fs::remove_dir(directory).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
     async fn encrypted_compaction_replays_and_restores_pending_calls_across_context_windows() {
         use crate::gateway::WebTransport;
         let (provider, browser) = provider_fixture(false);
@@ -705,7 +896,10 @@ mod tests {
                 )
                 .is_err()
         );
-        let provider = provider.with_installed_context(&directory).await.unwrap();
+        let mut provider = provider.with_installed_context(&directory).await.unwrap();
+        // Exercise the explicit native-checkpoint contract separately from the
+        // installed transparent overflow path, which has its own regressions.
+        provider.automatic_context = false;
         let budget = cxweb_codex_adapter::context_budget::LocalContextBudget::DIAGNOSTIC;
         assert!(provider.clone().with_context_budget(budget).is_err());
         let codec = cxweb_codex_adapter::catalog_codec::CatalogCodec::CliModelInfoV1;
