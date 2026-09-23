@@ -466,6 +466,35 @@ test('only a complete empty inventory falls through to the login controller', as
   assert.equal(ui.nodes.get('installed-view').hidden, true);
   assert.equal(ui.calls[1].params.refresh, false);
 });
+
+test('reinstall starts login setup when only verified removed connections remain', async () => {
+  const ui = panel(async command => command === 'installed_list'
+    ? list([{ ...target, connection_removed: true }]) : { phase: 'disconnected' });
+  await flush();
+  assert.deepEqual(ui.calls.map(c => c.command), ['installed_list', 'status']);
+  assert.equal(ui.nodes.get('setup-view').hidden, false);
+  assert.equal(ui.nodes.get('installed-view').hidden, true);
+  assert.equal(ui.calls[1].params.refresh, false);
+});
+
+test('removed compatibility listeners do not hide an active replacement connection', async () => {
+  const active = { ...target, installation: 'c'.repeat(32), connection_removed: false };
+  const ui = panel(async command => command === 'installed_list'
+    ? list([{ ...target, connection_removed: true }, active]) : health());
+  await flush();
+  assert.equal(ui.nodes.get('installed-choice').value, active.installation);
+  assert.equal(ui.nodes.get('installed-choice').children.length, 2);
+  assert.ok(!ui.calls.some(c => c.command === 'status'));
+  assert.equal(ui.calls.at(-1).params.installation, active.installation);
+});
+
+test('removed records with an ownership diagnostic cannot start competing setup', async () => {
+  const ui = panel(async command => command === 'installed_list'
+    ? list([{ ...target, connection_removed: true }], ['E_INSTALLED_JOURNAL']) : health());
+  await flush();
+  assert.equal(ui.nodes.get('setup-view').hidden, true);
+  assert.ok(!ui.calls.some(c => c.command === 'status'));
+});
 test('unreadable inventory or stopped runtime never starts a competing login process', async () => {
   for (const failure of ['inventory', 'runtime']) {
     const ui = panel(async command => {

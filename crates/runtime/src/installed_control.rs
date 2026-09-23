@@ -16,6 +16,7 @@ use std::{
 pub struct Target {
     pub installation: String,
     pub home: PathBuf,
+    pub connection_removed: bool,
     #[serde(skip)]
     directory: PathBuf,
 }
@@ -71,12 +72,25 @@ fn inventory_for(root: &Path, uninstall: bool) -> Result<Inventory, &'static str
         };
         match target {
             Ok(Some((installation, home))) => {
+                // Keep native-only compatibility listeners addressable for
+                // cleanup, but do not attach a new desktop to a removed setup.
+                // Verify the current config as well as the journal phase.
+                let connection_removed = match ConfigJournal::uninstall_target(&entry.path()) {
+                    Ok(target) => target.is_none(),
+                    Err(_) => {
+                        if !result.diagnostics.contains(&"E_INSTALLED_JOURNAL") {
+                            result.diagnostics.push("E_INSTALLED_JOURNAL");
+                        }
+                        false
+                    }
+                };
                 if !ids.insert(installation.clone()) {
                     return Err("E_INSTALLED_DUPLICATE");
                 }
                 result.targets.push(Target {
                     installation,
                     home,
+                    connection_removed,
                     directory: entry.path(),
                 });
             }
@@ -580,6 +594,7 @@ mod tests {
         unavailable.targets.push(Target {
             installation: format!("{:032x}", rand::random::<u128>()),
             home: root.clone(),
+            connection_removed: false,
             directory: root.clone(),
         });
         assert_eq!(
@@ -620,6 +635,7 @@ mod tests {
         server.abort();
         let _ = server.await;
         assert_eq!(inventory(&root).unwrap().targets.len(), 1);
+        assert!(inventory(&root).unwrap().targets[0].connection_removed);
         assert!(read(&id).await.is_err());
         assert!(inventory_for(&root, true).unwrap().targets.is_empty());
         assert!(require_disconnected(&inventory_for(&root, true).unwrap()).is_ok());
@@ -637,7 +653,46 @@ mod tests {
         let user_config = std::fs::read(&config).unwrap();
         std::fs::write(&config, &applied_config).unwrap();
         assert_eq!(inventory_for(&root, true).unwrap().targets.len(), 1);
+        assert!(!inventory(&root).unwrap().targets[0].connection_removed);
         std::fs::write(&config, user_config).unwrap();
+        // A real reinstall has a new route for the same home. The removed
+        // listener must not turn that replacement into a journal conflict.
+        let replacement_directory = root.join(format!("prepared-{:032x}", rand::random::<u128>()));
+        let replacement_listener = loopback::bind(0).unwrap();
+        let mut replacement = ConfigJournal::prepare(
+            &replacement_directory,
+            &config,
+            replacement_listener.local_addr().unwrap().port(),
+            &"b".repeat(43),
+        )
+        .unwrap();
+        replacement.record_catalog(vec![], vec![]).unwrap();
+        replacement.apply().unwrap();
+        let replaced_config = std::fs::read(&config).unwrap();
+        let found = inventory(&root).unwrap();
+        assert!(found.diagnostics.is_empty());
+        assert_eq!(
+            found
+                .targets
+                .iter()
+                .filter(|target| !target.connection_removed)
+                .count(),
+            1
+        );
+        assert_eq!(
+            found
+                .targets
+                .iter()
+                .find(|target| !target.connection_removed)
+                .unwrap()
+                .installation,
+            replacement.installation_id()
+        );
+        assert_eq!(inventory_for(&root, true).unwrap().targets.len(), 1);
+        assert_eq!(std::fs::read(&config).unwrap(), replaced_config);
+        replacement.disconnect(&[], &[]).unwrap();
+        drop(replacement);
+        drop(replacement_listener);
         let duplicate = root.join(format!("prepared-{:032x}", rand::random::<u128>()));
         protected_directory(&duplicate).unwrap();
         std::fs::copy(

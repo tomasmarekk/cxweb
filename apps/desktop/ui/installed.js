@@ -203,13 +203,14 @@ window.cxwebInstalled = (() => {
     pending = true; clearTimer(); controls();
     try {
       const report = await invoke('installed_list');
-      if (!report.targets.length && !report.diagnostics.length) {
+      const connected = report.targets.filter(target => target.connection_removed !== true);
+      if (!connected.length && !report.diagnostics.length) {
         if (attached) { unavailable(); node('installed-description').textContent = 'The installed connection record is no longer available.'; return true; }
         attached = false; node('installed-view').hidden = true; return false;
       }
       attached = true; node('setup-view').hidden = true; node('installed-view').hidden = false;
       if (report.diagnostics.length) throw 'E_INSTALLED_JOURNAL';
-      targets = report.targets;
+      targets = connected;
       const choice = node('installed-choice'); choice.replaceChildren();
       const empty = document.createElement('option'); empty.value = ''; empty.textContent = 'Choose a connected Codex home'; choice.append(empty);
       for (const target of targets) {

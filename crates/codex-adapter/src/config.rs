@@ -191,6 +191,23 @@ impl RoutePatch {
         self.remove_with_selection(current, &[], &[])
     }
 
+    /// A completed removal must not claim a later connection's route or tools.
+    /// This is read-only evidence, never permission to remove a foreign route.
+    pub fn replaced_after_removal(&self, current: &str) -> Result<bool, ConfigError> {
+        let doc: DocumentMut = current.parse().map_err(|_| ConfigError::Parse)?;
+        let replacement = match doc.get("openai_base_url") {
+            None => false,
+            Some(item) => item.as_str().ok_or(ConfigError::Conflict)? != self.installed,
+        };
+        let owns_tools = self.web_tools.as_ref().is_some_and(|(name, installed)| {
+            doc.get("mcp_servers")
+                .and_then(|servers| servers.as_table())
+                .and_then(|servers| servers.get(name))
+                .is_some_and(|entry| entry.to_string() == *installed)
+        });
+        Ok(replacement && !owns_tools)
+    }
+
     /// Catalog receipts must contain the exact routes this installation
     /// published and native selections currently verified for the target codec.
     /// A prefix alone never proves ownership of a persisted model selection.
@@ -289,6 +306,30 @@ mod tests {
         let (empty, installed) =
             RoutePatch::plan_with_web_tools("", 12345, CAP, &name, executable).unwrap();
         assert_eq!(empty.remove(&installed).unwrap(), "");
+    }
+    #[test]
+    fn removed_route_recognition_preserves_replacement_and_checks_owned_tools() {
+        let name = format!("cxweb_web_{}", "a".repeat(32));
+        let (patch, installed) =
+            RoutePatch::plan_with_web_tools("", 43127, CAP, &name, "fixture-daemon.exe").unwrap();
+        assert!(!patch.replaced_after_removal(&installed).unwrap());
+        assert!(!patch.replaced_after_removal("").unwrap());
+        assert!(
+            patch
+                .replaced_after_removal("openai_base_url='https://example.invalid'\n")
+                .unwrap()
+        );
+        assert!(
+            patch
+                .remove("openai_base_url='https://example.invalid'\n")
+                .is_err()
+        );
+        let mut changed: DocumentMut = installed.parse().unwrap();
+        changed["openai_base_url"] = value("https://example.invalid");
+        assert!(!patch.replaced_after_removal(&changed.to_string()).unwrap());
+        changed["mcp_servers"].as_table_mut().unwrap().remove(&name);
+        assert!(patch.replaced_after_removal(&changed.to_string()).unwrap());
+        assert!(patch.replaced_after_removal("openai_base_url=4").is_err());
     }
     #[test]
     fn recovery_requires_owned_route_and_no_new_provider_or_profile_conflict() {

@@ -227,6 +227,13 @@ impl ConfigJournal {
             if !catalog.valid() {
                 return Err(invalid());
             }
+            if plan_record(&record)?
+                .0
+                .replaced_after_removal(text)
+                .map_err(|_| invalid())?
+            {
+                return Ok(None);
+            }
             let restored = restored_text(
                 &record,
                 text,
