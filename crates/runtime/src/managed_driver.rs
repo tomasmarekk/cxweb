@@ -290,6 +290,12 @@ pub(crate) fn browser_error(error: &std::io::Error, fallback: &'static str) -> &
         if error.kind() == std::io::ErrorKind::TimedOut {
             return "E_BROWSER_TRANSPORT_TIMEOUT";
         }
+        if matches!(
+            error.kind(),
+            std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::UnexpectedEof
+        ) {
+            return "E_BROWSER_CLOSED";
+        }
         match error.to_string().as_str() {
             "E_BROWSER_ADAPTER" => return "E_BROWSER_ADAPTER",
             "E_BROWSER_UTF16" => return "E_BROWSER_UTF16",
@@ -842,6 +848,18 @@ mod tests {
 
     #[test]
     fn temporary_chat_errors_preserve_fixed_causes_only() {
+        for kind in [
+            std::io::ErrorKind::BrokenPipe,
+            std::io::ErrorKind::UnexpectedEof,
+        ] {
+            assert_eq!(
+                browser_error(
+                    &std::io::Error::new(kind, "private transport detail"),
+                    "E_BROWSER_OBSERVATION"
+                ),
+                "E_BROWSER_CLOSED"
+            );
+        }
         assert_eq!(
             browser_error(
                 &std::io::Error::new(std::io::ErrorKind::TimedOut, "private transport detail"),

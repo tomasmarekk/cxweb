@@ -2096,8 +2096,12 @@ impl ManagedBrowser {
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
-            let response = self.replies.recv_timeout(remaining).map_err(|_| {
-                io::Error::new(io::ErrorKind::TimedOut, "browser pipe unavailable")
+            let response = self.replies.recv_timeout(remaining).map_err(|error| {
+                let kind = match error {
+                    std::sync::mpsc::RecvTimeoutError::Timeout => io::ErrorKind::TimedOut,
+                    std::sync::mpsc::RecvTimeoutError::Disconnected => io::ErrorKind::BrokenPipe,
+                };
+                io::Error::new(kind, "browser pipe unavailable")
             })??;
             if response["id"].as_u64() == Some(id) {
                 if response.get("error").is_some() {

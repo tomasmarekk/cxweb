@@ -488,6 +488,17 @@ impl Coordinator {
             };
             let observation = match observed {
                 Ok(observation) => observation,
+                // A timed-out read proves neither failed generation nor an
+                // uncertain Send. Observe the same leased page again; never
+                // prepare, submit, or stop merely because this read was slow.
+                Err("E_BROWSER_TRANSPORT_TIMEOUT") => {
+                    tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => {},
+                        _ = tokio::time::sleep(Duration::from_millis(500)) => {},
+                    }
+                    continue;
+                }
                 Err(error) => {
                     let _: Result<(), _> = tracker.fail(error);
                     self.ledger.transition(id, tracker.state()).await?;
@@ -695,6 +706,8 @@ mod tests {
         LimitedSubmit,
         LimitedObserve,
         SlowObserve,
+        TimedOutObserve,
+        DisconnectedObserve,
         Final,
         Tool,
         Invalid,
@@ -818,6 +831,12 @@ mod tests {
             let observation_number = self.observations.fetch_add(1, Ordering::SeqCst) + 1;
             if matches!(self.mode, Mode::LimitedObserve) {
                 return Box::pin(async { Err("E_BROWSER_RATE_LIMITED") });
+            }
+            if matches!(self.mode, Mode::TimedOutObserve) && observation_number <= 3 {
+                return Box::pin(async { Err("E_BROWSER_TRANSPORT_TIMEOUT") });
+            }
+            if matches!(self.mode, Mode::DisconnectedObserve) {
+                return Box::pin(async { Err("E_BROWSER_CLOSED") });
             }
             let nonce = self.nonce.lock().unwrap().clone();
             let slow = matches!(self.mode, Mode::SlowObserve);
@@ -1135,6 +1154,47 @@ mod tests {
         assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
         assert_eq!(browser.stops.load(Ordering::SeqCst), 0);
         assert_eq!(browser.releases.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn observation_timeouts_keep_the_same_submission_but_disconnect_is_terminal() {
+        let browser = MockBrowser::new(Mode::TimedOutObserve);
+        let coordinator = Coordinator::new(Ledger::in_memory(), browser.clone());
+        assert!(
+            coordinator
+                .execute(input(), CancellationToken::new())
+                .await
+                .is_ok()
+        );
+        assert_eq!(browser.observations.load(Ordering::SeqCst), 4);
+        assert_eq!(browser.prepares.load(Ordering::SeqCst), 1);
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
+        assert_eq!(browser.stops.load(Ordering::SeqCst), 0);
+        let browser = MockBrowser::new(Mode::DisconnectedObserve);
+        let coordinator = Coordinator::new(Ledger::in_memory(), browser.clone());
+        assert_eq!(
+            coordinator
+                .execute(input(), CancellationToken::new())
+                .await
+                .err(),
+            Some("E_BROWSER_CLOSED")
+        );
+        assert_eq!(browser.observations.load(Ordering::SeqCst), 1);
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancellation_during_timed_out_observation_stops_once() {
+        let browser = MockBrowser::new(Mode::TimedOutObserve);
+        let coordinator = Coordinator::new(Ledger::in_memory(), browser.clone());
+        let cancel = CancellationToken::new();
+        let worker_cancel = cancel.clone();
+        let task = tokio::spawn(async move { coordinator.execute(input(), worker_cancel).await });
+        browser.observing.notified().await;
+        cancel.cancel();
+        assert_eq!(task.await.unwrap().err(), Some("E_CANCELLED"));
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
+        assert_eq!(browser.stops.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

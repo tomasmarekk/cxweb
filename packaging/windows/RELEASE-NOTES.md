@@ -14,7 +14,10 @@ can recover an oversized request within that request instead of requiring anothe
 user turn after a context-budget error. Summaries remain bound to the original
 task, account, workspace and model even when another model performs compaction.
 A slow browser observation no longer imposes a five-second overall deadline on
-Pro generation. There is no absolute generation or inactivity timeout.
+Pro generation. Timed-out observation reads keep watching the same submission,
+without resending or cancelling it. A disconnected browser pipe is distinguished
+from a slow read and remains a terminal error. There is no absolute generation
+or inactivity timeout.
 
 Installer upgrades now stage the new daemon into existing private runtime
 installations while preserving configuration, login state and active processes.
