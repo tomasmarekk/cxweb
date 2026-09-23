@@ -1449,29 +1449,34 @@ impl ManagedBrowser {
 
     pub fn open_temporary_chat(&mut self) -> io::Result<ManagedPage> {
         let page = self.open_hidden_page("https://chatgpt.com/?temporary-chat=true", false)?;
-        let deadline = Instant::now() + Duration::from_secs(15);
+        match self.wait_temporary_chat(&page) {
+            Ok(()) => Ok(page),
+            Err(error) => {
+                self.close_page_checked(&page)?;
+                Err(error)
+            }
+        }
+    }
+
+    fn wait_temporary_chat(&mut self, page: &ManagedPage) -> io::Result<()> {
+        // Cold navigation can outlast 15 seconds even in an authenticated
+        // browser. Observe this same unsent page; leave time for scope/model
+        // checks within the coordinator's 90-second preparation budget.
+        let started = Instant::now();
         loop {
-            if let Err(error) = self.check_service_limit(&page)
+            if let Err(error) = self.check_service_limit(page)
                 && error.to_string() == "E_BROWSER_RATE_LIMITED"
             {
-                self.close_page(page)?;
                 return Err(error);
             }
-            let observation = self.dom(&page, include_str!("dom/temporary_chat.js"), vec![]);
-            let code = match observation.as_ref().ok().and_then(Value::as_str) {
-                Some("ready") => return Ok(page),
-                Some("verification") => "E_BROWSER_VERIFICATION_REQUIRED",
-                Some("login") => "E_LOGIN_REQUIRED",
-                Some("route") => "E_BROWSER_TEMPORARY_ROUTE",
-                Some("loading") => "E_BROWSER_TEMPORARY_LOADING",
-                Some("composer_missing") => "E_BROWSER_TEMPORARY_COMPOSER",
-                Some("account_loading") => "E_BROWSER_TEMPORARY_ACCOUNT",
-                Some("ambiguous") => "E_BROWSER_TEMPORARY_AMBIGUOUS",
-                _ => "E_BROWSER_TEMPORARY_OBSERVATION",
-            };
-            if Instant::now() >= deadline {
-                self.close_page(page)?;
-                return Err(io::Error::other(code));
+            let observation = self.dom(page, include_str!("dom/temporary_chat.js"), vec![]);
+            match temporary_readiness(
+                observation.as_ref().ok().and_then(Value::as_str),
+                started.elapsed(),
+            ) {
+                Ok(true) => return Ok(()),
+                Ok(false) => (),
+                Err(code) => return Err(io::Error::other(code)),
             }
             std::thread::sleep(Duration::from_millis(200));
         }
@@ -2123,6 +2128,26 @@ fn send_outcome(outcome: Value) -> io::Result<()> {
             Err(io::Error::other(code))
         }
         _ => Err(io::Error::other("E_SUBMISSION_UNCERTAIN")),
+    }
+}
+
+// Readiness only: this never authorizes a Send or bypasses scope/model checks.
+fn temporary_readiness(state: Option<&str>, elapsed: Duration) -> Result<bool, &'static str> {
+    let code = match state {
+        Some("ready") => return Ok(true),
+        Some("verification") => return Err("E_BROWSER_VERIFICATION_REQUIRED"),
+        Some("ambiguous") => return Err("E_BROWSER_TEMPORARY_AMBIGUOUS"),
+        Some("login") => "E_LOGIN_REQUIRED",
+        Some("route") => "E_BROWSER_TEMPORARY_ROUTE",
+        Some("loading") => "E_BROWSER_TEMPORARY_LOADING",
+        Some("composer_missing") => "E_BROWSER_TEMPORARY_COMPOSER",
+        Some("account_loading") => "E_BROWSER_TEMPORARY_ACCOUNT",
+        _ => "E_BROWSER_TEMPORARY_OBSERVATION",
+    };
+    if elapsed >= Duration::from_secs(45) {
+        Err(code)
+    } else {
+        Ok(false)
     }
 }
 
@@ -3227,6 +3252,29 @@ mod tests {
         );
         assert!(loaded, "managed Chrome did not render the fetch result");
     }
+    #[test]
+    fn temporary_chat_readiness_allows_slow_hydration() {
+        for state in ["loading", "composer_missing", "account_loading"] {
+            assert_eq!(
+                temporary_readiness(Some(state), Duration::from_secs(17)),
+                Ok(false)
+            );
+            assert!(temporary_readiness(Some(state), Duration::from_secs(45)).is_err());
+        }
+        assert_eq!(
+            temporary_readiness(Some("ready"), Duration::from_secs(30)),
+            Ok(true)
+        );
+        assert_eq!(
+            temporary_readiness(Some("verification"), Duration::ZERO),
+            Err("E_BROWSER_VERIFICATION_REQUIRED")
+        );
+        assert_eq!(
+            temporary_readiness(Some("ambiguous"), Duration::ZERO),
+            Err("E_BROWSER_TEMPORARY_AMBIGUOUS")
+        );
+    }
+
     #[test]
     #[ignore = "requires installed Chrome; uses a fresh offscreen fixture profile"]
     fn menu_email_does_not_skip_personal_context_settings_evidence() {
