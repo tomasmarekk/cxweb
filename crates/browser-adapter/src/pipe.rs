@@ -549,9 +549,10 @@ impl ManagedBrowser {
         let answer_text = include_str!("dom/answer_text.js");
         let answer_transport = include_str!("dom/answer_transport.js");
         let public_summary = include_str!("dom/public_summary.js");
+        let generation_failure = include_str!("dom/generation_failure.js");
         let well_formed_result = include_str!("dom/well_formed_result.js");
         let guarded = format!(
-            "function(expectedOrigin, args) {{ if (location.origin !== expectedOrigin || (expectedOrigin === 'null' && location.href !== 'about:blank')) throw new Error('E_OFFICIAL_ORIGIN_REQUIRED'); const readEffortLabel = ({effort_label}); const readModelFamilies = ({model_families}); const readAnswerContent = ({answer_content}); const readAnswerText = ({answer_text}); const readAnswerTransport = ({answer_transport}); const readPublicSummary = ({public_summary}); const assertWellFormedResult = ({well_formed_result}); const result = ({function})(...args); assertWellFormedResult(result); return result; }}"
+            "function(expectedOrigin, args) {{ if (location.origin !== expectedOrigin || (expectedOrigin === 'null' && location.href !== 'about:blank')) throw new Error('E_OFFICIAL_ORIGIN_REQUIRED'); const readEffortLabel = ({effort_label}); const readModelFamilies = ({model_families}); const readAnswerContent = ({answer_content}); const readAnswerText = ({answer_text}); const readAnswerTransport = ({answer_transport}); const readPublicSummary = ({public_summary}); const readGenerationFailure = ({generation_failure}); const assertWellFormedResult = ({well_formed_result}); const result = ({function})(...args); assertWellFormedResult(result); return result; }}"
         );
         let result = self.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":guarded,"arguments":[{"value":if page.fixture {"null"} else {"https://chatgpt.com"}},{"value":arguments}],"returnByValue":true}), Some(&page.session));
         let _ = self.call(

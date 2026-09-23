@@ -23,6 +23,8 @@ pub struct Observation {
     #[serde(default)]
     pub summary: Vec<String>,
     pub generating: bool,
+    #[serde(default)]
+    pub generation_failed: bool,
     pub completion_control: bool,
     pub fenced_output: bool,
     pub selected_model: String,
@@ -111,6 +113,9 @@ impl TurnTracker {
                 .transition(TurnState::Submitted)
                 .map_err(|_| "E_TURN_STATE")?;
         }
+        if observation.generation_failed {
+            return self.fail("E_CHATGPT_THINKING_FAILED");
+        }
         let Some(assistant) = observation.assistant_id else {
             return Ok(Progress::Generating);
         };
@@ -195,6 +200,7 @@ mod tests {
             text: "answer".into(),
             summary: vec![],
             generating: false,
+            generation_failed: false,
             completion_control: true,
             fenced_output: false,
             selected_model: "observed".into(),
@@ -211,6 +217,24 @@ mod tests {
             matches!(tracker.observe(observation()).unwrap(), Progress::Completed(text) if text == "answer")
         );
         assert!(tracker.observe(observation()).is_err());
+    }
+    #[test]
+    fn explicit_thinking_failure_ends_only_an_attributed_submission() {
+        let mut failed = observation();
+        failed.assistant_id = None;
+        failed.completion_control = false;
+        failed.generation_failed = true;
+        let mut current = tracker();
+        assert_eq!(
+            current.observe(failed.clone()).err(),
+            Some("E_CHATGPT_THINKING_FAILED")
+        );
+        assert_eq!(current.state(), TurnState::Failed);
+        failed.user_matches = false;
+        assert_eq!(
+            tracker().observe(failed).err(),
+            Some("E_USER_MESSAGE_MISMATCH")
+        );
     }
     #[test]
     fn historical_and_replaced_assistant_ids_are_rejected() {

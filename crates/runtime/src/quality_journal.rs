@@ -23,6 +23,7 @@ pub(crate) fn diagnostic_code(code: &str) -> &'static str {
     const CODES: &[&str] = &[
         "E_CANCELLED",
         "E_BROWSER_RATE_LIMITED",
+        "E_CHATGPT_THINKING_FAILED",
         "E_QUALIFICATION_TIMEOUT",
         "E_WEB_CLEANUP_UNCONFIRMED",
         "E_SESSION_SCOPE",
@@ -418,6 +419,10 @@ mod tests {
 
     #[test]
     fn diagnostics_preserve_known_failure_codes_and_redact_unknown_error_text() {
+        assert_eq!(
+            diagnostic_code("E_CHATGPT_THINKING_FAILED"),
+            "E_CHATGPT_THINKING_FAILED"
+        );
         let (path, identity) = setup();
         let mut journal = Journal::open(&path, "diagnostics", identity.clone(), 1).unwrap();
         let first = journal.begin_next(1).unwrap().unwrap();

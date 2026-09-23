@@ -663,6 +663,7 @@ mod tests {
                     text,
                     summary,
                     generating,
+                    generation_failed: false,
                     completion_control,
                     fenced_output: false,
                     selected_model: "Observed text".into(),

@@ -96,6 +96,7 @@ function (baselineIds, expectedPrompt) {
     assistant_id: assistant?.getAttribute('data-turn-id-container') ?? null,
     text,
     generating,
+    generation_failed: readGenerationFailure(user, assistant, generating, complete),
     completion_control: complete && answer.candidates === 1,
     fenced_output: transport.fenced,
     selected_model: model.textContent.trim().slice(0, 120),
