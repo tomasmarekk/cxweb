@@ -19,6 +19,9 @@ use tokio_util::sync::CancellationToken;
 // A visible ChatGPT failure proves that this browser response cannot finish.
 // Retrying stays inside the one admitted native request, on a fresh page.
 const MAX_EXPLICIT_FAILURE_RETRIES: usize = 3;
+// The browser adapter allows up to five seconds to confirm target closure,
+// after its CDP operations. Never time out before it can report success.
+const BROWSER_RELEASE_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub type BrowserFuture<T> = Pin<Box<dyn Future<Output = Result<T, &'static str>> + Send>>;
 /// Bounded transport channel; only verified public status events use this path.
@@ -258,7 +261,7 @@ impl Coordinator {
                 .await;
             // Never start another page until the failed page has been closed.
             let released = tokio::time::timeout(
-                Duration::from_secs(2),
+                BROWSER_RELEASE_TIMEOUT,
                 self.browser.release(prepared.handle),
             )
             .await;
@@ -439,7 +442,6 @@ impl Coordinator {
                         self.ledger.transition(id, TurnState::Submitted).await?;
                     }
                     if error == "E_CHATGPT_THINKING_FAILED" && retry_thinking_failure {
-                        self.stop(&prepared.handle).await;
                         return Err(error);
                     }
                     self.ledger.transition(id, tracker.state()).await?;
@@ -653,6 +655,7 @@ mod tests {
         stops: AtomicUsize,
         releases: AtomicUsize,
         release_fails: AtomicBool,
+        first_release_delay_ms: AtomicUsize,
         nonce: Mutex<String>,
         observing: Notify,
         released: Notify,
@@ -671,6 +674,7 @@ mod tests {
                 stops: AtomicUsize::new(0),
                 releases: AtomicUsize::new(0),
                 release_fails: AtomicBool::new(false),
+                first_release_delay_ms: AtomicUsize::new(0),
                 nonce: Mutex::new(String::new()),
                 observing: Notify::new(),
                 released: Notify::new(),
@@ -809,13 +813,21 @@ mod tests {
             Box::pin(async { Ok(true) })
         }
         fn release(&self, _: String) -> BrowserFuture<()> {
-            self.releases.fetch_add(1, Ordering::SeqCst);
+            let first = self.releases.fetch_add(1, Ordering::SeqCst) == 0;
             self.released.notify_one();
             let gate = self.release_gate.clone();
             let fails = self.release_fails.load(Ordering::SeqCst);
+            let delay = if first {
+                self.first_release_delay_ms.load(Ordering::SeqCst)
+            } else {
+                0
+            };
             Box::pin(async move {
                 if let Some(gate) = gate {
                     gate.notified().await;
+                }
+                if delay > 0 {
+                    tokio::time::sleep(Duration::from_millis(delay as u64)).await;
                 }
                 if fails {
                     Err("E_BROWSER_RELEASE")
@@ -844,6 +856,7 @@ mod tests {
         assert_eq!(browser.prepares.load(Ordering::SeqCst), 2);
         assert_eq!(browser.sends.load(Ordering::SeqCst), 2);
         assert_eq!(browser.releases.load(Ordering::SeqCst), 2);
+        assert_eq!(browser.stops.load(Ordering::SeqCst), 0);
         assert_eq!(
             ledger
                 .admit(&input().request_id, &input().session, &input().bytes)
@@ -861,6 +874,27 @@ mod tests {
             delivery.json
         );
         assert_eq!(browser.sends.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn confirmed_slow_page_closure_still_allows_recovery() {
+        let browser = MockBrowser::new(Mode::ThinkingThenTool);
+        // The browser adapter itself allows five seconds for confirmed target
+        // destruction. The former two-second coordinator deadline rejected
+        // this successful cleanup before the second page could be prepared.
+        browser
+            .first_release_delay_ms
+            .store(2_100, Ordering::SeqCst);
+        let coordinator = Coordinator::new(Ledger::in_memory(), browser.clone());
+        let delivery = coordinator
+            .execute(input(), CancellationToken::new())
+            .await
+            .unwrap();
+        let response: serde_json::Value = serde_json::from_str(&delivery.json).unwrap();
+        assert_eq!(response["output"][0]["type"], "function_call");
+        assert_eq!(browser.prepares.load(Ordering::SeqCst), 2);
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 2);
+        assert_eq!(browser.releases.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
