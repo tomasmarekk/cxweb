@@ -467,7 +467,7 @@ mod tests {
                 &output,
                 &session,
                 websocket,
-                CatalogCodec::Cli01551,
+                CatalogCodec::CliModelInfoV1,
                 true,
                 false,
                 stop.clone().cancelled_owned(),
@@ -495,7 +495,7 @@ mod tests {
                         &competing,
                         &session,
                         false,
-                        CatalogCodec::Cli01551,
+                        CatalogCodec::CliModelInfoV1,
                         true,
                         false,
                         std::future::ready(()),
@@ -556,7 +556,7 @@ mod tests {
                     &output,
                     &session,
                     false,
-                    CatalogCodec::Cli01551,
+                    CatalogCodec::CliModelInfoV1,
                     true,
                     false,
                     std::future::ready(()),
@@ -572,7 +572,7 @@ mod tests {
             .bind_generation(
                 &session,
                 vec![(
-                    CatalogCodec::Cli01551,
+                    CatalogCodec::CliModelInfoV1,
                     vec![CatalogRoute {
                         id: session.route.id.clone(),
                         observed_label: session.route.label.clone(),

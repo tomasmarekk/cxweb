@@ -70,8 +70,7 @@ pub(crate) async fn qualify_installed_checkpoint(
     let target =
         TargetPathGuard::capture(&selected.client, false).map_err(|_| "E_NATIVE_PROBE_TARGET")?;
     let hash = native_preflight::fingerprint(&selected.client).await?;
-    let (build, codec) =
-        native_preflight::reviewed(&hash).ok_or("E_NATIVE_PROBE_CLIENT_UNQUALIFIED")?;
+    let (build, codec) = native_preflight::describe(&selected.client).await?;
     let directory =
         installation_directory.join(format!("checkpoint-client-{:032x}", rand::random::<u128>()));
     protected_directory(&directory).map_err(|_| "E_NATIVE_PROBE_DIRECTORY")?;
@@ -275,8 +274,7 @@ async fn qualify_owned(
     let target =
         TargetPathGuard::capture(executable, false).map_err(|_| "E_NATIVE_PROBE_TARGET")?;
     let hash = native_preflight::fingerprint(executable).await?;
-    let (build, codec) =
-        native_preflight::reviewed(&hash).ok_or("E_NATIVE_PROBE_CLIENT_UNQUALIFIED")?;
+    let (build, codec) = native_preflight::describe(executable).await?;
     let paths = cxweb_platform::state::StatePaths::open().map_err(|_| "E_STATE_PERMISSIONS")?;
     let directory = paths
         .state
@@ -355,7 +353,7 @@ async fn qualify_owned(
     }
     Ok(Report {
         exercise,
-        client_build: build.into(),
+        client_build: build,
         catalog_codec: codec.id().into(),
         executable_sha256: hash,
         exact_text_received: true,
@@ -1341,8 +1339,15 @@ mod tests {
 
     #[test]
     fn endpoint_requires_owned_loopback_and_exact_route_and_codec() {
-        let valid = json!({"base_url":"http://127.0.0.1:43127/wb/fixture/backend-api/codex","model":"webbridge/test","catalog_codec":CatalogCodec::Cli01551.id(),"catalog":{"models":[{"slug":"webbridge/test"}]}});
-        assert!(Endpoint::parse(valid.clone(), "webbridge/test", CatalogCodec::Cli01551).is_ok());
+        let valid = json!({"base_url":"http://127.0.0.1:43127/wb/fixture/backend-api/codex","model":"webbridge/test","catalog_codec":CatalogCodec::CliModelInfoV1.id(),"catalog":{"models":[{"slug":"webbridge/test"}]}});
+        assert!(
+            Endpoint::parse(
+                valid.clone(),
+                "webbridge/test",
+                CatalogCodec::CliModelInfoV1
+            )
+            .is_ok()
+        );
         for base in [
             "https://api.openai.com/v1",
             "http://localhost:43127/wb/fixture/backend-api/codex",
@@ -1352,12 +1357,19 @@ mod tests {
             let mut value = valid.clone();
             value["base_url"] = json!(base);
             assert!(matches!(
-                Endpoint::parse(value, "webbridge/test", CatalogCodec::Cli01551),
+                Endpoint::parse(value, "webbridge/test", CatalogCodec::CliModelInfoV1),
                 Err("E_NATIVE_PROBE_ENDPOINT")
             ));
         }
-        assert!(Endpoint::parse(valid.clone(), "webbridge/other", CatalogCodec::Cli01551).is_err());
-        assert!(Endpoint::parse(valid, "webbridge/test", CatalogCodec::App01550Alpha92).is_err());
+        assert!(
+            Endpoint::parse(
+                valid.clone(),
+                "webbridge/other",
+                CatalogCodec::CliModelInfoV1
+            )
+            .is_err()
+        );
+        assert!(Endpoint::parse(valid, "webbridge/test", CatalogCodec::AppModelInfoV1).is_err());
     }
 
     #[test]
@@ -1624,7 +1636,7 @@ mod tests {
         );
         let target = TargetPathGuard::capture(&executable, false).unwrap();
         let hash = native_preflight::fingerprint(&executable).await.unwrap();
-        let (_, codec) = native_preflight::reviewed(&hash).unwrap();
+        let (_, codec) = native_preflight::describe(&executable).await.unwrap();
         for (denial, test, repair, corrupt_output) in [
             (false, false, false, false),
             (true, false, false, false),
@@ -1800,7 +1812,9 @@ mod tests {
         );
         let target = TargetPathGuard::capture(&executable, false).unwrap();
         let hash = native_preflight::fingerprint(&executable).await.unwrap();
-        let (_, codec) = native_preflight::reviewed(&hash).expect("reviewed backend");
+        let (_, codec) = native_preflight::describe(&executable)
+            .await
+            .expect("compatible backend");
         let directory =
             std::env::temp_dir().join(format!("cxweb-native-text-{:032x}", rand::random::<u128>()));
         protected_directory(&directory).unwrap();

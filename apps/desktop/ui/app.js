@@ -357,11 +357,11 @@ $('native-discover').addEventListener('click', async () => {
     for (const candidate of report.candidates) {
       const item = document.createElement('li');
       const sources = candidate.sources.map(source => ({path_executable:'PATH', npm_installation:'npm installation', desktop_backend_cache:'App backend cache'})[source] || 'Other location').join(', ');
-      item.textContent = `${candidate.reviewed_build ? `Reviewed backend ${candidate.reviewed_build}` : 'Unreviewed backend'} (${sources}): ${candidate.executable}`;
+      item.textContent = `Protocol check required (${sources}): ${candidate.executable}`;
       list.append(item);
       const option = document.createElement('option');
       option.value = candidate.executable; option.textContent = item.textContent;
-      option.disabled = !candidate.reviewed_build;
+      option.disabled = false;
       choice.append(option);
     }
     results.append(list);

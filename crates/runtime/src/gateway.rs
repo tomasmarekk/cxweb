@@ -251,8 +251,8 @@ impl Gateway {
             .map(|value| value.clone())
             .unwrap_or_default();
         for (codec, observed) in [
-            (CatalogCodec::Cli01551, &mut clients.cli_catalog),
-            (CatalogCodec::App01550Alpha92, &mut clients.app_catalog),
+            (CatalogCodec::CliModelInfoV1, &mut clients.cli_catalog),
+            (CatalogCodec::AppModelInfoV1, &mut clients.app_catalog),
         ] {
             if let Some(observed) = observed {
                 observed.current = self.web.catalog(codec).is_some_and(|catalog| {
@@ -370,8 +370,8 @@ impl Gateway {
                     observed_at: cxweb_platform::clock::utc_timestamp(),
                 });
                 match client {
-                    CatalogCodec::Cli01551 => clients.cli = observed,
-                    CatalogCodec::App01550Alpha92 => clients.app = observed,
+                    CatalogCodec::CliModelInfoV1 => clients.cli = observed,
+                    CatalogCodec::AppModelInfoV1 => clients.app = observed,
                 }
             }
             response
@@ -563,8 +563,8 @@ async fn handle(
                     .is_some();
                 observed.observed_at = cxweb_platform::clock::utc_timestamp();
                 match codec {
-                    CatalogCodec::Cli01551 => clients.cli_catalog = Some(observed),
-                    CatalogCodec::App01550Alpha92 => clients.app_catalog = Some(observed),
+                    CatalogCodec::CliModelInfoV1 => clients.cli_catalog = Some(observed),
+                    CatalogCodec::AppModelInfoV1 => clients.app_catalog = Some(observed),
                 }
             }
             return response;
@@ -712,7 +712,7 @@ mod tests {
         for (version, agent, conditional, expected) in [
             ("unknown", "fixture/unknown", false, 200),
             ("0.155.1", "fixture/0.155.1", false, 200),
-            ("0.155.0", "fixture/0.155.0-alpha.9.2", false, 200),
+            ("0.155.0", "Codex Desktop/0.155.0-alpha.9.2", false, 200),
             ("0.155.1", "fixture/0.155.1", true, 304),
             ("0.155.1", "fixture/0.155.1", false, 401),
         ] {
@@ -822,7 +822,7 @@ mod tests {
     use tower::ServiceExt;
 
     #[tokio::test]
-    async fn client_activity_requires_known_build_and_completed_browser_evidence() {
+    async fn client_activity_requires_valid_metadata_and_completed_browser_evidence() {
         struct Observed;
         impl WebProvider for Observed {
             fn respond(&self, request: WebRequest) -> WebFuture {
@@ -866,7 +866,7 @@ mod tests {
             )
         };
         for (agent, mode, duplicate) in [
-            ("codex_cli_rs/0.155.2", "verified", false),
+            ("codex_cli_rs/invalid", "verified", false),
             ("codex_cli_rs/0.155.1", "verified", true),
             ("codex_cli_rs/0.155.1", "plain", false),
             ("codex_cli_rs/0.155.1", "cancelled", false),
@@ -874,7 +874,7 @@ mod tests {
             send(agent, mode, duplicate).await.unwrap();
             assert_eq!(*gateway.clients.lock().unwrap(), ClientActivity::default());
         }
-        send("codex_cli_rs/0.155.1 (PRIVATE_HOST)", "verified", false)
+        send("codex_cli_rs/42.999.7 (PRIVATE_HOST)", "verified", false)
             .await
             .unwrap();
         let passed = gateway.clients.lock().unwrap().clone();
@@ -1357,8 +1357,8 @@ mod tests {
             ) -> Option<crate::catalog_proxy::OwnedCatalog> {
                 matches!(
                     codec,
-                    cxweb_codex_adapter::catalog_codec::CatalogCodec::Cli01551
-                        | cxweb_codex_adapter::catalog_codec::CatalogCodec::App01550Alpha92
+                    cxweb_codex_adapter::catalog_codec::CatalogCodec::CliModelInfoV1
+                        | cxweb_codex_adapter::catalog_codec::CatalogCodec::AppModelInfoV1
                 )
                 .then(|| crate::catalog_proxy::OwnedCatalog {
                     codec: "test-codec".into(),
@@ -1389,6 +1389,20 @@ mod tests {
             Arc::new(CatalogOnly),
         );
         for (query, agent, count, disconnect) in [
+            (
+                "42.999.7",
+                "Codex Desktop/42.999.7-beta.5 (Windows)",
+                2,
+                false,
+            ),
+            ("42.999.7", "codex_cli_rs/42.999.7 (Windows)", 2, false),
+            ("0.156.1", "codex_cli_rs/0.156.1 (Windows 11)", 2, false),
+            (
+                "0.155.0",
+                "Codex Desktop/0.155.0-alpha.16.3 (Windows 11)",
+                2,
+                false,
+            ),
             ("0.155.1", "codex_cli_rs/0.155.1 (Windows 11)", 2, false),
             (
                 "0.155.0",
@@ -1399,7 +1413,7 @@ mod tests {
             (
                 "0.155.0",
                 "Codex Desktop/0.155.0-alpha.17 (Windows 11)",
-                1,
+                2,
                 false,
             ),
             (

@@ -31,13 +31,9 @@ const codingCase = option?.startsWith('--coding=') ? codingCases.find(fixture =>
 assert.ok(client && home && model?.startsWith('webbridge/') && isAbsolute(client) && isAbsolute(home));
 assert.ok(process.argv.length <= 6 && (!option || codingCase || ['--text', '--unicode', '--coexistence', '--tools', '--reasoning', '--reasoning-trace', '--reasoning-live', '--denial', '--repair', '--namespaces', '--batch', '--concurrent', '--web-tools', '--web-tools-deferred'].includes(option)));
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
-const builds = new Map([
-  ['eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316', '0.155.1'],
-  ['bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226', '0.155.0-alpha.9.2'],
-  ['97d4d67419d0ac2f71342f9a5e850f9468aa622618de8ea823223edb9a91926a', '0.155.0-alpha.16'],
-]);
 const hash = sha256(await readFile(client));
-assert.ok(builds.has(hash), 'E_UNREVIEWED_CLIENT');
+const build = execFileSync(client, ['--version'], { encoding: 'utf8', windowsHide: true, timeout: 10000 }).trim().replace(/^codex-cli /, '');
+assert.match(build, /^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.+-]+)?$/, 'E_CLIENT_VERSION');
 for (const key of ['OPENAI_BASE_URL', 'OPENAI_API_KEY', 'CODEX_API_KEY']) assert.ok(!process.env[key], 'E_ENVIRONMENT_OVERRIDE');
 const configPath = join(home, 'config.toml');
 const configBefore = sha256(await readFile(configPath));
@@ -173,7 +169,7 @@ async function rpc(method, params) {
     return reply.result;
   } finally { clearTimeout(timer); pending.delete(requestId); }
 }
-const evidence = { schema: 'cxweb.installed-client.v1', startedAt: new Date().toISOString(), build: builds.get(hash), executableSha256: hash, synthetic: false, configurationOverride: false, actualGuiPicker: 'not observed', text: 'not requested' };
+const evidence = { schema: 'cxweb.installed-client.v1', startedAt: new Date().toISOString(), build, executableSha256: hash, synthetic: false, configurationOverride: false, actualGuiPicker: 'not observed', text: 'not requested' };
 if (deferred) { evidence.configurationOverride = true; evidence.overrideFields = ['features.tool_search', 'features.tool_search_always_defer_mcp_tools']; evidence.routingOverride = false; }
 async function verifyText(selectedModel, effort) {
   const check = { model: selectedModel.id, effort, route: selectedModel.id.startsWith('webbridge/') ? 'web' : 'native', result: 'started' };

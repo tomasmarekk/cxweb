@@ -291,7 +291,7 @@ async fn activate(
         let route = session.route.catalog(true)?;
         // Both reviewed wire formats are served from the same selected home.
         // GUI names and launcher filenames do not determine catalog support.
-        let codecs = [CatalogCodec::Cli01551, CatalogCodec::App01550Alpha92]
+        let codecs = [CatalogCodec::CliModelInfoV1, CatalogCodec::AppModelInfoV1]
             .into_iter()
             .map(|codec| (codec, vec![route.clone()]))
             .collect();

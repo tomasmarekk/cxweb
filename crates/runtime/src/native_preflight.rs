@@ -21,7 +21,7 @@ const MAX_LINE: usize = 8 * 1024 * 1024;
 pub struct Report {
     /// Native catalog IDs, read through the client's public model/list API.
     pub native_models: Vec<String>,
-    pub client_build: &'static str,
+    pub client_build: String,
     pub catalog_codec: &'static str,
     pub executable_sha256: String,
     pub assessment: Assessment,
@@ -35,19 +35,48 @@ pub struct Report {
     pub remaining_checks: Vec<&'static str>,
 }
 
-pub(crate) fn reviewed(hash: &str) -> Option<(&'static str, CatalogCodec)> {
-    match hash {
-        "eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316" => {
-            Some(("0.155.1", CatalogCodec::Cli01551))
-        }
-        "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226" => {
-            Some(("0.155.0-alpha.9.2", CatalogCodec::App01550Alpha92))
-        }
-        "97d4d67419d0ac2f71342f9a5e850f9468aa622618de8ea823223edb9a91926a" => {
-            Some(("0.155.0-alpha.16", CatalogCodec::App01550Alpha92))
-        }
-        _ => None,
+/// Inspect only an explicitly selected executable. Its hash is checked for
+/// integrity across execution, never compared with a release allowlist.
+pub(crate) async fn describe(client: &Path) -> Result<(String, CatalogCodec), &'static str> {
+    if !client.is_absolute()
+        || client
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_none_or(|n| !n.eq_ignore_ascii_case("codex.exe"))
+    {
+        return Err("E_PREFLIGHT_EXECUTABLE");
     }
+    let guard =
+        TargetPathGuard::capture(client, false).map_err(|_| "E_PREFLIGHT_TARGET_IDENTITY")?;
+    let before = fingerprint(client).await?;
+    let mut command = Command::new(client);
+    command
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    command.creation_flags(0x0800_0000);
+    let output = tokio::time::timeout(Duration::from_secs(10), command.output())
+        .await
+        .map_err(|_| "E_PREFLIGHT_TIMEOUT")?
+        .map_err(|_| "E_PREFLIGHT_START")?;
+    guard
+        .verify_unchanged()
+        .map_err(|_| "E_PREFLIGHT_TARGET_CHANGED")?;
+    if fingerprint(client).await? != before {
+        return Err("E_PREFLIGHT_EXECUTABLE_CHANGED");
+    }
+    if !output.status.success() || output.stdout.len() > 4096 {
+        return Err("E_PREFLIGHT_SCHEMA");
+    }
+    let text = std::str::from_utf8(&output.stdout).map_err(|_| "E_PREFLIGHT_SCHEMA")?;
+    let build = text
+        .trim()
+        .strip_prefix("codex-cli ")
+        .ok_or("E_PREFLIGHT_SCHEMA")?;
+    let codec = CatalogCodec::for_build(build).ok_or("E_PREFLIGHT_SCHEMA")?;
+    Ok((build.to_owned(), codec))
 }
 
 fn config_capture_error(error: std::io::Error) -> &'static str {
@@ -192,15 +221,15 @@ pub async fn inspect(client: &Path, home: &Path, cwd: &Path) -> Result<Report, &
     if !home.is_dir() || !cwd.is_dir() {
         return Err("E_PREFLIGHT_TARGET");
     }
-    // Unknown binaries, including scripts supplied by a repository, are never
-    // executed simply to ask them what version they claim to be.
+    // Discovery does not execute candidates. Here the caller explicitly selected
+    // this executable; protocol checks, not a release hash, establish compatibility.
     let hash = fingerprint(&client).await?;
-    let (build, codec) = reviewed(&hash).ok_or("E_PREFLIGHT_CLIENT_UNQUALIFIED")?;
     let original =
         Snapshot::capture_native_config(&home.join("config.toml")).map_err(config_capture_error)?;
     let text = std::str::from_utf8(original.original()).map_err(|_| "E_PREFLIGHT_CONFIG_PARSE")?;
     let file_report =
         cxweb_codex_adapter::config::inspect(text).map_err(|_| "E_PREFLIGHT_CONFIG_PARSE")?;
+    let (build, codec) = describe(&client).await?;
     let mut command = Command::new(&client);
     command
         .arg("app-server")
@@ -344,15 +373,6 @@ fn model_ids(models: &Value) -> Result<Vec<String>, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn updated_desktop_backend_is_reviewed_only_at_its_exact_hash() {
-        let hash = "97d4d67419d0ac2f71342f9a5e850f9468aa622618de8ea823223edb9a91926a";
-        assert_eq!(
-            reviewed(hash),
-            Some(("0.155.0-alpha.16", CatalogCodec::App01550Alpha92))
-        );
-        assert_eq!(reviewed(&format!("{}0", &hash[..63])), None);
-    }
     #[test]
     fn catalog_ids_are_native_bounded_and_never_arbitrary_payloads() {
         assert_eq!(

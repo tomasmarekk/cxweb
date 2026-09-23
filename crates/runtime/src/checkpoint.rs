@@ -182,6 +182,32 @@ mod tests {
     }
 
     #[test]
+    fn version_independent_clients_keep_existing_checkpoint_domains() {
+        use cxweb_codex_adapter::catalog_codec::CatalogCodec;
+        for (agent, legacy) in [
+            ("codex_cli_rs/42.999.7", "codex-model-info-0.155.1"),
+            (
+                "Codex Desktop/42.999.7-beta.8",
+                "codex-model-info-0.155.0-alpha.9.2",
+            ),
+        ] {
+            let key = codec();
+            let old_id = format!("{legacy}:compaction-v2-summary-v1");
+            let mut old = binding();
+            old.codec = &old_id;
+            let token = key.seal(&old, b"existing task context").unwrap();
+            let selected = CatalogCodec::select("42.999.7", agent).unwrap();
+            let new_id = format!("{}:compaction-v2-summary-v1", selected.checkpoint_id());
+            let mut current = binding();
+            current.codec = &new_id;
+            assert_eq!(
+                key.unseal(&current, &token).unwrap().as_slice(),
+                b"existing task context"
+            );
+        }
+    }
+
+    #[test]
     fn checkpoint_is_authenticated_randomized_and_bound_to_every_scope_dimension() {
         let codec = codec();
         let token = codec.seal(&binding(), b"synthetic summary").unwrap();

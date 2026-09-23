@@ -1,6 +1,6 @@
 //! Read-only executable inventory. Cached App binaries are candidates, not proof
 //! of which backend a running GUI uses. No discovered executable/script runs.
-use crate::native_preflight::{fingerprint, reviewed};
+use crate::native_preflight::fingerprint;
 use cxweb_platform::target_path::TargetPathGuard;
 use serde::Serialize;
 use std::{
@@ -164,15 +164,15 @@ async fn inventory(sources: Sources) -> Report {
             note(&mut diagnostics, "E_DISCOVERY_TARGET_CHANGED");
             continue;
         }
-        let qualification = reviewed(&hash);
+        // Selection triggers protocol inspection; inventory never executes candidates.
         candidates.insert(
             path.clone(),
             Candidate {
                 executable: path,
                 sources: vec![source],
                 executable_sha256: hash,
-                reviewed_build: qualification.map(|(build, _)| build),
-                catalog_codec: qualification.map(|(_, codec)| codec.id()),
+                reviewed_build: None,
+                catalog_codec: None,
             },
         );
     }

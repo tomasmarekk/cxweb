@@ -11,11 +11,6 @@ const [executable, descriptorPath, reportPath] = process.argv.slice(2);
 assert.equal(process.argv.length, 5);
 assert.ok([executable, descriptorPath, reportPath].every(isAbsolute));
 const fingerprint = createHash('sha256').update(await readFile(executable)).digest('hex');
-assert.ok([
-  'eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316',
-  'bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226',
-  '97d4d67419d0ac2f71342f9a5e850f9468aa622618de8ea823223edb9a91926a',
-].includes(fingerprint), 'only a reviewed native backend may run');
 const descriptor = JSON.parse(await readFile(descriptorPath, 'utf8'));
 const delayed = descriptor.delayed_response === true;
 const terminalRefusal = descriptor.terminal_refusal === true;

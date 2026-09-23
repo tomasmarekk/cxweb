@@ -163,7 +163,7 @@ async fn run_inner(
     .map_err(|_| "E_CHECKPOINT_KEY")??;
     // This clone retains the installed coordinator/ledger. Its codec is never
     // assigned to the production provider or advertised in the installed catalog.
-    let provider = provider.with_checkpoints(Arc::new(key), CatalogCodec::Cli01551)?;
+    let provider = provider.with_checkpoints(Arc::new(key), CatalogCodec::CliModelInfoV1)?;
     let task = format!("compaction-probe-{:032x}", rand::random::<u128>());
     let marker = format!("CXWEB_CHECKPOINT_{:032x}", rand::random::<u128>());
     let payload = json!({"model":route.id,"reasoning":{"effort":route.effort},"stream":false,"tools":[],"input":[

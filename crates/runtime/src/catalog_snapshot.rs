@@ -103,7 +103,7 @@ mod tests {
             scope,
             &routes(),
             generation,
-            vec![(CatalogCodec::Cli01551, vec![route()])],
+            vec![(CatalogCodec::CliModelInfoV1, vec![route()])],
             None,
         )
         .unwrap()
@@ -113,8 +113,8 @@ mod tests {
     fn publication_is_client_specific_and_bound_to_execution_scope() {
         let mut scope = fixture_scope();
         let first = snapshot(&scope, 1);
-        assert!(first.for_client(CatalogCodec::App01550Alpha92).is_none());
-        let first = first.for_client(CatalogCodec::Cli01551).unwrap();
+        assert!(first.for_client(CatalogCodec::AppModelInfoV1).is_none());
+        let first = first.for_client(CatalogCodec::CliModelInfoV1).unwrap();
         assert_eq!(first.entries[0]["slug"], route().id);
         assert!(!first.web_scope.contains("fixture"));
         for change in 0..4 {
@@ -126,7 +126,7 @@ mod tests {
             }
             assert_ne!(
                 snapshot(&scope, 1)
-                    .for_client(CatalogCodec::Cli01551)
+                    .for_client(CatalogCodec::CliModelInfoV1)
                     .unwrap()
                     .web_scope,
                 first.web_scope
@@ -134,7 +134,7 @@ mod tests {
             scope = fixture_scope();
         }
         let second = snapshot(&scope, 2)
-            .for_client(CatalogCodec::Cli01551)
+            .for_client(CatalogCodec::CliModelInfoV1)
             .unwrap();
         assert_eq!(second.web_scope, first.web_scope);
         assert_ne!(second.generation, first.generation);
@@ -142,7 +142,7 @@ mod tests {
 
     #[test]
     fn cannot_advertise_unroutable_duplicate_or_invalid_entries() {
-        let codec = CatalogCodec::Cli01551;
+        let codec = CatalogCodec::CliModelInfoV1;
         for (generation, executable, qualified) in [
             (0, routes(), vec![(codec, vec![route()])]),
             (1, BTreeSet::new(), vec![(codec, vec![route()])]),
@@ -184,7 +184,7 @@ mod tests {
                 1,
                 vec![
                     (codec, vec![route()]),
-                    (CatalogCodec::App01550Alpha92, vec![other])
+                    (CatalogCodec::AppModelInfoV1, vec![other])
                 ],
                 None
             )
@@ -199,7 +199,7 @@ mod tests {
                 1,
                 vec![
                     (codec, vec![route()]),
-                    (CatalogCodec::App01550Alpha92, vec![other]),
+                    (CatalogCodec::AppModelInfoV1, vec![other]),
                 ],
                 None,
             )

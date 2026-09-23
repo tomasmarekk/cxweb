@@ -215,7 +215,7 @@ impl CoordinatorProvider {
                 .ok_or("E_MODEL_UNAVAILABLE")?;
             let bound = Arc::new(crate::compaction::BoundCheckpoint {
                 codec: key.clone(),
-                codec_id: format!("{}:compaction-v2-summary-v1", codec.id()),
+                codec_id: format!("{}:compaction-v2-summary-v1", codec.checkpoint_id()),
                 session: SessionKey {
                     installation: self.scope.installation.clone(),
                     native_session: identity.task.clone(),
@@ -590,7 +590,7 @@ mod tests {
         let provider = provider
             .with_checkpoints(
                 key,
-                cxweb_codex_adapter::catalog_codec::CatalogCodec::Cli01551,
+                cxweb_codex_adapter::catalog_codec::CatalogCodec::CliModelInfoV1,
             )
             .unwrap()
             .with_context_budget(
@@ -599,7 +599,7 @@ mod tests {
             .unwrap();
         let budget = cxweb_codex_adapter::context_budget::LocalContextBudget::DIAGNOSTIC;
         assert!(provider.clone().with_context_budget(budget).is_err());
-        let codec = cxweb_codex_adapter::catalog_codec::CatalogCodec::Cli01551;
+        let codec = cxweb_codex_adapter::catalog_codec::CatalogCodec::CliModelInfoV1;
         let published = provider
             .clone()
             .with_catalog(
@@ -827,13 +827,13 @@ mod tests {
     fn catalog_requires_explicit_publication_and_does_not_mutate_existing_provider() {
         use cxweb_codex_adapter::catalog_codec::{CatalogCodec, CatalogRoute};
         let (provider, browser) = provider_fixture(false);
-        assert!(provider.catalog(CatalogCodec::Cli01551).is_none());
+        assert!(provider.catalog(CatalogCodec::CliModelInfoV1).is_none());
         let published = provider
             .clone()
             .with_catalog(
                 1,
                 vec![(
-                    CatalogCodec::Cli01551,
+                    CatalogCodec::CliModelInfoV1,
                     vec![CatalogRoute {
                         id: "webbridge/test".into(),
                         observed_label: "Fixture text".into(),
@@ -844,10 +844,13 @@ mod tests {
                 )],
             )
             .unwrap();
-        assert!(provider.catalog(CatalogCodec::Cli01551).is_none());
-        assert!(published.catalog(CatalogCodec::App01550Alpha92).is_none());
+        assert!(provider.catalog(CatalogCodec::CliModelInfoV1).is_none());
+        assert!(published.catalog(CatalogCodec::AppModelInfoV1).is_none());
         assert_eq!(
-            published.catalog(CatalogCodec::Cli01551).unwrap().entries[0]["slug"],
+            published
+                .catalog(CatalogCodec::CliModelInfoV1)
+                .unwrap()
+                .entries[0]["slug"],
             "webbridge/test"
         );
         assert!(published.with_catalog(2, vec![]).is_err());
@@ -1093,7 +1096,7 @@ mod tests {
             coding: false,
         };
         let provider = provider
-            .with_catalog(1, vec![(CatalogCodec::Cli01551, vec![route.clone()])])
+            .with_catalog(1, vec![(CatalogCodec::CliModelInfoV1, vec![route.clone()])])
             .unwrap();
         let gateway = Gateway::new(
             12345,
@@ -1119,10 +1122,28 @@ mod tests {
             },
         ];
         let refreshed = provider
-            .with_refreshed_catalog(vec![(CatalogCodec::Cli01551, vec![route])])
+            .with_refreshed_catalog(vec![(CatalogCodec::CliModelInfoV1, vec![route])])
             .unwrap();
-        assert_eq!(provider.catalog(CatalogCodec::Cli01551).unwrap().entries[0]["supported_reasoning_levels"].as_array().unwrap().len(), 1);
-        assert_eq!(refreshed.catalog(CatalogCodec::Cli01551).unwrap().entries[0]["supported_reasoning_levels"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            provider
+                .catalog(CatalogCodec::CliModelInfoV1)
+                .unwrap()
+                .entries[0]["supported_reasoning_levels"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            refreshed
+                .catalog(CatalogCodec::CliModelInfoV1)
+                .unwrap()
+                .entries[0]["supported_reasoning_levels"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
         let gateway = Gateway::new(
             12345,
             NativeTransport::subscription().unwrap(),

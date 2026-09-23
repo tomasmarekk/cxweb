@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 
 const client = process.argv[2];
 if (!client || !isAbsolute(client) || process.argv.length > 4) {
-  throw new Error('Usage: node scripts/probe-preflight.mjs <reviewed absolute native backend> [cxweb executable]');
+  throw new Error('Usage: node scripts/probe-preflight.mjs <selected absolute native backend> [cxweb executable]');
 }
 const bridge = resolve(process.argv[3] ?? 'target/debug/cxweb.exe');
 const root = resolve('.local/probes');
@@ -77,8 +77,8 @@ try {
   await writeFile(unknown, 'Synthetic fixture; this file must never execute');
   const result = spawnSync(bridge, ['native-preflight', '--client', unknown, '--home', join(work, 'signed-out', 'home'), '--cwd', join(work, 'signed-out', 'workspace')], { env, encoding: 'utf8', windowsHide: true, timeout: 10000 });
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /E_PREFLIGHT_CLIENT_UNQUALIFIED/);
-  evidence.cases.push({ name: 'unreviewed-executable', result: 'PASS refused before execution' });
+  assert.match(result.stderr, /E_PREFLIGHT_EXECUTABLE/);
+  evidence.cases.push({ name: 'non-codex-executable', result: 'PASS refused before execution' });
   const foreign = await mkdtemp(join(root, 'preflight-'));
   protectFixture(foreign, true);
   const denied = spawnSync(bridge, ['native-preflight', '--client', client, '--home', foreign, '--cwd', foreign], { env, encoding: 'utf8', windowsHide: true, timeout: 60000 });

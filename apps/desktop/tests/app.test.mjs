@@ -358,8 +358,8 @@ test('native discovery is explicit, deduplicates clicks and preserves browser st
   const results = ui.nodes.get('native-targets');
   assert.equal(results.hidden, false);
   const items = results.children[1].children;
-  assert.match(items[0].textContent, /Reviewed backend 0.155.1 \(npm installation, PATH\)/);
-  assert.match(items[1].textContent, /Unreviewed backend \(App backend cache\)/);
+  assert.match(items[0].textContent, /Protocol check required \(npm installation, PATH\)/);
+  assert.match(items[1].textContent, /Protocol check required \(App backend cache\)/);
   assert.ok(items[1].textContent.includes('<untrusted>'));
   assert.match(results.children[2].textContent, /E_DISCOVERY_TARGET_IDENTITY/);
   assert.match(results.children[3].textContent, /does not identify the backend used/);
@@ -500,7 +500,7 @@ test('pending preflight rejects duplicate submits and suppresses a result for an
   assert.equal(ui.nodes.get('native-preflight').disabled, false);
 });
 
-test('discovered candidates require selection and unreviewed candidates cannot be selected', async () => {
+test('discovered candidates require explicit selection and protocol inspection regardless of build', async () => {
   const ui = panel(async command => command === 'native_discover' ? { candidates: [
     { executable: selectedTarget.client, reviewed_build: '0.155.1', sources: ['npm_installation'] },
     { executable: 'C:\\unknown\\codex.exe', reviewed_build: null, sources: ['path_executable'] },
@@ -510,7 +510,7 @@ test('discovered candidates require selection and unreviewed candidates cannot b
   assert.equal(ui.nodes.get('native-client').value, '');
   assert.equal(choice.children[0].value, '');
   assert.equal(choice.children[1].disabled, false);
-  assert.equal(choice.children[2].disabled, true);
+  assert.equal(choice.children[2].disabled, false);
   choice.value = selectedTarget.client; choice.change();
   assert.equal(ui.nodes.get('native-client').value, selectedTarget.client);
   assert.deepEqual(ui.calls, ['status', 'native_discover']);

@@ -45,7 +45,7 @@ impl Receipt {
     pub(crate) fn new(session: &GenerationSession, codecs: &[CatalogCodec]) -> Self {
         let scope = session.scope();
         Self {
-            version: 1,
+            version: 2,
             binding: Binding {
                 installation: scope.installation,
                 account: scope.account,
@@ -54,16 +54,11 @@ impl Receipt {
                 routes: vec![session.route.clone()],
             },
             browser_version: session.browser_version.clone(),
-            builds: codecs
-                .iter()
-                .map(|codec| {
-                    match codec {
-                        CatalogCodec::Cli01551 => "0.155.1",
-                        CatalogCodec::App01550Alpha92 => "0.155.0-alpha.9.2",
-                    }
-                    .to_owned()
-                })
-                .collect(),
+            builds: if codecs.is_empty() {
+                vec![]
+            } else {
+                vec!["model-info-v1".into()]
+            },
             protocol_evidence: session.protocol_evidence.clone(),
         }
     }
@@ -74,7 +69,7 @@ impl Receipt {
         published: &[String],
     ) -> Result<(), &'static str> {
         let hash = |s: &str| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit());
-        if self.version != 1
+        if !matches!(self.version, 1 | 2)
             || self.binding.installation != installation
             || !hash(&self.binding.account)
             || !hash(&self.binding.workspace)
@@ -102,19 +97,29 @@ impl Receipt {
     }
 
     fn catalogs(&self) -> Result<Vec<(CatalogCodec, Vec<CatalogRoute>)>, &'static str> {
-        self.builds
+        // Version 1 receipts record old client build labels. They certify the
+        // same ModelInfo representation, not a permanent client version range.
+        let valid = match self.version {
+            1 => self
+                .builds
+                .iter()
+                .all(|build| CatalogCodec::for_build(build).is_some()),
+            2 => self.builds == ["model-info-v1"],
+            _ => false,
+        };
+        if !valid {
+            return Err("E_WEB_RECOVERY_RECEIPT");
+        }
+        let routes = self
+            .binding
+            .routes
             .iter()
-            .map(|build| {
-                let codec = CatalogCodec::for_build(build).ok_or("E_WEB_RECOVERY_RECEIPT")?;
-                let routes = self
-                    .binding
-                    .routes
-                    .iter()
-                    .map(|route| route.catalog(true))
-                    .collect::<Result<Vec<_>, &'static str>>()?;
-                Ok((codec, routes))
-            })
-            .collect()
+            .map(|route| route.catalog(true))
+            .collect::<Result<Vec<_>, &'static str>>()?;
+        Ok(vec![
+            (CatalogCodec::CliModelInfoV1, routes.clone()),
+            (CatalogCodec::AppModelInfoV1, routes),
+        ])
     }
 
     async fn restore(
@@ -795,8 +800,8 @@ impl RecoveryController {
         // explicit operations; status never touches the browser or journal.
         let provider = self.pending.ready().ok()?;
         let catalog = provider
-            .catalog(CatalogCodec::Cli01551)
-            .or_else(|| provider.catalog(CatalogCodec::App01550Alpha92))?;
+            .catalog(CatalogCodec::CliModelInfoV1)
+            .or_else(|| provider.catalog(CatalogCodec::AppModelInfoV1))?;
         catalog
             .entries
             .iter()
@@ -982,6 +987,29 @@ mod tests {
         let mut changed = original;
         changed["profile_path"] = json!("C:/another-browser");
         assert!(serde_json::from_value::<Receipt>(changed).is_err());
+    }
+
+    #[test]
+    fn receipt_formats_survive_unseen_client_releases() {
+        let legacy = Receipt::fixture("installation");
+        let mut current = legacy.clone();
+        current.version = 2;
+        current.builds = vec!["model-info-v1".into()];
+        for receipt in [legacy, current] {
+            receipt
+                .validate("installation", &["webbridge/fixture".into()])
+                .unwrap();
+            for agent in ["codex_cli_rs/42.999.7", "Codex Desktop/42.999.7-beta.8"] {
+                let codec = CatalogCodec::select("42.999.7", agent).unwrap();
+                assert!(
+                    receipt
+                        .catalogs()
+                        .unwrap()
+                        .iter()
+                        .any(|(saved, _)| *saved == codec)
+                );
+            }
+        }
     }
 
     #[test]
@@ -1236,7 +1264,7 @@ mod tests {
                     .await
                     .contains("E_WEB_RECOVERING")
             );
-            assert!(pending.catalog(CatalogCodec::Cli01551).is_none());
+            assert!(pending.catalog(CatalogCodec::CliModelInfoV1).is_none());
             if cancelled {
                 assert_eq!(
                     gateway.disconnect_web(Duration::from_millis(20)).await,

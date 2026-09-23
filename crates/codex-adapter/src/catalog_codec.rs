@@ -3,54 +3,94 @@ use serde_json::{Value, json};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum CatalogCodec {
-    Cli01551,
-    App01550Alpha92,
+    CliModelInfoV1,
+    AppModelInfoV1,
 }
 
 impl CatalogCodec {
+    /// Builds are diagnostic labels, not a compatibility allowlist. Both
+    /// clients consume the same ModelInfo wire representation.
     pub fn for_build(build: &str) -> Option<Self> {
-        match build {
-            "0.155.1" => Some(Self::Cli01551),
-            // The .16 desktop backend accepts the same catalog representation
-            // as .9.2. Keep one wire codec so existing installed receipts can
-            // serve a newly updated App without replacing the browser binding.
-            "0.155.0-alpha.9.2" | "0.155.0-alpha.16" => Some(Self::App01550Alpha92),
-            _ => None,
-        }
-    }
-    /// Query versions omit prerelease suffixes; the native User-Agent includes
-    /// the full build. Require agreement so an unknown alpha cannot inherit a
-    /// reviewed codec merely by sharing its major/minor/patch query version.
-    /// This is compatibility selection, not client authentication.
-    pub fn select(query_version: &str, user_agent: &str) -> Option<Self> {
-        match (query_version, Self::from_user_agent(user_agent)?) {
-            ("0.155.1", Self::Cli01551) => Some(Self::Cli01551),
-            ("0.155.0", Self::App01550Alpha92) => Some(Self::App01550Alpha92),
-            _ => None,
-        }
+        Self::build_version(build)?;
+        Some(if build.contains('-') {
+            Self::AppModelInfoV1
+        } else {
+            Self::CliModelInfoV1
+        })
     }
 
-    /// Classify an observed transport build without retaining its User-Agent.
-    /// This is reported compatibility metadata, not process authentication.
+    fn build_version(build: &str) -> Option<&str> {
+        if build.len() > 128 || !build.is_ascii() {
+            return None;
+        }
+        let core = build.split(['-', '+']).next()?;
+        let numbers: Vec<_> = core.split('.').collect();
+        if numbers.len() != 3
+            || numbers
+                .iter()
+                .any(|n| n.is_empty() || !n.bytes().all(|b| b.is_ascii_digit()))
+        {
+            return None;
+        }
+        if build.len() > core.len() {
+            let suffix = &build[core.len() + 1..];
+            if suffix.is_empty()
+                || !suffix
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b".-+".contains(&b))
+            {
+                return None;
+            }
+        }
+        Some(core)
+    }
+
+    /// Validate request metadata consistency without pinning client releases.
+    /// The response envelope is checked separately before catalog augmentation.
+    pub fn select(query_version: &str, user_agent: &str) -> Option<Self> {
+        let (_, build) = Self::user_agent_parts(user_agent)?;
+        if query_version != Self::build_version(build)? {
+            return None;
+        }
+        Self::from_user_agent(user_agent)
+    }
+
+    /// Client family is health metadata, never authorization or qualification.
     pub fn from_user_agent(user_agent: &str) -> Option<Self> {
+        let (originator, build) = Self::user_agent_parts(user_agent)?;
+        Self::build_version(build)?;
+        Some(if originator.to_ascii_lowercase().contains("desktop") {
+            Self::AppModelInfoV1
+        } else {
+            Self::CliModelInfoV1
+        })
+    }
+
+    fn user_agent_parts(user_agent: &str) -> Option<(&str, &str)> {
         if user_agent.len() > 4096 || !user_agent.is_ascii() {
             return None;
         }
-        // The native desktop originator is "Codex Desktop" and legitimately
-        // includes a space. The slash, not the first whitespace, separates its
-        // name from the backend build; later UA tokens describe the OS/client.
         let (originator, remainder) = user_agent.split_once('/')?;
         let version = remainder.split_ascii_whitespace().next()?;
         if originator.trim().is_empty() || originator.len() > 128 {
             return None;
         }
-        Self::for_build(version)
+        Some((originator, version))
     }
 
     pub fn id(self) -> &'static str {
         match self {
-            Self::Cli01551 => "codex-model-info-0.155.1",
-            Self::App01550Alpha92 => "codex-model-info-0.155.0-alpha.9.2",
+            Self::CliModelInfoV1 => "codex-model-info-v1-cli",
+            Self::AppModelInfoV1 => "codex-model-info-v1-app",
+        }
+    }
+
+    /// Historical encryption domain labels are retained so saved task
+    /// checkpoints remain readable. These do not restrict client builds.
+    pub fn checkpoint_id(self) -> &'static str {
+        match self {
+            Self::CliModelInfoV1 => "codex-model-info-0.155.1",
+            Self::AppModelInfoV1 => "codex-model-info-0.155.0-alpha.9.2",
         }
     }
 
@@ -211,7 +251,7 @@ mod tests {
     #[test]
     fn local_budget_metadata_is_explicit_and_does_not_claim_provider_usage() {
         use crate::context_budget::{LocalContextBudget, MAX_PROMPT_BYTES};
-        for codec in [CatalogCodec::Cli01551, CatalogCodec::App01550Alpha92] {
+        for codec in [CatalogCodec::CliModelInfoV1, CatalogCodec::AppModelInfoV1] {
             let budget = LocalContextBudget::new(128 * 1024, 256 * 1024).unwrap();
             let entry = codec.encode_with_context_budget(&route(), budget).unwrap();
             assert_eq!(entry["context_window"], 32768);
@@ -249,24 +289,44 @@ mod tests {
     fn full_build_and_whole_query_must_agree() {
         for (query, agent, expected) in [
             (
+                "0.156.1",
+                "codex_cli_rs/0.156.1 (Windows 11)",
+                Some(CatalogCodec::CliModelInfoV1),
+            ),
+            (
+                "0.155.0",
+                "Codex Desktop/0.155.0-alpha.16.3 (Windows 11)",
+                Some(CatalogCodec::AppModelInfoV1),
+            ),
+            ("0.155.1", "codex_cli_rs/0.156.1", None),
+            ("0.156.1", "codex_cli_rs/0.155.1", None),
+            (
                 "0.155.1",
                 "codex_cli_rs/0.155.1 (Windows 11; x64)",
-                Some(CatalogCodec::Cli01551),
+                Some(CatalogCodec::CliModelInfoV1),
             ),
             (
                 "0.155.0",
                 "codex_desktop/0.155.0-alpha.9.2 (Windows 11)",
-                Some(CatalogCodec::App01550Alpha92),
+                Some(CatalogCodec::AppModelInfoV1),
             ),
             (
                 "0.155.0",
                 "Codex Desktop/0.155.0-alpha.16 (Windows 11)",
-                Some(CatalogCodec::App01550Alpha92),
+                Some(CatalogCodec::AppModelInfoV1),
             ),
-            ("0.155.0", "codex_desktop/0.155.0-alpha.9.3", None),
+            (
+                "0.155.0",
+                "codex_desktop/0.155.0-alpha.9.3",
+                Some(CatalogCodec::AppModelInfoV1),
+            ),
             ("0.155.1", "codex_cli_rs/0.155.0-alpha.9.2", None),
             ("0.155.0", "codex_cli_rs/0.155.1", None),
-            ("0.156.0", "codex_cli_rs/0.156.0", None),
+            (
+                "0.156.0",
+                "codex_cli_rs/0.156.0",
+                Some(CatalogCodec::CliModelInfoV1),
+            ),
             ("0.155.1", "unknown", None),
             ("0.155.1", "/0.155.1", None),
         ] {
@@ -275,8 +335,37 @@ mod tests {
     }
 
     #[test]
+    fn future_releases_use_the_same_contract_without_registration() {
+        for major in [0, 1, 42] {
+            for minor in [1, 157, 999] {
+                let core = format!("{major}.{minor}.7");
+                for suffix in ["", "-alpha.900.5", "-beta.2+build.91"] {
+                    let build = format!("{core}{suffix}");
+                    assert!(CatalogCodec::for_build(&build).is_some());
+                    for (origin, family) in [
+                        ("codex_cli_rs", CatalogCodec::CliModelInfoV1),
+                        ("Codex Desktop", CatalogCodec::AppModelInfoV1),
+                    ] {
+                        assert_eq!(
+                            CatalogCodec::select(&core, &format!("{origin}/{build} (Windows)")),
+                            Some(family)
+                        );
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            CatalogCodec::CliModelInfoV1.encode(&route()).unwrap(),
+            CatalogCodec::AppModelInfoV1.encode(&route()).unwrap()
+        );
+        for bad in ["", "unknown", "1.2", "1.2.3-", "1.2.3/evil", "1.2.x"] {
+            assert!(CatalogCodec::for_build(bad).is_none());
+        }
+    }
+
+    #[test]
     fn codecs_encode_observations_without_native_or_unverified_capabilities() {
-        for codec in [CatalogCodec::Cli01551, CatalogCodec::App01550Alpha92] {
+        for codec in [CatalogCodec::CliModelInfoV1, CatalogCodec::AppModelInfoV1] {
             let mut route = route();
             let text = codec.encode(&route).unwrap();
             assert_eq!(
@@ -325,7 +414,7 @@ mod tests {
             description: description.into(),
         })
         .collect();
-        for codec in [CatalogCodec::Cli01551, CatalogCodec::App01550Alpha92] {
+        for codec in [CatalogCodec::CliModelInfoV1, CatalogCodec::AppModelInfoV1] {
             let encoded = codec.encode(&route).unwrap();
             assert_eq!(encoded["display_name"], "ChatGPT Web · Latest");
             assert_eq!(encoded["default_reasoning_level"], "xhigh");
@@ -369,7 +458,7 @@ mod tests {
                 3 => route.effort = "unobserved".into(),
                 _ => route.observed_label = "Observed\nInjected row".into(),
             }
-            assert!(CatalogCodec::Cli01551.encode(&route).is_err());
+            assert!(CatalogCodec::CliModelInfoV1.encode(&route).is_err());
         }
     }
 }
