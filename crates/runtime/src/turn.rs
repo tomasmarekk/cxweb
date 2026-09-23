@@ -16,6 +16,10 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
+// A visible ChatGPT failure proves that this browser response cannot finish.
+// Retrying stays inside the one admitted native request, on a fresh page.
+const MAX_EXPLICIT_FAILURE_RETRIES: usize = 3;
+
 pub type BrowserFuture<T> = Pin<Box<dyn Future<Output = Result<T, &'static str>> + Send>>;
 /// Bounded transport channel; only verified public status events use this path.
 pub type PublicProgress = tokio::sync::mpsc::Sender<Vec<serde_json::Value>>;
@@ -55,6 +59,13 @@ struct BrowserRequest {
     request: CanonicalRequest,
     nonce: String,
     prompt: String,
+}
+
+struct ProgressState {
+    summary: Vec<String>,
+    published_events: usize,
+    response_id: String,
+    created_at: u64,
 }
 impl BrowserRequest {
     fn prepare(request: CanonicalRequest) -> Result<Self, &'static str> {
@@ -174,6 +185,18 @@ impl Coordinator {
             .acquire(input.session.clone(), &cancel)
             .await?;
         let replay_key = format!("{:x}", Sha256::digest(input.request_id.as_bytes()));
+        let mut publication = ProgressState {
+            summary: Vec::new(),
+            published_events: 0,
+            response_id: format!(
+                "resp_cxweb_{:x}",
+                Sha256::digest(input.request_id.as_bytes())
+            ),
+            created_at: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|_| "E_CLOCK")?
+                .as_secs(),
+        };
         match self
             .ledger
             .admit(&input.request_id, &input.session, &input.bytes)
@@ -196,7 +219,7 @@ impl Coordinator {
             }
             Admission::Existing(_) => return Err("E_REQUEST_ALREADY_ADMITTED"),
         }
-        let prepared = match tokio::time::timeout(
+        let mut prepared = match tokio::time::timeout(
             Duration::from_secs(90),
             self.browser.prepare_with_effort(
                 input.session.clone(),
@@ -216,38 +239,103 @@ impl Coordinator {
                 });
             }
         };
-        let result = self
-            .run_prepared(
-                &input.request_id,
-                &input.session,
-                request,
-                &prepared,
-                &cancel,
-                checkpoint.as_deref(),
-                progress,
+        let mut retries = 0;
+        let mut resumed = None;
+        loop {
+            let result = self
+                .run_prepared(
+                    &input.request_id,
+                    &input.session,
+                    &request,
+                    &prepared,
+                    &cancel,
+                    checkpoint.as_deref(),
+                    progress.clone(),
+                    &mut publication,
+                    resumed,
+                    retries < MAX_EXPLICIT_FAILURE_RETRIES,
+                )
+                .await;
+            // Never start another page until the failed page has been closed.
+            let released = tokio::time::timeout(
+                Duration::from_secs(2),
+                self.browser.release(prepared.handle),
             )
             .await;
-        // Release occurs on success, validation failure, cancellation and uncertainty.
-        let _ = tokio::time::timeout(
-            Duration::from_secs(2),
-            self.browser.release(prepared.handle),
-        )
-        .await;
-        if let Ok(delivery) = &result {
-            self.cache(replay_key, delivery.clone())?;
+            if result.as_ref().err().copied() == Some("E_CHATGPT_THINKING_FAILED")
+                && retries < MAX_EXPLICIT_FAILURE_RETRIES
+            {
+                if !matches!(released, Ok(Ok(()))) {
+                    self.ledger
+                        .transition(&input.request_id, TurnState::Failed)
+                        .await?;
+                    return Err("E_WEB_CLEANUP_UNCONFIRMED");
+                }
+                resumed = match self
+                    .ledger
+                    .admit(&input.request_id, &input.session, &input.bytes)
+                    .await?
+                {
+                    Admission::Existing(state @ (TurnState::Submitted | TurnState::Generating)) => {
+                        Some(state)
+                    }
+                    _ => return Err("E_TURN_STATE"),
+                };
+                if cancel.is_cancelled() {
+                    self.ledger
+                        .transition(&input.request_id, TurnState::Cancelled)
+                        .await?;
+                    return Err("E_CANCELLED");
+                }
+                retries += 1;
+                tokio::select! {
+                    _ = cancel.cancelled() => {
+                        self.ledger.transition(&input.request_id, TurnState::Cancelled).await?;
+                        return Err("E_CANCELLED");
+                    }
+                    _ = tokio::time::sleep(Duration::from_millis(500 * retries as u64)) => (),
+                }
+                prepared = match tokio::time::timeout(
+                    Duration::from_secs(90),
+                    self.browser.prepare_with_effort(
+                        input.session.clone(),
+                        request.request.requested_effort.clone(),
+                    ),
+                )
+                .await
+                {
+                    Ok(Ok(prepared)) => prepared,
+                    failure => {
+                        self.ledger
+                            .transition(&input.request_id, TurnState::Failed)
+                            .await?;
+                        return Err(match failure {
+                            Ok(Err(code)) => code,
+                            _ => "E_BROWSER_PREPARE",
+                        });
+                    }
+                };
+                continue;
+            }
+            if let Ok(delivery) = &result {
+                self.cache(replay_key, delivery.clone())?;
+            }
+            return result;
         }
-        result
     }
     #[allow(clippy::too_many_arguments)]
     async fn run_prepared(
         &self,
         id: &str,
         expected_session: &SessionKey,
-        request: BrowserRequest,
+        request: &BrowserRequest,
         prepared: &Prepared,
         cancel: &CancellationToken,
         checkpoint: Option<&dyn CheckpointEncoder>,
         progress_sender: Option<PublicProgress>,
+        publication: &mut ProgressState,
+        resumed: Option<TurnState>,
+        retry_thinking_failure: bool,
     ) -> Result<Delivery, &'static str> {
         let BrowserRequest {
             request,
@@ -273,14 +361,18 @@ impl Coordinator {
                 return Err(error);
             }
         };
-        self.ledger
-            .transition(id, TurnState::ObservedBaseline)
-            .await?;
+        if resumed.is_none() {
+            self.ledger
+                .transition(id, TurnState::ObservedBaseline)
+                .await?;
+        }
         if cancel.is_cancelled() {
             self.ledger.transition(id, TurnState::Cancelled).await?;
             return Err("E_CANCELLED");
         }
-        self.ledger.transition(id, TurnState::Submitting).await?;
+        if resumed.is_none() {
+            self.ledger.transition(id, TurnState::Submitting).await?;
+        }
         tracker.begin_submission()?;
         // This operation is deliberately not retried or raced against cancellation.
         // A timed-out send has an unknown upstream outcome.
@@ -288,7 +380,7 @@ impl Coordinator {
             Duration::from_secs(60),
             self.browser.submit(
                 prepared.handle.clone(),
-                prompt,
+                prompt.clone(),
                 prepared.baseline.selected_model.clone(),
             ),
         )
@@ -307,14 +399,7 @@ impl Coordinator {
         // Generation has no elapsed-time or text-inactivity deadline. Pro can
         // think silently for a long time; completion, cancellation and actual
         // browser/protocol failures determine when this request ends.
-        let mut summary = Vec::new();
-        let response_id = format!("resp_cxweb_{:x}", Sha256::digest(id.as_bytes()));
-        let created_at = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| "E_CLOCK")?
-            .as_secs();
-        let mut published_events = 0;
-        let mut state = TurnState::Submitting;
+        let mut state = resumed.unwrap_or(TurnState::Submitting);
         loop {
             if cancel.is_cancelled() {
                 tracker.cancel()?;
@@ -353,12 +438,16 @@ impl Coordinator {
                     if state == TurnState::Submitting && tracker.state() == TurnState::Failed {
                         self.ledger.transition(id, TurnState::Submitted).await?;
                     }
+                    if error == "E_CHATGPT_THINKING_FAILED" && retry_thinking_failure {
+                        self.stop(&prepared.handle).await;
+                        return Err(error);
+                    }
                     self.ledger.transition(id, tracker.state()).await?;
                     self.stop(&prepared.handle).await;
                     return Err(error);
                 }
             };
-            let previous_summary_len = summary.len();
+            let previous_summary_len = publication.summary.len();
             if matches!(
                 tracker.state(),
                 TurnState::Generating | TurnState::Completed
@@ -366,10 +455,10 @@ impl Coordinator {
                 for text in observed_summary {
                     if !text.is_empty()
                         && text.len() <= 8192
-                        && summary.len() < 64
-                        && !summary.contains(&text)
+                        && publication.summary.len() < 64
+                        && !publication.summary.contains(&text)
                     {
-                        summary.push(text);
+                        publication.summary.push(text);
                     }
                 }
             }
@@ -389,7 +478,7 @@ impl Coordinator {
             if tracker.state() == TurnState::Generating
                 && request.public_summary
                 && checkpoint.is_none()
-                && summary.len() > previous_summary_len
+                && publication.summary.len() > previous_summary_len
                 && let Some(sender) = &progress_sender
             {
                 let verified = tokio::select! {
@@ -400,15 +489,20 @@ impl Coordinator {
                 let publication = verified.and_then(|()| {
                     let events = wire::public_summary_prefix(
                         &request.model,
-                        &response_id,
-                        created_at,
-                        &summary,
+                        &publication.response_id,
+                        publication.created_at,
+                        &publication.summary,
                     )?;
                     let count = events.len();
                     sender
-                        .try_send(events.into_iter().skip(published_events).collect())
+                        .try_send(
+                            events
+                                .into_iter()
+                                .skip(publication.published_events)
+                                .collect(),
+                        )
                         .map_err(|_| "E_PUBLIC_PROGRESS_DELIVERY")?;
-                    published_events = count;
+                    publication.published_events = count;
                     Ok(())
                 });
                 if let Err(code) = publication {
@@ -446,7 +540,7 @@ impl Coordinator {
                     return Err(code);
                 }
                 let output =
-                    match envelope::validate_detailed(text.as_bytes(), &request.context(&nonce)) {
+                    match envelope::validate_detailed(text.as_bytes(), &request.context(nonce)) {
                         Ok(output) => output,
                         Err(code) => {
                             self.ledger.transition(id, TurnState::Failed).await?;
@@ -463,15 +557,20 @@ impl Coordinator {
                         Some(codec),
                         Some(pending),
                     ) => codec.seal(summary, pending).and_then(|token| {
-                        wire::encode_checkpoint(&token, &request.model, &response_id, created_at)
+                        wire::encode_checkpoint(
+                            &token,
+                            &request.model,
+                            &publication.response_id,
+                            publication.created_at,
+                        )
                     }),
                     (_, None, None) => wire::encode_with_summary(
                         &output,
                         &request.model,
-                        &response_id,
-                        created_at,
+                        &publication.response_id,
+                        publication.created_at,
                         if request.public_summary {
-                            &summary
+                            &publication.summary
                         } else {
                             &[]
                         },
@@ -540,13 +639,20 @@ mod tests {
         ChangedScope,
         Checkpoint,
         BadCheckpoint,
+        ThinkingThenTool,
+        ThinkingAfterStatusThenTool,
+        ThinkingThenUncertainSend,
+        ThinkingAlways,
     }
     struct MockBrowser {
         mode: Mode,
         requested_efforts: Mutex<Vec<Option<String>>>,
+        prepares: AtomicUsize,
+        observations: AtomicUsize,
         sends: AtomicUsize,
         stops: AtomicUsize,
         releases: AtomicUsize,
+        release_fails: AtomicBool,
         nonce: Mutex<String>,
         observing: Notify,
         released: Notify,
@@ -559,9 +665,12 @@ mod tests {
             Arc::new(Self {
                 mode,
                 requested_efforts: Mutex::default(),
+                prepares: AtomicUsize::new(0),
+                observations: AtomicUsize::new(0),
                 sends: AtomicUsize::new(0),
                 stops: AtomicUsize::new(0),
                 releases: AtomicUsize::new(0),
+                release_fails: AtomicBool::new(false),
                 nonce: Mutex::new(String::new()),
                 observing: Notify::new(),
                 released: Notify::new(),
@@ -577,6 +686,7 @@ mod tests {
             session: SessionKey,
             effort: Option<String>,
         ) -> BrowserFuture<Prepared> {
+            self.prepares.fetch_add(1, Ordering::SeqCst);
             self.requested_efforts.lock().unwrap().push(effort.clone());
             let prepared = self.prepare(session);
             Box::pin(async move {
@@ -621,7 +731,9 @@ mod tests {
                 .next()
                 .unwrap();
             *self.nonce.lock().unwrap() = nonce.to_owned();
-            let uncertain = matches!(self.mode, Mode::Uncertain);
+            let uncertain = matches!(self.mode, Mode::Uncertain)
+                || (matches!(self.mode, Mode::ThinkingThenUncertainSend)
+                    && self.sends.load(Ordering::SeqCst) == 2);
             let limited = matches!(self.mode, Mode::LimitedSubmit);
             Box::pin(async move {
                 if limited {
@@ -635,20 +747,37 @@ mod tests {
         }
         fn observe(&self, _: String) -> BrowserFuture<Observation> {
             self.observing.notify_one();
+            let observation_number = self.observations.fetch_add(1, Ordering::SeqCst) + 1;
             if matches!(self.mode, Mode::LimitedObserve) {
                 return Box::pin(async { Err("E_BROWSER_RATE_LIMITED") });
             }
             let nonce = self.nonce.lock().unwrap().clone();
+            let thinking_failed = matches!(self.mode, Mode::ThinkingAlways)
+                || (matches!(self.mode, Mode::ThinkingThenTool)
+                    && self.sends.load(Ordering::SeqCst) == 1)
+                || (matches!(self.mode, Mode::ThinkingThenUncertainSend)
+                    && self.sends.load(Ordering::SeqCst) == 1)
+                || (matches!(self.mode, Mode::ThinkingAfterStatusThenTool)
+                    && self.sends.load(Ordering::SeqCst) == 1
+                    && observation_number > 1);
             let text = match self.mode {
                 Mode::Checkpoint => json!({"protocol":"webbridge.tool.v1","turn_nonce":nonce,"kind":"checkpoint","summary":json!({"goal":"fixture","constraints":[],"changed_files":[],"decisions":[],"outstanding_work":[],"test_results":[],"unresolved_tool_ids":[]}).to_string()}).to_string(),
                 Mode::BadCheckpoint => json!({"protocol":"webbridge.tool.v1","turn_nonce":nonce,"kind":"checkpoint","summary":"unstructured summary"}).to_string(),
-                Mode::Tool => json!({"protocol":"webbridge.tool.v1","turn_nonce":nonce,"kind":"tool_calls","calls":[{"tool_key":"tool_0001","input":{"path":"source.rs"}}]}).to_string(),
+                Mode::Tool | Mode::ThinkingThenTool | Mode::ThinkingAfterStatusThenTool => json!({"protocol":"webbridge.tool.v1","turn_nonce":nonce,"kind":"tool_calls","calls":[{"tool_key":"tool_0001","input":{"path":"source.rs"}}]}).to_string(),
                 Mode::Invalid => "```json\n{}\n```".into(),
                 _ => json!({"protocol":"webbridge.tool.v1","turn_nonce":nonce,"kind":"final","text":"verified mock answer"}).to_string(),
             };
-            let generating =
-                matches!(self.mode, Mode::Waiting) || self.hold_generation.load(Ordering::SeqCst);
-            let summary = self.public_summary.lock().unwrap().clone();
+            let waiting_for_failure = matches!(self.mode, Mode::ThinkingAfterStatusThenTool)
+                && self.sends.load(Ordering::SeqCst) == 1
+                && observation_number == 1;
+            let generating = matches!(self.mode, Mode::Waiting)
+                || waiting_for_failure
+                || self.hold_generation.load(Ordering::SeqCst);
+            let summary = if waiting_for_failure {
+                vec!["Thinking".into()]
+            } else {
+                self.public_summary.lock().unwrap().clone()
+            };
             let completion_control = !generating && !matches!(self.mode, Mode::Stalled);
             let assistant = if matches!(self.mode, Mode::WrongAssistant) {
                 "old"
@@ -659,12 +788,16 @@ mod tests {
                 Ok(Observation {
                     user_id: Some("user-new".into()),
                     user_matches: true,
-                    assistant_id: Some(assistant.into()),
-                    text,
+                    assistant_id: (!thinking_failed).then(|| assistant.into()),
+                    text: if thinking_failed || waiting_for_failure {
+                        String::new()
+                    } else {
+                        text
+                    },
                     summary,
                     generating,
-                    generation_failed: false,
-                    completion_control,
+                    generation_failed: thinking_failed,
+                    completion_control: completion_control && !thinking_failed,
                     fenced_output: false,
                     selected_model: "Observed text".into(),
                     ambiguous: false,
@@ -679,16 +812,181 @@ mod tests {
             self.releases.fetch_add(1, Ordering::SeqCst);
             self.released.notify_one();
             let gate = self.release_gate.clone();
+            let fails = self.release_fails.load(Ordering::SeqCst);
             Box::pin(async move {
                 if let Some(gate) = gate {
                     gate.notified().await;
                 }
-                Ok(())
+                if fails {
+                    Err("E_BROWSER_RELEASE")
+                } else {
+                    Ok(())
+                }
             })
         }
     }
     fn input() -> TurnInput {
         TurnInput { request_id:"request-1".into(), session:SessionKey { installation:"i".into(),native_session:"s".into(),account_scope:"a".into(),workspace_scope:"w".into(),route:"webbridge/test".into(),epoch:0 }, bytes:json!({"model":"webbridge/test","input":"synthetic task","tools":[{"type":"function","name":"read_file","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}}]}).to_string().into_bytes() }
+    }
+
+    #[tokio::test]
+    async fn explicit_browser_failure_retries_with_new_page_inside_one_admission() {
+        let browser = MockBrowser::new(Mode::ThinkingThenTool);
+        let ledger = Ledger::in_memory();
+        let coordinator = Coordinator::new(ledger.clone(), browser.clone());
+        let delivery = coordinator
+            .execute(input(), CancellationToken::new())
+            .await
+            .unwrap();
+        let response: serde_json::Value = serde_json::from_str(&delivery.json).unwrap();
+        assert_eq!(response["output"].as_array().unwrap().len(), 1);
+        assert_eq!(response["output"][0]["type"], "function_call");
+        assert_eq!(browser.prepares.load(Ordering::SeqCst), 2);
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 2);
+        assert_eq!(browser.releases.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            ledger
+                .admit(&input().request_id, &input().session, &input().bytes)
+                .await
+                .unwrap(),
+            Admission::Existing(TurnState::Completed)
+        );
+        // A native reconnect replays the completed result without another Send.
+        assert_eq!(
+            coordinator
+                .execute(input(), CancellationToken::new())
+                .await
+                .unwrap()
+                .json,
+            delivery.json
+        );
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn explicit_browser_failure_has_bounded_attempts() {
+        let browser = MockBrowser::new(Mode::ThinkingAlways);
+        let ledger = Ledger::in_memory();
+        let coordinator = Coordinator::new(ledger.clone(), browser.clone());
+        assert_eq!(
+            coordinator
+                .execute(input(), CancellationToken::new())
+                .await
+                .err(),
+            Some("E_CHATGPT_THINKING_FAILED")
+        );
+        assert_eq!(browser.prepares.load(Ordering::SeqCst), 4);
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 4);
+        assert_eq!(browser.releases.load(Ordering::SeqCst), 4);
+        assert_eq!(
+            ledger
+                .admit(&input().request_id, &input().session, &input().bytes)
+                .await
+                .unwrap(),
+            Admission::Existing(TurnState::Failed)
+        );
+        assert_eq!(
+            coordinator
+                .execute(input(), CancellationToken::new())
+                .await
+                .err(),
+            Some("E_REQUEST_ALREADY_ADMITTED")
+        );
+    }
+
+    #[tokio::test]
+    async fn retry_preserves_already_streamed_public_status_as_one_response() {
+        let browser = MockBrowser::new(Mode::ThinkingAfterStatusThenTool);
+        let coordinator = Coordinator::new(Ledger::in_memory(), browser.clone());
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(64);
+        let delivery = coordinator
+            .execute_with_progress(input(), CancellationToken::new(), None, Some(sender))
+            .await
+            .unwrap();
+        let mut emitted = Vec::new();
+        while let Some(events) = receiver.recv().await {
+            emitted.extend(events);
+        }
+        assert!(!emitted.is_empty());
+        let completed: Vec<serde_json::Value> = delivery
+            .sse
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert!(completed.starts_with(&emitted));
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 2);
+        assert_eq!(browser.releases.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn retry_requires_confirmed_cleanup_of_failed_page() {
+        let browser = MockBrowser::new(Mode::ThinkingAlways);
+        browser.release_fails.store(true, Ordering::SeqCst);
+        let ledger = Ledger::in_memory();
+        let coordinator = Coordinator::new(ledger.clone(), browser.clone());
+        assert_eq!(
+            coordinator
+                .execute(input(), CancellationToken::new())
+                .await
+                .err(),
+            Some("E_WEB_CLEANUP_UNCONFIRMED")
+        );
+        assert_eq!(browser.prepares.load(Ordering::SeqCst), 1);
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            ledger
+                .admit(&input().request_id, &input().session, &input().bytes)
+                .await
+                .unwrap(),
+            Admission::Existing(TurnState::Failed)
+        );
+    }
+
+    #[tokio::test]
+    async fn cancellation_between_explicit_failure_and_retry_never_resends() {
+        let browser = MockBrowser::new(Mode::ThinkingAlways);
+        let released = browser.released.notified();
+        let ledger = Ledger::in_memory();
+        let coordinator = Coordinator::new(ledger.clone(), browser.clone());
+        let cancel = CancellationToken::new();
+        let token = cancel.clone();
+        let task = tokio::spawn(async move { coordinator.execute(input(), token).await });
+        released.await;
+        cancel.cancel();
+        assert_eq!(task.await.unwrap().err(), Some("E_CANCELLED"));
+        assert_eq!(browser.prepares.load(Ordering::SeqCst), 1);
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            ledger
+                .admit(&input().request_id, &input().session, &input().bytes)
+                .await
+                .unwrap(),
+            Admission::Existing(TurnState::Cancelled)
+        );
+    }
+
+    #[tokio::test]
+    async fn uncertain_retry_send_is_terminal_and_never_gets_a_third_send() {
+        let browser = MockBrowser::new(Mode::ThinkingThenUncertainSend);
+        let ledger = Ledger::in_memory();
+        let coordinator = Coordinator::new(ledger.clone(), browser.clone());
+        assert_eq!(
+            coordinator
+                .execute(input(), CancellationToken::new())
+                .await
+                .err(),
+            Some("E_SUBMISSION_UNCERTAIN")
+        );
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 2);
+        assert_eq!(browser.releases.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            ledger
+                .admit(&input().request_id, &input().session, &input().bytes)
+                .await
+                .unwrap(),
+            Admission::Existing(TurnState::SubmissionUncertain)
+        );
     }
 
     #[tokio::test]

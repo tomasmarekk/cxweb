@@ -44,8 +44,10 @@ impl TurnState {
                 // Failed is permitted only with positive evidence that Send
                 // was not clicked. Timeouts still require SubmissionUncertain.
                 | (Submitting, Submitted | Failed | SubmissionUncertain)
-                | (Submitted, Generating | Completed | Failed | Cancelled)
-                | (Generating, Completed | Failed | Cancelled)
+                // An explicitly failed browser response may be retried inside
+                // the same admitted request. Its next Send can be uncertain.
+                | (Submitted, Generating | Completed | Failed | Cancelled | SubmissionUncertain)
+                | (Generating, Completed | Failed | Cancelled | SubmissionUncertain)
         );
         if !valid {
             return Err(InvalidTransition);
