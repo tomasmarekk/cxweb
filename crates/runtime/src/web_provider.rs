@@ -119,6 +119,8 @@ pub struct CoordinatorProvider {
     #[cfg(windows)]
     automatic_context: bool,
     #[cfg(windows)]
+    compaction_directory: Option<std::path::PathBuf>,
+    #[cfg(windows)]
     native_fixture: Option<Arc<crate::native_fixture::Fixture>>,
     #[cfg(windows)]
     checkpoints: Option<(
@@ -161,6 +163,8 @@ impl CoordinatorProvider {
             context_budget: None,
             #[cfg(windows)]
             automatic_context: false,
+            #[cfg(windows)]
+            compaction_directory: None,
             #[cfg(windows)]
             native_fixture: None,
             #[cfg(windows)]
@@ -221,6 +225,50 @@ impl CoordinatorProvider {
     }
 
     #[cfg(windows)]
+    fn select_compaction(&self, mut input: TurnInput) -> Result<TurnInput, &'static str> {
+        let Some(directory) = &self.compaction_directory else {
+            return Ok(input);
+        };
+        let Some(choice) = crate::compaction_policy::load(directory)? else {
+            return Ok(input);
+        };
+        let catalog = self
+            .catalog(cxweb_codex_adapter::catalog_codec::CatalogCodec::CliModelInfoV1)
+            .or_else(|| {
+                self.catalog(cxweb_codex_adapter::catalog_codec::CatalogCodec::AppModelInfoV1)
+            })
+            .ok_or("E_COMPACTION_MODEL_UNAVAILABLE")?;
+        let allowed = self.routes.contains(&choice.model)
+            && catalog.entries.iter().any(|entry| {
+                entry["slug"] == choice.model
+                    && entry["supported_reasoning_levels"]
+                        .as_array()
+                        .is_some_and(|levels| {
+                            levels.iter().any(|level| level["effort"] == choice.effort)
+                        })
+            });
+        if !allowed {
+            return Err("E_COMPACTION_MODEL_UNAVAILABLE");
+        }
+        let mut payload: Value =
+            serde_json::from_slice(&input.bytes).map_err(|_| "E_INVALID_REQUEST")?;
+        payload["model"] = serde_json::json!(choice.model);
+        if !payload["reasoning"].is_object() {
+            payload["reasoning"] = serde_json::json!({});
+        }
+        payload["reasoning"]["effort"] = serde_json::json!(choice.effort);
+        input.request_id = digest(&[
+            b"compaction-choice-v1",
+            input.request_id.as_bytes(),
+            choice.model.as_bytes(),
+            choice.effort.as_bytes(),
+        ]);
+        input.session.route = choice.model;
+        input.bytes = serde_json::to_vec(&payload).map_err(|_| "E_INVALID_REQUEST")?;
+        Ok(input)
+    }
+
+    #[cfg(windows)]
     async fn compact_overflow(
         &self,
         payload: &Value,
@@ -259,11 +307,11 @@ impl CoordinatorProvider {
         ]);
         let delivery = crate::staged_compaction::execute(
             &self.coordinator,
-            TurnInput {
+            self.select_compaction(TurnInput {
                 request_id,
                 session,
                 bytes,
-            },
+            })?,
             cancellation,
             checkpoint,
             None,
@@ -303,17 +351,20 @@ impl CoordinatorProvider {
         })
         .await
         .map_err(|_| "E_CHECKPOINT_KEY")??;
-        self.with_checkpoints(
-            Arc::new(key),
-            cxweb_codex_adapter::catalog_codec::CatalogCodec::CliModelInfoV1,
-        )?
-        .with_context_budget(
-            cxweb_codex_adapter::context_budget::LocalContextBudget::new(
-                256 * 1024,
-                cxweb_codex_adapter::context_budget::MAX_PROMPT_BYTES,
-            )?,
-        )?
-        .with_automatic_context()
+        let mut provider = self
+            .with_checkpoints(
+                Arc::new(key),
+                cxweb_codex_adapter::catalog_codec::CatalogCodec::CliModelInfoV1,
+            )?
+            .with_context_budget(
+                cxweb_codex_adapter::context_budget::LocalContextBudget::new(
+                    256 * 1024,
+                    cxweb_codex_adapter::context_budget::MAX_PROMPT_BYTES,
+                )?,
+            )?
+            .with_automatic_context()?;
+        provider.compaction_directory = Some(directory.to_owned());
+        Ok(provider)
     }
 
     fn prepare_payload(
@@ -471,13 +522,20 @@ impl CoordinatorProvider {
         };
         let scope = serde_json::to_vec(&session).map_err(|_| "E_PROVIDER_SCOPE")?;
         let request_id = digest(&[&scope, identity.turn.as_bytes(), &identity_bytes]);
+        let input = TurnInput {
+            request_id,
+            session,
+            bytes,
+        };
+        #[cfg(windows)]
+        let input = if checkpoint.is_some() {
+            self.select_compaction(input)?
+        } else {
+            input
+        };
         let delivery = crate::staged_compaction::execute(
             &self.coordinator,
-            TurnInput {
-                request_id,
-                session,
-                bytes,
-            },
+            input,
             request.cancellation,
             checkpoint,
             request.progress,
@@ -710,6 +768,105 @@ mod tests {
         )
         .unwrap();
         (provider, browser)
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn selected_compaction_route_preserves_task_model_and_checkpoint_binding() {
+        use crate::gateway::WebTransport;
+        use cxweb_codex_adapter::catalog_codec::{CatalogCodec, CatalogRoute};
+        let directory = std::env::temp_dir().join(format!(
+            "cxweb-selected-compaction-{:032x}",
+            rand::random::<u128>()
+        ));
+        cxweb_platform::state::protected_directory(&directory).unwrap();
+        let (mut provider, browser) = provider_fixture(false);
+        provider.routes = Arc::new(
+            ["webbridge/test".to_owned(), "webbridge/fast".to_owned()]
+                .into_iter()
+                .collect(),
+        );
+        let provider = provider
+            .with_installed_context(&directory)
+            .await
+            .unwrap()
+            .with_catalog(
+                1,
+                vec![(
+                    CatalogCodec::CliModelInfoV1,
+                    vec![CatalogRoute {
+                        id: "webbridge/fast".into(),
+                        observed_label: "Fast fixture".into(),
+                        effort: "medium".into(),
+                        reasoning: vec![],
+                        coding: false,
+                    }],
+                )],
+            )
+            .unwrap();
+        let make = |payload, turn: &str| {
+            let (parts, _) = request("http://127.0.0.1:12345", turn, "context", false).into_parts();
+            WebRequest {
+                payload,
+                identity: WebIdentity::from_headers(&parts.headers),
+                compact: false,
+                cancellation: tokio_util::sync::CancellationToken::new(),
+                transport: WebTransport::Http,
+                progress: None,
+            }
+        };
+        let choice = crate::compaction_policy::Choice {
+            model: "webbridge/fast".into(),
+            effort: "medium".into(),
+        };
+        crate::compaction_policy::save(&directory, Some(&choice)).unwrap();
+        let payload = json!({"model":"webbridge/test", "reasoning":{"effort":"xhigh"}, "input":[
+            {"role":"user","content":"Preserve the task"}, {"role":"assistant","content":"history".repeat(60_000)}, {"type":"compaction_trigger"}]});
+        let response = provider
+            .execute(make(payload.clone(), "compact"))
+            .await
+            .unwrap();
+        let response: Value =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(response["model"], "webbridge/test");
+        assert!(browser.sends.load(Ordering::SeqCst) > 1);
+        assert!(
+            browser
+                .sessions
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|session| session.route == "webbridge/fast")
+        );
+        let checkpoint = response["output"][0].clone();
+        let continuation = json!({"model":"webbridge/test", "reasoning":{"effort":"medium"}, "input":[checkpoint,{"role":"user","content":"Continue"}]});
+        provider
+            .execute(make(continuation, "continue"))
+            .await
+            .unwrap();
+        assert_eq!(
+            browser.sessions.lock().unwrap().last().unwrap().route,
+            "webbridge/test"
+        );
+        let sends = browser.sends.load(Ordering::SeqCst);
+        let unavailable = crate::compaction_policy::Choice {
+            model: "webbridge/missing".into(),
+            effort: "medium".into(),
+        };
+        crate::compaction_policy::save(&directory, Some(&unavailable)).unwrap();
+        assert_eq!(
+            provider
+                .execute(make(payload, "invalid-choice"))
+                .await
+                .err(),
+            Some("E_COMPACTION_MODEL_UNAVAILABLE")
+        );
+        assert_eq!(browser.sends.load(Ordering::SeqCst), sends);
+        for entry in std::fs::read_dir(&directory).unwrap() {
+            std::fs::remove_file(entry.unwrap().path()).unwrap();
+        }
+        std::fs::remove_dir(directory).unwrap();
     }
 
     #[cfg(windows)]

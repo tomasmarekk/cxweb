@@ -91,6 +91,9 @@ impl BrowserRequest {
 /// Runtime-owned encryption bound to one qualified task and codec. The model
 /// cannot select a key, scope or ciphertext, and sealing precedes durable completion.
 pub(crate) trait CheckpointEncoder: Send + Sync {
+    fn response_model(&self) -> Option<&str> {
+        None
+    }
     fn staged(&self) -> bool {
         false
     }
@@ -621,7 +624,7 @@ impl Coordinator {
                     ) => codec.seal(summary, pending).and_then(|token| {
                         wire::encode_checkpoint(
                             &token,
-                            &request.model,
+                            codec.response_model().unwrap_or(&request.model),
                             &publication.response_id,
                             publication.created_at,
                         )

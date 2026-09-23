@@ -12,6 +12,8 @@ mod client_presence;
 #[cfg(windows)]
 mod compaction;
 #[cfg(windows)]
+pub mod compaction_policy;
+#[cfg(windows)]
 mod compaction_probe;
 #[cfg(windows)]
 pub mod config_journal;

@@ -58,6 +58,7 @@ window.cxwebInstalled = (() => {
     return wording[health.overall] || wording.unavailable;
   }
   function controls() {
+    node('installed-compaction-choice').disabled = pending || Boolean(confirmation) || !snapshot;
     for (const id of ['installed-copy-diagnostics', 'installed-export-diagnostics']) node(id).disabled = pending || Boolean(confirmation) || !snapshot;
     node('installed-refresh').disabled = pending || Boolean(confirmation);
     node('installed-choice').disabled = pending || Boolean(confirmation);
@@ -88,7 +89,9 @@ window.cxwebInstalled = (() => {
       E_INSTALLED_REMOVE: 'Removal could not be completed. Check status for the configuration or cleanup error.',
       E_INSTALLED_TIMEOUT: 'The operation is still unconfirmed. Check status; it was not submitted again.',
       E_INSTALLED_UNCONFIRMED: 'The runtime did not confirm the request. Check status before trying again.',
-      E_CONTROL_BUSY: 'Another operation is running. Check status before trying again.'
+      E_CONTROL_BUSY: 'Another operation is running. Check status before trying again.',
+      E_COMPACTION_MODEL_UNAVAILABLE: 'This compaction model or reasoning level is no longer available. Choose a currently verified option.',
+      E_COMPACTION_SETTINGS: 'The compaction preference could not be read or saved. Select an option again to repair it.'
     };
     const reasoningErrors = {
       E_REASONING_DISCOVERY: 'The expected reasoning choices could not be verified.',
@@ -113,6 +116,7 @@ window.cxwebInstalled = (() => {
     node('installed-components').replaceChildren();
     node('installed-reasoning').hidden = true;
     node('installed-reasoning-list').replaceChildren();
+    node('installed-compaction').hidden = true;
   }
   function render(value) {
     snapshot = value;
@@ -147,6 +151,20 @@ window.cxwebInstalled = (() => {
       details.append(row);
     }
     const families = value.reasoning || [];
+    node('installed-compaction').hidden = !families.length;
+    const compaction = node('installed-compaction-choice'); compaction.replaceChildren();
+    const inherited = document.createElement('option'); inherited.value = ''; inherited.textContent = 'Same as task (Pro can take longer)'; compaction.append(inherited);
+    for (const family of families) for (const level of family.levels) {
+      const option = document.createElement('option');
+      option.value = JSON.stringify({ model: family.model, effort: level.effort });
+      option.textContent = `${family.name} · ${level.description}`; compaction.append(option);
+    }
+    const savedCompaction = value.compaction ? JSON.stringify({ model: value.compaction.model, effort: value.compaction.effort }) : '';
+    if (savedCompaction && !Array.from(compaction.options).some(option => option.value === savedCompaction)) {
+      const missing = document.createElement('option'); missing.value = savedCompaction; missing.textContent = 'Saved choice is unavailable — select another option'; missing.disabled = true; compaction.append(missing);
+    }
+    compaction.value = savedCompaction;
+    node('installed-compaction-status').textContent = value.compaction_error ? 'The saved preference could not be read. Select an option to repair it.' : value.compaction ? 'Saved for new compactions.' : 'Summaries currently use the task model. Select Instant or Medium for faster summaries when available.';
     node('installed-reasoning').hidden = !families.length;
     const reasoning = node('installed-reasoning-list'); reasoning.replaceChildren();
     node('installed-reasoning-help').textContent = reasoningHelp;
@@ -239,6 +257,15 @@ window.cxwebInstalled = (() => {
     if (selected) await refresh();
   });
   node('installed-refresh').addEventListener('click', refresh);
+  node('installed-compaction-choice').addEventListener('change', async () => {
+    if (pending || confirmation || !snapshot) return;
+    const choice = node('installed-compaction-choice').value;
+    const receipt = { installation: selected, instance: snapshot.instance, choice: choice ? JSON.parse(choice) : null };
+    pending = true; clearTimer(); ++epoch; controls(); node('installed-error').hidden = true;
+    try { render(await invoke('installed_set_compaction', receipt)); }
+    catch (code) { render(snapshot); error(code); }
+    finally { pending = false; controls(); schedule(); }
+  });
   async function diagnostics(save) {
     if (pending || confirmation || !snapshot) return;
     const receipt = { installation: selected, instance: snapshot.instance };

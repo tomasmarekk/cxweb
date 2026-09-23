@@ -15,6 +15,7 @@ fn main() {
             "reset_test",
             "installed_list",
             "installed_check",
+            "installed_set_compaction",
             "installed_disconnect",
             "clear_local_session",
             "installed_retry_web",

@@ -8,6 +8,13 @@
     <button id="installed-refresh" class="primary">Check status</button>
     <button id="installed-retry" class="secondary" hidden disabled>Retry background verification</button>
     <button id="installed-login" class="secondary" hidden disabled>Open ChatGPT sign-in</button>
+    <section id="installed-compaction" class="native-form" hidden aria-labelledby="installed-compaction-heading">
+      <h2 id="installed-compaction-heading">Compaction model</h2>
+      <p>Choose a faster model for history summaries. Your task keeps its selected model and reasoning. This applies to new compactions; a summary already in progress continues with its original choice.</p>
+      <label for="installed-compaction-choice">Model used for summaries</label>
+      <select id="installed-compaction-choice" disabled></select>
+      <p id="installed-compaction-status" role="status" aria-live="polite"></p>
+    </section>
     <details><summary>Connection details</summary><div class="details-body native-form">
       <label for="installed-choice">Connected Codex home</label><select id="installed-choice"></select>
       <div id="installed-components" class="selectable"></div>

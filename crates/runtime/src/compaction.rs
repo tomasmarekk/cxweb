@@ -96,6 +96,9 @@ impl BoundCheckpoint {
 }
 
 impl CheckpointEncoder for BoundCheckpoint {
+    fn response_model(&self) -> Option<&str> {
+        Some(&self.session.route)
+    }
     fn restore_summary(&self, token: &str, pending: &[Value]) -> Result<String, &'static str> {
         let plaintext = self
             .codec

@@ -1,56 +1,39 @@
 Windows x64 preview of cxweb, connecting ChatGPT web models to Codex App and Codex CLI.
 
-Restores WebGPT model discovery in the updated Codex App backend
-`0.155.0-alpha.16`. Its catalog requests now receive the same reviewed
-ChatGPT Web model representation as the previous supported App build, while
-native Codex models remain available. Existing cxweb connections and the
-dedicated browser sign-in are preserved across this upgrade.
+This release adds a **Compaction model** selector directly in cxweb. Choose from
+the verified WebGPT models and reasoning levels offered by your account. For
+example, the task can stay on Pro while new context summaries use Medium.
+The preference is saved per connection and applies to both Codex App and CLI.
+The default, **Same as task**, preserves existing behavior. A running compaction
+finishes with its original choice; changing the preference does not cancel it.
+Unavailable saved choices are reported explicitly rather than silently replaced.
 
-Removes the five-minute answer inactivity timeout and the thirty-minute total
-generation timeout. Long Pro reasoning can continue until ChatGPT completes,
-the user cancels, or an actual browser/protocol error occurs. Cancellation still
-stops the owned request and never automatically resubmits it.
+Large context recovery splits historical content into bounded summarization
+stages and preserves pending tool calls and their results. Installed connections
+can recover an oversized request within that request instead of requiring another
+user turn after a context-budget error. Summaries remain bound to the original
+task, account, workspace and model even when another model performs compaction.
+A slow browser observation no longer imposes a five-second overall deadline on
+Pro generation. There is no absolute generation or inactivity timeout.
 
-Fixes ordinary installer upgrades disconnecting Codex and leaving cxweb at
-"Finish removal" with missing web models. Replacing an installed version now
-preserves the connection, private runtime and signed-in browser profile without
-requiring a special installer command-line flag. Real uninstall remains separate.
+Installer upgrades now stage the new daemon into existing private runtime
+installations while preserving configuration, login state and active processes.
+**If the installer requests a Windows restart, restart after your current work
+finishes to activate the staged runtime.** The installer does not kill ongoing
+model requests. A failed private-runtime update is reported explicitly.
 
-Fixes tool-envelope transport failures during real Codex App tasks. A single JSON
-code block preserves quoted MCP arguments, Windows paths and patch text through
-ChatGPT's renderer, including its nested code viewer. Envelope, nonce and tool
-schema validation remain enforced. Codex App cross-task context is also retained
-without treating it as an executed tool result.
+Verification includes Rust workspace tests, desktop behavior tests, an isolated
+Windows executable replacement and scheduler test, and installed App/CLI backend
+HTTP/WebSocket context-recovery fixtures. These fixtures verify transport and
+routing; they are not a claim that every live ChatGPT task is qualified. The
+long Pro compaction already in progress is not accelerated retroactively.
 
-Verified in an existing Codex App task: the web model discovered Chrome MCP tools,
-opened the requested page, read its snapshot and completed the answer.
+Download the `-setup.exe` installer. It includes the desktop app, background
+runtime, CLI support and WebView2 bootstrapper. No Rust, Node.js or Python is
+required to run it. An existing Chrome or Edge installation is used with a
+separate cxweb profile. Sign in through cxweb, then close the login window.
+Select **ChatGPT Web · Latest** and the desired reasoning effort in Codex.
+Codex executes tools and enforces its normal permissions.
 
-Manual releases now select the next unused version automatically. Release assets
-include provenance linking the packaged version to its source commit and CI run.
-
-This update closes the dedicated browser when disconnecting and adds optional
-local ChatGPT session removal in the app and uninstaller. Session removal refuses
-active profiles and connected Codex homes. Native forwarding for already open
-clients remains available after disconnecting.
-
-Download the `-setup.exe` installer. It installs for the current Windows user and
-includes the desktop app, background runtime, CLI support, and the WebView2
-bootstrapper. No Rust, Node.js, or Python installation is required to run it.
-This preview uses an existing Chrome or Edge installation with a dedicated cxweb
-profile. Sign in through cxweb; the login window can be closed afterward.
-
-Select **ChatGPT Web · Latest** in Codex and choose the available reasoning effort.
-The local Codex client executes tools and enforces its normal permissions.
-
-The installer is currently unsigned. The accompanying SHA-256 file checks download
-integrity; it does not replace publisher signing. This is a Windows preview, not a
-claim of complete V1 qualification or a signed automatic update channel.
-
-Uninstall restores cxweb-owned Codex configuration when web work is idle. It
-offers to clear the dedicated local ChatGPT profile; keeping the profile is the
-default. The same option is available in cxweb after all connections are removed.
-Codex sign-in and personal browser profiles are preserved; remote logout and
-ChatGPT server-side deletion are not performed. Native compatibility runtimes
-are retained for already open clients. Restart those clients after disconnecting.
-Unavailable hosts or active web work stop removal rather than leaving an
-unverified configuration behind.
+The installer is unsigned. The accompanying SHA-256 file verifies download
+integrity, not publisher identity. This is a preview, not complete V1 qualification.

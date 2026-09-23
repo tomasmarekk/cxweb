@@ -16,6 +16,8 @@ use std::{
 pub struct Target {
     pub installation: String,
     pub home: PathBuf,
+    #[serde(skip)]
+    directory: PathBuf,
 }
 #[derive(Debug, Serialize)]
 pub struct Inventory {
@@ -27,6 +29,8 @@ pub struct Snapshot {
     pub instance: String,
     pub health: Health,
     pub reasoning: Option<Vec<control_protocol::ReasoningFamily>>,
+    pub compaction: Option<crate::compaction_policy::Choice>,
+    pub compaction_error: Option<&'static str>,
 }
 
 #[cfg(test)]
@@ -70,7 +74,11 @@ fn inventory_for(root: &Path, uninstall: bool) -> Result<Inventory, &'static str
                 if !ids.insert(installation.clone()) {
                     return Err("E_INSTALLED_DUPLICATE");
                 }
-                result.targets.push(Target { installation, home });
+                result.targets.push(Target {
+                    installation,
+                    home,
+                    directory: entry.path(),
+                });
             }
             Ok(None) => (),
             Err(_) => {
@@ -216,16 +224,16 @@ async fn prepare_uninstall_targets(
     Ok(count)
 }
 
-async fn selected(installation: &str) -> Result<(), &'static str> {
+async fn selected(installation: &str) -> Result<Target, &'static str> {
     let found = list().await?;
     if !found.diagnostics.is_empty() {
         return Err("E_INSTALLED_JOURNAL");
     }
-    if found.targets.iter().any(|t| t.installation == installation) {
-        Ok(())
-    } else {
-        Err("E_INSTALLED_TARGET")
-    }
+    found
+        .targets
+        .into_iter()
+        .find(|t| t.installation == installation)
+        .ok_or("E_INSTALLED_TARGET")
 }
 
 async fn read(installation: &str) -> Result<Snapshot, &'static str> {
@@ -270,12 +278,40 @@ async fn read(installation: &str) -> Result<Snapshot, &'static str> {
         instance,
         health,
         reasoning,
+        compaction: None,
+        compaction_error: None,
     })
 }
 
 pub async fn check(installation: &str) -> Result<Snapshot, &'static str> {
-    selected(installation).await?;
-    read(installation).await
+    let target = selected(installation).await?;
+    let mut snapshot = read(installation).await?;
+    match crate::compaction_policy::load(&target.directory) {
+        Ok(choice) => snapshot.compaction = choice,
+        Err(code) => snapshot.compaction_error = Some(code),
+    }
+    Ok(snapshot)
+}
+
+pub async fn set_compaction(
+    installation: &str,
+    instance: &str,
+    choice: Option<crate::compaction_policy::Choice>,
+) -> Result<Snapshot, &'static str> {
+    let target = selected(installation).await?;
+    let snapshot = read(installation).await?;
+    if snapshot.instance != instance {
+        return Err("E_INSTALLED_CHANGED");
+    }
+    if let Some(choice) = &choice {
+        crate::compaction_policy::validate(choice, snapshot.reasoning.as_deref().unwrap_or(&[]))?;
+    }
+    tokio::task::spawn_blocking(move || {
+        crate::compaction_policy::save(&target.directory, choice.as_ref())
+    })
+    .await
+    .map_err(|_| "E_COMPACTION_SETTINGS")??;
+    check(installation).await
 }
 
 pub async fn disconnect(
@@ -285,13 +321,13 @@ pub async fn disconnect(
 ) -> Result<Snapshot, &'static str> {
     selected(installation).await?;
     mutate(installation, instance, Action::Remove(allow_active)).await?;
-    read(installation).await
+    check(installation).await
 }
 
 pub async fn retry_web(installation: &str, instance: String) -> Result<Snapshot, &'static str> {
     selected(installation).await?;
     mutate(installation, instance, Action::RetryWeb).await?;
-    read(installation).await
+    check(installation).await
 }
 
 pub async fn web_login(
@@ -301,7 +337,7 @@ pub async fn web_login(
 ) -> Result<Snapshot, &'static str> {
     selected(installation).await?;
     mutate(installation, instance, Action::WebLogin(finish)).await?;
-    read(installation).await
+    check(installation).await
 }
 
 pub async fn verify_compaction(
@@ -311,7 +347,7 @@ pub async fn verify_compaction(
 ) -> Result<Snapshot, &'static str> {
     selected(installation).await?;
     mutate(installation, instance, Action::VerifyCompaction(target)).await?;
-    read(installation).await
+    check(installation).await
 }
 
 pub async fn qualify_reasoning(
@@ -320,7 +356,7 @@ pub async fn qualify_reasoning(
 ) -> Result<Snapshot, &'static str> {
     selected(installation).await?;
     mutate(installation, instance, Action::QualifyReasoning).await?;
-    read(installation).await
+    check(installation).await
 }
 
 pub async fn qualify_protocol(
@@ -330,7 +366,7 @@ pub async fn qualify_protocol(
 ) -> Result<Snapshot, &'static str> {
     selected(installation).await?;
     mutate(installation, instance, Action::QualifyProtocol(target)).await?;
-    read(installation).await
+    check(installation).await
 }
 
 #[derive(Clone)]
@@ -484,6 +520,8 @@ mod tests {
             instance: "a".repeat(32),
             health: Health::default(),
             reasoning: None,
+            compaction: None,
+            compaction_error: None,
         };
         snapshot.health.active_web_turns = 1;
         assert_eq!(uninstall_idle(&snapshot), Err("E_WEB_ACTIVE"));
@@ -542,6 +580,7 @@ mod tests {
         unavailable.targets.push(Target {
             installation: format!("{:032x}", rand::random::<u128>()),
             home: root.clone(),
+            directory: root.clone(),
         });
         assert_eq!(
             prepare_uninstall_targets(unavailable, false).await,

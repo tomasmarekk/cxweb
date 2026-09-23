@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-installed-set-compaction"
+description = "Enables the installed_set_compaction command without any pre-configured scope."
+commands.allow = ["installed_set_compaction"]
+
+[[permission]]
+identifier = "deny-installed-set-compaction"
+description = "Denies the installed_set_compaction command without any pre-configured scope."
+commands.deny = ["installed_set_compaction"]

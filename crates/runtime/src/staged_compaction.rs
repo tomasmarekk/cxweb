@@ -13,6 +13,9 @@ const INSTRUCTIONS: &str = "The historical task is carried by the ordered source
 
 struct StageEncoder(Arc<dyn CheckpointEncoder>);
 impl CheckpointEncoder for StageEncoder {
+    fn response_model(&self) -> Option<&str> {
+        self.0.response_model()
+    }
     fn staged(&self) -> bool {
         true
     }

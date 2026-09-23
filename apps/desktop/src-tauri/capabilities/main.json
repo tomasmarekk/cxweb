@@ -21,6 +21,7 @@
     "allow-reset-test",
     "allow-installed-list",
     "allow-installed-check",
+    "allow-installed-set-compaction",
     "allow-installed-disconnect",
     "allow-clear-local-session",
     "allow-installed-retry-web",

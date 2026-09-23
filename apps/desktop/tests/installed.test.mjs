@@ -18,6 +18,7 @@ function panel(respond, clipboard = async () => {}) {
   const nodes = new Map(), calls = [], timers = new Map(), events = new Map();
   let focus = null;
   const element = id => ({
+    get options() { return this.children; },
     value: '', children: [], hidden: false, disabled: false, open: false,
     replaceChildren(...nodes) { this.children = nodes; }, append(...nodes) { this.children.push(...nodes); },
     classList: { toggle() {} }, addEventListener(event, action) { this[event] = action; },
@@ -569,4 +570,31 @@ test('a failed refresh clears earlier verified rows without retrying or starting
   assert.equal(ui.nodes.get('installed-chatgpt').textContent, 'Unverified');
   assert.equal(ui.nodes.get('installed-remove').disabled, true);
   assert.equal(ui.calls.length, 3);
+});
+
+
+test('compaction picker saves a verified model and effort independently, resets, and restores on failure', async () => {
+  let saved = null, fail = false;
+  const state = () => ({ ...health('ready', 1), compaction: saved, reasoning: [{model:'webbridge/latest',name:'ChatGPT Web Latest',levels:[{effort:'medium',description:'Medium'},{effort:'xhigh',description:'Pro'}]}] });
+  const ui = panel(async (command, params) => {
+    if (command === 'installed_list') return list();
+    if (command === 'installed_set_compaction') { if (fail) throw 'E_COMPACTION_SETTINGS'; saved = params.choice; }
+    return state();
+  });
+  await flush();
+  const picker = ui.nodes.get('installed-compaction-choice');
+  assert.equal(ui.nodes.get('installed-compaction').hidden, false);
+  assert.equal(picker.options.length, 3);
+  assert.equal(picker.disabled, false, 'preference may be changed during a turn for the next compaction');
+  picker.value = JSON.stringify({model:'webbridge/latest',effort:'medium'});
+  await picker.change();
+  assert.equal(saved.effort, 'medium');
+  assert.equal(ui.calls.at(-1).command, 'installed_set_compaction');
+  assert.equal(ui.calls.at(-1).params.instance, 'b'.repeat(32));
+  assert.match(ui.nodes.get('installed-compaction-status').textContent, /Saved for new compactions/);
+  picker.value = ''; await picker.change(); assert.equal(saved, null);
+  fail = true; picker.value = JSON.stringify({model:'webbridge/latest',effort:'xhigh'});
+  await picker.change(); assert.equal(picker.value, '');
+  assert.equal(ui.nodes.get('installed-error').hidden, false);
+  assert.ok(!ui.calls.some(call => /login|disconnect|qualify/.test(call.command)));
 });

@@ -57,6 +57,16 @@ mod desktop {
             .map_err(str::to_owned)
     }
     #[tauri::command]
+    async fn installed_set_compaction(
+        installation: String,
+        instance: String,
+        choice: Option<cxweb_runtime::compaction_policy::Choice>,
+    ) -> Result<cxweb_runtime::installed_control::Snapshot, String> {
+        cxweb_runtime::installed_control::set_compaction(&installation, &instance, choice)
+            .await
+            .map_err(str::to_owned)
+    }
+    #[tauri::command]
     async fn installed_diagnostics(
         installation: String,
         instance: String,
@@ -324,6 +334,7 @@ mod desktop {
                 installed_list,
                 clear_local_session,
                 installed_check,
+                installed_set_compaction,
                 installed_disconnect,
                 installed_qualify_reasoning,
                 installed_retry_web,
