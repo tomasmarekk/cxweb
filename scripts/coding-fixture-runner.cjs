@@ -33,7 +33,10 @@ function check(source, cases) {
   for (const [a, b, expected] of cases) {
     try {
       const actual = script.runInNewContext({ a, b }, {
-        timeout: 25, contextCodeGeneration: { strings: false, wasm: false },
+        // VM deadlines include host scheduling delays. A 25 ms watchdog
+        // intermittently rejected simple reference arithmetic on Windows CI.
+        // Keep a bounded watchdog; source and case limits remain unchanged.
+        timeout: 250, contextCodeGeneration: { strings: false, wasm: false },
       });
       if (typeof actual === 'number' && Object.is(actual, expected)) passed++;
     } catch (error) {
