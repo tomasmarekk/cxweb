@@ -141,4 +141,78 @@ foreach ($decision in @(
     if ((Test-Path -LiteralPath $receipt) -ne $decision.Success) { throw "Replacement decision failed: $($decision.Name)" }
     Write-Output "PASS $($decision.Name)"
 }
+# Use versioned harmless executables to exercise the actual desktop payload
+# macro, including replacing a mapped old image. No real app is started.
+$payloadTemplate = @'
+Unicode true
+RequestExecutionLevel user
+SilentInstall silent
+Name "cxweb payload fixture"
+VIProductVersion "@VERSION@.0.0.0"
+VIAddVersionKey "FileVersion" "@VERSION@.0.0.0"
+OutFile "@OUT@"
+Section
+  Sleep 30000
+SectionEnd
+'@
+foreach ($version in @(1, 2)) {
+    $source = $payloadTemplate.Replace('@VERSION@', [string]$version).Replace('@OUT@', (Join-Path $fixtureRoot "payload-$version.exe"))
+    $source | Set-Content -LiteralPath (Join-Path $fixtureRoot "payload-$version.nsi")
+    & $MakeNsis /V1 (Join-Path $fixtureRoot "payload-$version.nsi")
+    if ($LASTEXITCODE -ne 0) { throw 'Versioned payload fixture compilation failed.' }
+}
+$payloadInstaller = @'
+Unicode true
+RequestExecutionLevel user
+SilentInstall silent
+!define MAINBINARYNAME "desktop-fixture"
+!define MAINBINARYSRCPATH "@PAYLOAD@"
+!include "@MACRO@"
+Name "cxweb desktop replacement fixture"
+OutFile "@OUT@"
+InstallDir "@DIR@"
+Section
+  !insertmacro CXWEB_INSTALL_DESKTOP
+  FileOpen $0 "$INSTDIR\verified.txt" w
+  FileWrite $0 "verified"
+  FileClose $0
+SectionEnd
+'@
+'fn main() { std::thread::sleep(std::time::Duration::from_secs(30)); }' | Set-Content -LiteralPath (Join-Path $fixtureRoot 'mapped.rs')
+rustc --edition 2024 --crate-name mapped_fixture (Join-Path $fixtureRoot 'mapped.rs') -o (Join-Path $fixtureRoot 'mapped.exe')
+if ($LASTEXITCODE -ne 0) { throw 'Mapped-image fixture compilation failed.' }
+foreach ($name in @('fresh-desktop', 'old-desktop', 'mapped-desktop', 'locked-desktop', 'blocked-desktop')) {
+    $caseDir = Join-Path $fixtureRoot $name
+    New-Item -ItemType Directory -Path $caseDir | Out-Null
+    $desktop = Join-Path $caseDir 'desktop-fixture.exe'
+    if ($name -in @('old-desktop', 'locked-desktop')) { Copy-Item -LiteralPath (Join-Path $fixtureRoot 'payload-1.exe') -Destination $desktop }
+    if ($name -eq 'mapped-desktop') { Copy-Item -LiteralPath (Join-Path $fixtureRoot 'mapped.exe') -Destination $desktop }
+    if ($name -eq 'blocked-desktop') { New-Item -ItemType Directory -Path $desktop | Out-Null }
+    $output = Join-Path $caseDir 'installer.exe'
+    $source = $payloadInstaller.Replace('@PAYLOAD@', (Join-Path $fixtureRoot 'payload-2.exe')).Replace('@MACRO@', (Join-Path $repoRoot 'packaging/windows/desktop-payload.nsh')).Replace('@OUT@', $output).Replace('@DIR@', $caseDir)
+    $source | Set-Content -LiteralPath (Join-Path $caseDir 'installer.nsi')
+    & $MakeNsis /V1 (Join-Path $caseDir 'installer.nsi')
+    if ($LASTEXITCODE -ne 0) { throw "Payload fixture compilation failed: $name" }
+    $mapped = $null
+    try {
+        if ($name -in @('mapped-desktop', 'locked-desktop')) {
+            $mapped = Start-Process -FilePath $desktop -WindowStyle Hidden -PassThru
+            Start-Sleep -Milliseconds 300
+            if ($mapped.HasExited) { throw 'Mapped-image fixture exited before replacement.' }
+        }
+        $process = Start-Process -FilePath $output -WindowStyle Hidden -PassThru
+        if (-not $process.WaitForExit(15000)) { throw "Payload fixture timed out: $name" }
+        $process.Refresh()
+        $verified = Test-Path -LiteralPath (Join-Path $caseDir 'verified.txt')
+        if ($name -in @('blocked-desktop', 'locked-desktop')) {
+            if ($verified -or $process.ExitCode -eq 0) { throw 'Blocked desktop was falsely reported installed.' }
+        } else {
+            if (-not $verified -or (Get-FileHash -LiteralPath $desktop).Hash -ne (Get-FileHash -LiteralPath (Join-Path $fixtureRoot 'payload-2.exe')).Hash) { throw "Desktop payload differs: $name" }
+            if ($mapped -and $mapped.HasExited) { throw 'Replacement terminated the old mapped image.' }
+        }
+        Write-Output "PASS $name"
+    } finally {
+        if ($mapped -and -not $mapped.HasExited) { $mapped | Stop-Process }
+    }
+}
 Write-Output "Preserved fixture evidence: $fixtureRoot"

@@ -1,6 +1,7 @@
 ; The installed desktop payload is separate from the private supervised host.
 ; Keep its journal and compatibility listener. Session removal is a separate opt-in.
 !include "FileFunc.nsh"
+!include "${__FILEDIR__}\desktop-payload.nsh"
 !macro NSIS_HOOK_POSTINSTALL
   nsExec::ExecToStack '"$INSTDIR\cxweb.exe" stage-runtime-update'
   Pop $0

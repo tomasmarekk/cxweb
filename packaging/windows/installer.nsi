@@ -649,8 +649,8 @@ Section Install
 
   !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
 
-  ; Copy main executable
-  File "${MAINBINARYSRCPATH}"
+  ; Publish and verify the complete desktop image before installing resources.
+  !insertmacro CXWEB_INSTALL_DESKTOP
 
   ; Copy resources
   {{#each resources_dirs}}
