@@ -91,6 +91,9 @@ impl BrowserRequest {
 /// Runtime-owned encryption bound to one qualified task and codec. The model
 /// cannot select a key, scope or ciphertext, and sealing precedes durable completion.
 pub(crate) trait CheckpointEncoder: Send + Sync {
+    fn staged(&self) -> bool {
+        false
+    }
     fn seal(&self, summary: &str, pending: &[serde_json::Value]) -> Result<String, &'static str>;
     fn restore_summary(
         &self,
@@ -207,6 +210,11 @@ impl Coordinator {
             CanonicalRequest::decode_compaction(&input.bytes)?
         } else {
             CanonicalRequest::decode(&input.bytes)?
+        };
+        let request = if checkpoint.as_ref().is_some_and(|encoder| encoder.staged()) {
+            request.with_staged_compaction()?
+        } else {
+            request
         };
         if request.model != input.session.route {
             return Err("E_MODEL_FIDELITY");
