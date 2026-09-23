@@ -1169,7 +1169,10 @@ impl ManagedBrowser {
             };
             let mut surface = result?;
             let mut switcher_account = None;
-            let switcher_deadline = Instant::now() + Duration::from_secs(2);
+            // Account rows are loaded asynchronously after the submenu portal
+            // mounts. Wait for delayed rows rather than accepting an empty
+            // portal as evidence of the account binding.
+            let switcher_deadline = Instant::now() + Duration::from_secs(10);
             let mut hovered = false;
             loop {
                 if let Ok(value) = self.dom(page, include_str!("dom/account_switcher.js"), vec![])
@@ -3298,7 +3301,7 @@ mod tests {
             .call("Page.getFrameTree", json!({}), Some(&page.session))
             .unwrap();
         browser.call("Page.setDocumentContent", json!({"frameId": frame["frameTree"]["frame"]["id"], "html": include_str!("dom/fixture.html")}), Some(&page.session)).unwrap();
-        browser.dom(&page, "function () { for (const node of document.querySelectorAll('[data-workspace-id]')) node.removeAttribute('data-workspace-id'); const email = document.createElement('span'); email.textContent = 'fixture@example.invalid'; document.getElementById('account-menu').append(email); return true; }", vec![]).unwrap();
+        browser.dom(&page, "function () { window.fixtureAccountRowsDelay = 3000; for (const node of document.querySelectorAll('[data-workspace-id]')) node.removeAttribute('data-workspace-id'); const email = document.createElement('span'); email.textContent = 'fixture@example.invalid'; document.getElementById('account-menu').append(email); return true; }", vec![]).unwrap();
         let scope = browser.account_scope(&page).unwrap();
         assert_eq!(scope.account.as_deref(), Some("fixture@example.invalid"));
         assert!(scope.workspace.is_none());
@@ -3306,6 +3309,12 @@ mod tests {
         assert!(scope.diagnostic.settings_opened);
         assert!(scope.diagnostic.settings_account_selected);
         assert_eq!(scope.diagnostic.settings_account_candidates, 1);
+        // A mounted but empty submenu must be observed again after its rows
+        // hydrate, even when this takes longer than the former two seconds.
+        assert_eq!(
+            scope.diagnostic.switcher.as_ref().unwrap().selected_items,
+            1
+        );
         // Missing corroboration must still fail; observing an email alone is
         // never enough to claim a verified personal workspace.
         assert!(!scope.default_workspace);

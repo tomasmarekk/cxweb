@@ -154,6 +154,16 @@ impl Fixture {
                             .is_some_and(|s| s.starts_with("wbr1:") && s.len() > 5)
                 }
                 3 => final_text(item, &self.marker),
+                4 if self.test => {
+                    item["type"] == "custom_tool_call"
+                        && item["name"] == "apply_patch"
+                        && namespace(item)
+                        && item["input"]
+                            .as_str()
+                            .is_some_and(|s| s == self.patch() || s == self.patch() + "\n")
+                }
+                5 if self.test => self.test_delivery(item),
+                6 if self.test => final_text(item, TEST_PASSED),
                 _ => false,
             }
         } else {
@@ -664,13 +674,27 @@ mod tests {
     fn public_reasoning_preserves_exact_checkpoint_action_sequence() {
         let mut fixture = fixture();
         fixture.checkpoint = true;
+        fixture.test = true;
         let items = [
             read(json!({"cmd":READ,"login":false})),
             json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":READ_ACK}]}),
             json!({"type":"compaction","encrypted_content":"wbr1:synthetic"}),
             json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":fixture.marker}]}),
+            json!({"type":"custom_tool_call","name":"apply_patch","input":fixture.patch()}),
+            read(json!({"cmd":TEST,"login":false})),
+            json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":TEST_PASSED}]}),
         ];
         for (index, item) in items.into_iter().enumerate() {
+            if index == 4 {
+                assert!(
+                    fixture
+                        .check_delivery(&response(
+                            "premature-test",
+                            read(json!({"cmd":TEST,"login":false}))
+                        ))
+                        .is_err()
+                );
+            }
             let id = format!("response-{index}");
             let reasoning = json!({"type":"reasoning","id":format!("{id}_reasoning"),"summary":[{"type":"summary_text","text":"Thinking"}]});
             let payload =
@@ -678,7 +702,7 @@ mod tests {
             fixture.check_delivery(&payload).unwrap();
             fixture.check_delivery(&payload).unwrap();
         }
-        assert_eq!(fixture.deliveries.lock().unwrap().len(), 4);
+        assert_eq!(fixture.deliveries.lock().unwrap().len(), 7);
     }
 
     #[test]

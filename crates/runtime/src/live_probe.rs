@@ -38,6 +38,7 @@ struct ProbeProvider {
     context_refusals: Arc<AtomicUsize>,
     checkpoint_continuations: Arc<AtomicUsize>,
     checkpoint_plaintext_history: Arc<AtomicUsize>,
+    first_checkpoint_plaintext_history: Arc<AtomicUsize>,
 }
 impl crate::gateway::WebProvider for ProbeProvider {
     fn validate_warmup(&self, request: &crate::gateway::WebRequest) -> Result<(), &'static str> {
@@ -58,7 +59,8 @@ impl crate::gateway::WebProvider for ProbeProvider {
                         .as_str()
                         .is_some_and(|s| s.starts_with("wbr1:"))
             }) {
-                self.checkpoint_continuations
+                let previous = self
+                    .checkpoint_continuations
                     .fetch_add(1, Ordering::Relaxed);
                 if input.iter().any(|item| {
                     item["role"] == "assistant"
@@ -74,6 +76,10 @@ impl crate::gateway::WebProvider for ProbeProvider {
                 }) {
                     self.checkpoint_plaintext_history
                         .fetch_add(1, Ordering::Relaxed);
+                    if previous == 0 {
+                        self.first_checkpoint_plaintext_history
+                            .fetch_add(1, Ordering::Relaxed);
+                    }
                 }
             }
         }
@@ -528,6 +534,7 @@ async fn run_probe(
     let context_refusals = Arc::new(AtomicUsize::new(0));
     let checkpoint_continuations = Arc::new(AtomicUsize::new(0));
     let checkpoint_plaintext_history = Arc::new(AtomicUsize::new(0));
+    let first_checkpoint_plaintext_history = Arc::new(AtomicUsize::new(0));
     let provider: Arc<dyn crate::gateway::WebProvider> = Arc::new(ProbeProvider {
         provider,
         failures: failures.clone(),
@@ -539,6 +546,7 @@ async fn run_probe(
         context_refusals: context_refusals.clone(),
         checkpoint_continuations: checkpoint_continuations.clone(),
         checkpoint_plaintext_history: checkpoint_plaintext_history.clone(),
+        first_checkpoint_plaintext_history: first_checkpoint_plaintext_history.clone(),
     });
     let gateway = Gateway::new(
         listener
@@ -604,7 +612,7 @@ async fn run_probe(
     }
     let diagnostic = driver.diagnostic().await?;
     Ok(
-        json!({"live":true,"route":route,"browser_label":label,"native_upstream":"local rejection stub","routing_installed":false,"diagnostic":diagnostic,"optional_web_search_requests":search_requests.load(Ordering::Relaxed),"output_formats":output_formats.lock().map_err(|_| "E_PROBE_STATE")?.clone(),"failures":failures.lock().map_err(|_| "E_PROBE_STATE")?.clone(),"websocket_enabled":websocket,"websocket_upgrades":socket_upgrades.load(Ordering::Relaxed),"native_websocket_frames":socket_frames.load(Ordering::Relaxed),"websocket_requests":websocket_requests.load(Ordering::Relaxed),"websocket_warmups":warmups.load(Ordering::Relaxed),"context_refusals":context_refusals.load(Ordering::Relaxed),"compaction_requests":compaction_requests.load(Ordering::Relaxed),"checkpoint_continuations":checkpoint_continuations.load(Ordering::Relaxed),"checkpoint_continuations_with_plaintext_assistant_or_tools":checkpoint_plaintext_history.load(Ordering::Relaxed)}),
+        json!({"live":true,"route":route,"browser_label":label,"native_upstream":"local rejection stub","routing_installed":false,"diagnostic":diagnostic,"optional_web_search_requests":search_requests.load(Ordering::Relaxed),"output_formats":output_formats.lock().map_err(|_| "E_PROBE_STATE")?.clone(),"failures":failures.lock().map_err(|_| "E_PROBE_STATE")?.clone(),"websocket_enabled":websocket,"websocket_upgrades":socket_upgrades.load(Ordering::Relaxed),"native_websocket_frames":socket_frames.load(Ordering::Relaxed),"websocket_requests":websocket_requests.load(Ordering::Relaxed),"websocket_warmups":warmups.load(Ordering::Relaxed),"context_refusals":context_refusals.load(Ordering::Relaxed),"compaction_requests":compaction_requests.load(Ordering::Relaxed),"checkpoint_continuations":checkpoint_continuations.load(Ordering::Relaxed),"checkpoint_continuations_with_plaintext_assistant_or_tools":checkpoint_plaintext_history.load(Ordering::Relaxed),"first_checkpoint_continuation_with_plaintext_assistant_or_tools":first_checkpoint_plaintext_history.load(Ordering::Relaxed)}),
     )
 }
 

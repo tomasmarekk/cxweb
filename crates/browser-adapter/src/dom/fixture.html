@@ -31,7 +31,7 @@ document.querySelector('#fixture-scope-trigger').onmouseenter = event => {
     event.target.setAttribute('aria-expanded', 'true');
     submenu.hidden = false;
     // A mounted portal can precede its visible account rows.
-    setTimeout(() => { for (const child of submenu.children) child.hidden = false; }, 250);
+    setTimeout(() => { for (const child of submenu.children) child.hidden = false; }, window.fixtureAccountRowsDelay ?? 250);
   }, 60);
 };
 document.querySelector('#fixture-scope-menu').onclick = () => { throw new Error('The account observer must never select a workspace'); };

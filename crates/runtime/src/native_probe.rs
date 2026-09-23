@@ -42,13 +42,20 @@ pub struct CheckpointTarget {
 struct ToolCheckpointEvidence {
     read_verified: bool,
     recall_verified: bool,
+    #[serde(default)]
+    post_compaction_tools_verified: bool,
 }
-fn save_tool_checkpoint_evidence(cwd: &Path, recall_verified: bool) -> Result<(), &'static str> {
+fn save_tool_checkpoint_evidence(
+    cwd: &Path,
+    recall_verified: bool,
+    post_compaction_tools_verified: bool,
+) -> Result<(), &'static str> {
     std::fs::write(
         cwd.join("tool-checkpoint-progress.json"),
         serde_json::to_vec(&ToolCheckpointEvidence {
             read_verified: true,
             recall_verified,
+            post_compaction_tools_verified,
         })
         .map_err(|_| "E_NATIVE_PROBE_REPORT")?,
     )
@@ -87,6 +94,7 @@ pub(crate) async fn qualify_installed_checkpoint(
         let mut fixture =
             crate::native_fixture::Fixture::new(directory.join("workspace"), marker.clone());
         fixture.checkpoint = true;
+        fixture.test = true;
         Arc::new(fixture)
     });
     let descriptor = directory.join("runtime/connection.json");
@@ -140,6 +148,7 @@ pub(crate) async fn qualify_installed_checkpoint(
     if selected.tool_result {
         report["native_tools_executed"] = Value::Null;
         report["tool_result_recall_verified"] = json!(false);
+        report["post_compaction_tools_verified"] = json!(false);
         if let Ok(bytes) =
             tokio::fs::read(directory.join("workspace/tool-checkpoint-progress.json")).await
             && let Ok(progress) = serde_json::from_slice::<ToolCheckpointEvidence>(&bytes)
@@ -149,6 +158,10 @@ pub(crate) async fn qualify_installed_checkpoint(
             }
             report["tool_result_recall_verified"] =
                 json!(progress.recall_verified && client.is_ok());
+            if progress.post_compaction_tools_verified && client.is_ok() {
+                report["native_tools_executed"] = json!(3);
+                report["post_compaction_tools_verified"] = json!(true);
+            }
         }
     }
     report["automatic_requested"] = json!(selected.automatic);
@@ -172,6 +185,7 @@ pub(crate) async fn qualify_installed_checkpoint(
             "failures":runtime["failures"],"context_refusals":runtime["context_refusals"],"compaction_requests":runtime["compaction_requests"],
             "checkpoint_continuations":runtime["checkpoint_continuations"],
             "checkpoint_continuations_with_plaintext_assistant_or_tools":runtime["checkpoint_continuations_with_plaintext_assistant_or_tools"],
+            "first_checkpoint_continuation_with_plaintext_assistant_or_tools":runtime["first_checkpoint_continuation_with_plaintext_assistant_or_tools"],
             "websocket_requests":runtime["websocket_requests"],"native_websocket_frames":runtime["native_websocket_frames"]});
         client?;
         if selected.automatic {
@@ -179,8 +193,10 @@ pub(crate) async fn qualify_installed_checkpoint(
             if runtime["context_refusals"] != 1 { return Err("E_NATIVE_PROBE_AUTOMATIC_REFUSAL"); }
         }
         if runtime["failures"] != json!([]) || runtime["compaction_requests"] != 1
-            || runtime["checkpoint_continuations"] != 1
-            || runtime["checkpoint_continuations_with_plaintext_assistant_or_tools"] != 0
+            || runtime["checkpoint_continuations"] != if selected.tool_result { 4 } else { 1 }
+            || runtime["first_checkpoint_continuation_with_plaintext_assistant_or_tools"] != 0
+            || (!selected.tool_result && runtime["checkpoint_continuations_with_plaintext_assistant_or_tools"] != 0)
+            || (selected.tool_result && report["post_compaction_tools_verified"] != true)
             || runtime["native_websocket_frames"] != 0
             || (selected.websocket && runtime["websocket_requests"].as_u64().unwrap_or(0) < 3) {
             return Err("E_NATIVE_PROBE_CHECKPOINT_TRANSPORT");
@@ -687,11 +703,13 @@ impl Client {
                     let fixture = self.fixture.as_ref().ok_or("E_NATIVE_PROBE_ACTION")?;
                     verify_checkpoint_read(fixture, &self.observations, &thread, turn)?;
                     verify_checkpoint_file(fixture)?;
-                    save_tool_checkpoint_evidence(cwd, false)?;
+                    save_tool_checkpoint_evidence(cwd, false, false)?;
                     let expected = fixture.marker.clone();
                     self.verify_checkpoint(&thread, &expected).await?;
                     verify_checkpoint_file(self.fixture.as_ref().ok_or("E_NATIVE_PROBE_ACTION")?)?;
-                    return save_tool_checkpoint_evidence(cwd, true);
+                    save_tool_checkpoint_evidence(cwd, true, false)?;
+                    self.verify_post_checkpoint_tools(&thread).await?;
+                    return save_tool_checkpoint_evidence(cwd, true, true);
                 }
             } else if endpoint.verify_checkpoint {
                 if let Some(seed) = checkpoint_seed(&self.observations, &thread, turn)? {
@@ -709,6 +727,39 @@ impl Client {
                     }
                 }
                 return Ok(());
+            }
+            let message = self.next().await?;
+            self.observe(message).await?;
+        }
+    }
+
+    async fn verify_post_checkpoint_tools(&mut self, thread: &str) -> Result<(), &'static str> {
+        self.observations.clear();
+        self.turn = None;
+        let prompt = format!(
+            "Use the apply_patch custom tool exactly once to add probe-output.txt containing the complete line remembered from the checkpoint followed by a newline. Wait for the patch result, then use exec_command with cmd exactly {:?}, login=false and the current working directory. Wait for the actual test result. Return exactly {:?} only after the test exits with code 0 and prints that text. Do not read the input again, run other commands, change other files, request elevated permissions or access the network.",
+            crate::native_fixture::TEST,
+            crate::native_fixture::TEST_PASSED
+        );
+        let started = self.rpc(9, "turn/start", json!({"threadId":thread,"input":[{"type":"text","text":prompt,"text_elements":[]}]})).await?;
+        let turn = started["turn"]["id"].as_str().ok_or("E_NATIVE_PROBE_RPC")?;
+        if self.turn.as_deref().is_some_and(|old| old != turn) {
+            return Err("E_NATIVE_PROBE_ACTION");
+        }
+        self.turn = Some(turn.into());
+        loop {
+            if text_complete(
+                &self.observations,
+                thread,
+                turn,
+                crate::native_fixture::TEST_PASSED,
+            )? {
+                return verify_post_checkpoint_tools(
+                    self.fixture.as_ref().ok_or("E_NATIVE_PROBE_ACTION")?,
+                    &self.observations,
+                    thread,
+                    turn,
+                );
             }
             let message = self.next().await?;
             self.observe(message).await?;
@@ -1106,6 +1157,52 @@ fn test_result(fixture: &crate::native_fixture::Fixture, item: &Value, passed: b
         })
 }
 
+fn verify_post_checkpoint_tools(
+    fixture: &crate::native_fixture::Fixture,
+    events: &[Value],
+    thread: &str,
+    turn: &str,
+) -> Result<(), &'static str> {
+    let mut tools = Vec::new();
+    for event in events {
+        if event["method"] == "item/completed"
+            && matches!(
+                event["params"]["item"]["type"].as_str(),
+                Some("commandExecution" | "fileChange")
+            )
+        {
+            if event["params"]["threadId"] != thread || event["params"]["turnId"] != turn {
+                return Err("E_NATIVE_PROBE_ACTION");
+            }
+            tools.push(&event["params"]["item"]);
+        }
+    }
+    let [patch, test] = tools.as_slice() else {
+        return Err("E_NATIVE_PROBE_ACTION");
+    };
+    if patch["type"] != "fileChange"
+        || patch["status"] != "completed"
+        || !fixture.patch_changes(patch)
+        || !test_result(fixture, test, true)
+    {
+        return Err("E_NATIVE_PROBE_ACTION");
+    }
+    verify_fixture_files(fixture)
+}
+
+fn verify_fixture_files(fixture: &crate::native_fixture::Fixture) -> Result<(), &'static str> {
+    for name in ["probe-input.txt", "probe-output.txt"] {
+        let path = fixture.cwd.join(name);
+        let _guard = TargetPathGuard::capture(&path, false).map_err(|_| "E_NATIVE_PROBE_ACTION")?;
+        if std::fs::read(&path).map_err(|_| "E_NATIVE_PROBE_ACTION")?
+            != format!("{}\n", fixture.marker).as_bytes()
+        {
+            return Err("E_NATIVE_PROBE_ACTION");
+        }
+    }
+    Ok(())
+}
+
 fn verify_tools(
     fixture: &crate::native_fixture::Fixture,
     events: &[Value],
@@ -1178,16 +1275,7 @@ fn verify_tools(
     {
         return Err("E_NATIVE_PROBE_ACTION");
     }
-    for name in ["probe-input.txt", "probe-output.txt"] {
-        let path = fixture.cwd.join(name);
-        let _guard = TargetPathGuard::capture(&path, false).map_err(|_| "E_NATIVE_PROBE_ACTION")?;
-        if std::fs::read(&path).map_err(|_| "E_NATIVE_PROBE_ACTION")?
-            != format!("{}\n", fixture.marker).as_bytes()
-        {
-            return Err("E_NATIVE_PROBE_ACTION");
-        }
-    }
-    Ok(())
+    verify_fixture_files(fixture)
 }
 
 #[cfg(test)]
@@ -1496,6 +1584,23 @@ mod tests {
             json!({"type":"commandExecution","status":"completed","exitCode":0,"command":crate::native_fixture::TEST,"cwd":directory,"aggregatedOutput":crate::native_fixture::TEST_PASSED}),
         );
         assert_eq!(
+            verify_post_checkpoint_tools(
+                &fixture,
+                &[patch.clone(), test.clone()],
+                "thread",
+                "turn"
+            ),
+            Ok(())
+        );
+        for invalid in [
+            vec![patch.clone()],
+            vec![test.clone(), patch.clone()],
+            vec![patch.clone(), test.clone(), test.clone()],
+            vec![read.clone(), patch.clone(), test.clone()],
+        ] {
+            assert!(verify_post_checkpoint_tools(&fixture, &invalid, "thread", "turn").is_err());
+        }
+        assert_eq!(
             verify_tools(
                 &fixture,
                 &[read.clone(), patch.clone(), test.clone()],
@@ -1522,6 +1627,15 @@ mod tests {
         ] {
             let mut changed = test.clone();
             *changed.pointer_mut(pointer).unwrap() = value;
+            assert!(
+                verify_post_checkpoint_tools(
+                    &fixture,
+                    &[patch.clone(), changed.clone()],
+                    "thread",
+                    "turn"
+                )
+                .is_err()
+            );
             assert!(
                 verify_tools(
                     &fixture,
@@ -1552,6 +1666,15 @@ mod tests {
             .is_err()
         );
         std::fs::write(directory.join("probe-output.txt"), "wrong output\n").unwrap();
+        assert!(
+            verify_post_checkpoint_tools(
+                &fixture,
+                &[patch.clone(), test.clone()],
+                "thread",
+                "turn"
+            )
+            .is_err()
+        );
         assert!(verify_tools(&fixture, &[read, patch, test], "thread", "turn").is_err());
         std::fs::remove_dir_all(directory).unwrap();
     }
