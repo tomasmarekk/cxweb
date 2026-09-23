@@ -1,0 +1,181 @@
+{
+  "schema": "cxweb.reinstallation-recovery.v1",
+  "date": "2026-09-23",
+  "user_confirmed_login_closed": true,
+  "background_session": true,
+  "observed_candidates": 15,
+  "route_activated": true,
+  "extra_high_text_and_tools_verified": true,
+  "remaining_reasoning_qualification_finished": true,
+  "remaining_reasoning_failure": null,
+  "remaining_reasoning_checks": [
+    [
+      "text",
+      "Latest · Instant"
+    ],
+    [
+      "tools",
+      "Latest · Instant"
+    ],
+    [
+      "text",
+      "Latest · Medium"
+    ],
+    [
+      "tools",
+      "Latest · Medium"
+    ],
+    [
+      "text",
+      "Latest · High"
+    ],
+    [
+      "tools",
+      "Latest · High"
+    ],
+    [
+      "text",
+      "Latest · Pro"
+    ],
+    [
+      "tools",
+      "Latest · Pro"
+    ]
+  ],
+  "native_catalogs": [
+    {
+      "client": "CLI",
+      "webModels": [
+        {
+          "id": "webbridge/402f0b19d5610fcbee25b681",
+          "name": "ChatGPT Web · Latest",
+          "reasoning": [
+            {
+              "reasoningEffort": "low",
+              "description": "Instant"
+            },
+            {
+              "reasoningEffort": "medium",
+              "description": "Medium"
+            },
+            {
+              "reasoningEffort": "high",
+              "description": "High"
+            },
+            {
+              "reasoningEffort": "xhigh",
+              "description": "Extra High"
+            },
+            {
+              "reasoningEffort": "max",
+              "description": "Pro"
+            }
+          ]
+        }
+      ],
+      "nativeModels": 8
+    },
+    {
+      "client": "App backend",
+      "webModels": [
+        {
+          "id": "webbridge/402f0b19d5610fcbee25b681",
+          "name": "ChatGPT Web · Latest",
+          "reasoning": [
+            {
+              "reasoningEffort": "low",
+              "description": "Instant"
+            },
+            {
+              "reasoningEffort": "medium",
+              "description": "Medium"
+            },
+            {
+              "reasoningEffort": "high",
+              "description": "High"
+            },
+            {
+              "reasoningEffort": "xhigh",
+              "description": "Extra High"
+            },
+            {
+              "reasoningEffort": "max",
+              "description": "Pro"
+            }
+          ]
+        }
+      ],
+      "nativeModels": 8
+    }
+  ],
+  "compaction_effort": "medium",
+  "user_windows_controlled_for_checks": false,
+  "cli_smoke": {
+    "exit_code": 0,
+    "exact_response": true,
+    "ephemeral": true,
+    "readonly": true
+  },
+  "final_health": {
+    "active_web_turns": 0,
+    "components": {
+      "browser": {
+        "code": null,
+        "evidence": "passive_browser",
+        "observed_at": "2026-09-23T17:13:12.576Z",
+        "state": "healthy"
+      },
+      "codex_app": {
+        "code": null,
+        "evidence": "request_success",
+        "observed_at": "2026-09-23T17:11:59.745Z",
+        "state": "healthy"
+      },
+      "codex_cli": {
+        "code": null,
+        "evidence": "request_success",
+        "observed_at": "2026-09-23T17:13:12.576Z",
+        "state": "healthy"
+      },
+      "config": {
+        "code": null,
+        "evidence": "local_probe",
+        "observed_at": "2026-09-23T17:13:43.153Z",
+        "state": "healthy"
+      },
+      "native_upstream": {
+        "code": null,
+        "evidence": "client_handshake",
+        "observed_at": "2026-09-23T17:12:57.094Z",
+        "state": "healthy"
+      },
+      "runtime": {
+        "code": null,
+        "evidence": "local_probe",
+        "observed_at": "2026-09-23T17:13:43.153Z",
+        "state": "healthy"
+      },
+      "web_auth": {
+        "code": null,
+        "evidence": "passive_browser",
+        "observed_at": "2026-09-23T17:13:12.576Z",
+        "state": "healthy"
+      },
+      "web_models": {
+        "code": null,
+        "evidence": "passive_browser",
+        "observed_at": "2026-09-23T17:13:12.576Z",
+        "state": "healthy"
+      }
+    },
+    "overall": "ready",
+    "revision": 15,
+    "schema_version": "webbridge.health.v1",
+    "suggested_action": "none"
+  },
+  "standalone_cli_smoke": {
+    "exit_code": 0,
+    "exact_response": true,
+    "inherited_app_origin_removed": true
+  }
+}
