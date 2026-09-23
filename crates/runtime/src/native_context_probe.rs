@@ -96,6 +96,9 @@ async fn run_actual_backend_probe(expected_error: Option<&'static str>, delayed:
         "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226" => {
             (CatalogCodec::App01550Alpha92, "0.155.0-alpha.9.2")
         }
+        "97d4d67419d0ac2f71342f9a5e850f9468aa622618de8ea823223edb9a91926a" => {
+            (CatalogCodec::App01550Alpha92, "0.155.0-alpha.16")
+        }
         _ => panic!("unreviewed backend"),
     };
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

@@ -1,5 +1,11 @@
 Windows x64 preview of cxweb, connecting ChatGPT web models to Codex App and Codex CLI.
 
+Restores WebGPT model discovery in the updated Codex App backend
+`0.155.0-alpha.16`. Its catalog requests now receive the same reviewed
+ChatGPT Web model representation as the previous supported App build, while
+native Codex models remain available. Existing cxweb connections and the
+dedicated browser sign-in are preserved across this upgrade.
+
 Removes the five-minute answer inactivity timeout and the thirty-minute total
 generation timeout. Long Pro reasoning can continue until ChatGPT completes,
 the user cancels, or an actual browser/protocol error occurs. Cancellation still

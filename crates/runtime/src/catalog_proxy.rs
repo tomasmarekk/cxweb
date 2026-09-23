@@ -231,6 +231,14 @@ mod tests {
             "Codex Desktop/0.155.0-alpha.9.3".parse().unwrap(),
         );
         assert!(select_codec(Some("client_version=0.155.0"), &headers).is_none());
+        headers.insert(
+            "user-agent",
+            "Codex Desktop/0.155.0-alpha.16".parse().unwrap(),
+        );
+        assert_eq!(
+            select_codec(Some("client_version=0.155.0"), &headers),
+            Some(cxweb_codex_adapter::catalog_codec::CatalogCodec::App01550Alpha92)
+        );
         use cxweb_codex_adapter::catalog_codec::CatalogCodec;
         for (query, agent, codec) in [
             (

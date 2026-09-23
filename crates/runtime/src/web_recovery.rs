@@ -943,6 +943,17 @@ mod tests {
         let receipt = Receipt::fixture("installation");
         let published = vec!["webbridge/fixture".into()];
         receipt.validate("installation", &published).unwrap();
+        // A saved .9.2 catalog uses the same reviewed wire codec as the
+        // updated .16 desktop backend and needs no browser reauthorization.
+        let updated_app =
+            CatalogCodec::select("0.155.0", "Codex Desktop/0.155.0-alpha.16 (Windows 11)").unwrap();
+        assert!(
+            receipt
+                .catalogs()
+                .unwrap()
+                .iter()
+                .any(|(codec, _)| *codec == updated_app)
+        );
         assert!(receipt.validate("other", &published).is_err());
         assert!(
             receipt

@@ -43,6 +43,9 @@ pub(crate) fn reviewed(hash: &str) -> Option<(&'static str, CatalogCodec)> {
         "bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226" => {
             Some(("0.155.0-alpha.9.2", CatalogCodec::App01550Alpha92))
         }
+        "97d4d67419d0ac2f71342f9a5e850f9468aa622618de8ea823223edb9a91926a" => {
+            Some(("0.155.0-alpha.16", CatalogCodec::App01550Alpha92))
+        }
         _ => None,
     }
 }
@@ -341,6 +344,15 @@ fn model_ids(models: &Value) -> Result<Vec<String>, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn updated_desktop_backend_is_reviewed_only_at_its_exact_hash() {
+        let hash = "97d4d67419d0ac2f71342f9a5e850f9468aa622618de8ea823223edb9a91926a";
+        assert_eq!(
+            reviewed(hash),
+            Some(("0.155.0-alpha.16", CatalogCodec::App01550Alpha92))
+        );
+        assert_eq!(reviewed(&format!("{}0", &hash[..63])), None);
+    }
     #[test]
     fn catalog_ids_are_native_bounded_and_never_arbitrary_payloads() {
         assert_eq!(

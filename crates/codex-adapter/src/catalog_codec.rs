@@ -11,7 +11,10 @@ impl CatalogCodec {
     pub fn for_build(build: &str) -> Option<Self> {
         match build {
             "0.155.1" => Some(Self::Cli01551),
-            "0.155.0-alpha.9.2" => Some(Self::App01550Alpha92),
+            // The .16 desktop backend accepts the same catalog representation
+            // as .9.2. Keep one wire codec so existing installed receipts can
+            // serve a newly updated App without replacing the browser binding.
+            "0.155.0-alpha.9.2" | "0.155.0-alpha.16" => Some(Self::App01550Alpha92),
             _ => None,
         }
     }
@@ -253,6 +256,11 @@ mod tests {
             (
                 "0.155.0",
                 "codex_desktop/0.155.0-alpha.9.2 (Windows 11)",
+                Some(CatalogCodec::App01550Alpha92),
+            ),
+            (
+                "0.155.0",
+                "Codex Desktop/0.155.0-alpha.16 (Windows 11)",
                 Some(CatalogCodec::App01550Alpha92),
             ),
             ("0.155.0", "codex_desktop/0.155.0-alpha.9.3", None),

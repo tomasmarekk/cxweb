@@ -1355,13 +1355,16 @@ mod tests {
                 &self,
                 codec: cxweb_codex_adapter::catalog_codec::CatalogCodec,
             ) -> Option<crate::catalog_proxy::OwnedCatalog> {
-                (codec == cxweb_codex_adapter::catalog_codec::CatalogCodec::Cli01551).then(|| {
-                    crate::catalog_proxy::OwnedCatalog {
-                        codec: "test-codec".into(),
-                        web_scope: "synthetic-scope".into(),
-                        generation: 1,
-                        entries: vec![cxweb_codex_adapter::catalog::synthetic_model()],
-                    }
+                matches!(
+                    codec,
+                    cxweb_codex_adapter::catalog_codec::CatalogCodec::Cli01551
+                        | cxweb_codex_adapter::catalog_codec::CatalogCodec::App01550Alpha92
+                )
+                .then(|| crate::catalog_proxy::OwnedCatalog {
+                    codec: "test-codec".into(),
+                    web_scope: "synthetic-scope".into(),
+                    generation: 1,
+                    entries: vec![cxweb_codex_adapter::catalog::synthetic_model()],
                 })
             }
         }
@@ -1385,12 +1388,34 @@ mod tests {
             NativeTransport::new(format!("http://{address}")).unwrap(),
             Arc::new(CatalogOnly),
         );
-        for (query, count, disconnect) in [
-            ("0.155.1", 2, false),
-            ("unknown-codec", 1, false),
-            ("0.155.1&client_version=0.155.1", 1, false),
-            ("0.155.0", 1, false),
-            ("0.155.1", 1, true),
+        for (query, agent, count, disconnect) in [
+            ("0.155.1", "codex_cli_rs/0.155.1 (Windows 11)", 2, false),
+            (
+                "0.155.0",
+                "Codex Desktop/0.155.0-alpha.16 (Windows 11)",
+                2,
+                false,
+            ),
+            (
+                "0.155.0",
+                "Codex Desktop/0.155.0-alpha.17 (Windows 11)",
+                1,
+                false,
+            ),
+            (
+                "unknown-codec",
+                "codex_cli_rs/0.155.1 (Windows 11)",
+                1,
+                false,
+            ),
+            (
+                "0.155.1&client_version=0.155.1",
+                "codex_cli_rs/0.155.1 (Windows 11)",
+                1,
+                false,
+            ),
+            ("0.155.0", "codex_cli_rs/0.155.1 (Windows 11)", 1, false),
+            ("0.155.1", "codex_cli_rs/0.155.1 (Windows 11)", 1, true),
         ] {
             if disconnect {
                 gateway
@@ -1408,7 +1433,7 @@ mod tests {
                             gateway.base_url()
                         ))
                         .header("host", "127.0.0.1:12345")
-                        .header("user-agent", "codex_cli_rs/0.155.1 (Windows 11)")
+                        .header("user-agent", agent)
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -1418,6 +1443,13 @@ mod tests {
             let body = response.into_body().collect().await.unwrap().to_bytes();
             let catalog: Value = serde_json::from_slice(&body).unwrap();
             assert_eq!(catalog["models"].as_array().unwrap().len(), count);
+            assert!(
+                catalog["models"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|model| model["slug"] == "native")
+            );
         }
         server.abort();
     }
