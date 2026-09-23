@@ -34,6 +34,7 @@ const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const builds = new Map([
   ['eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316', '0.155.1'],
   ['bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226', '0.155.0-alpha.9.2'],
+  ['97d4d67419d0ac2f71342f9a5e850f9468aa622618de8ea823223edb9a91926a', '0.155.0-alpha.16'],
 ]);
 const hash = sha256(await readFile(client));
 assert.ok(builds.has(hash), 'E_UNREVIEWED_CLIENT');
