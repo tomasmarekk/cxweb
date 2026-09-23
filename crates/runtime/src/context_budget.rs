@@ -30,37 +30,35 @@ pub(crate) fn needs_compaction(
     let summary = CanonicalRequest::decode_compaction(
         &serde_json::to_vec(&compact).map_err(|_| "E_INVALID_REQUEST")?,
     )?;
-    summary.browser_prompt(SIZING_NONCE, budget.summary_bytes())?;
-
-    // A lower bound only: native compaction retains user/developer/system
-    // messages and our checkpoint restores pending calls. If those alone exceed
-    // the operating ceiling, do not suggest a compaction that cannot help.
+    // Current policy, user messages, tool definitions and pending calls are
+    // mandatory overhead, not disposable history. Reserve the ordinary budget
+    // for reducible history in addition to that overhead, still within the
+    // absolute encoded ceiling. This avoids a compaction loop when a real
+    // client's tool registry and policies already exceed the history budget.
     // This projected input is NEVER sent to a model or returned as history.
     let retained: Vec<_> = input
         .iter()
-        .filter(|item| {
-            item["role"] != "assistant"
-                && !matches!(
-                    item["type"].as_str(),
-                    Some(
-                        "function_call"
-                            | "custom_tool_call"
-                            | "function_call_output"
-                            | "custom_tool_call_output"
-                    )
-                )
-        })
+        .filter(|item| matches!(item["role"].as_str(), Some("user" | "developer" | "system")))
         .cloned()
         .collect();
-    if retained.len() == input.len() {
-        return Err("E_CONTEXT_BUDGET");
-    }
     let mut minimum = payload.clone();
     let mut retained = retained;
     retained.extend_from_slice(summary.compaction_pending().ok_or("E_COMPACTION_TRIGGER")?);
     minimum["input"] = json!(retained);
-    CanonicalRequest::decode(&serde_json::to_vec(&minimum).map_err(|_| "E_INVALID_REQUEST")?)?
-        .browser_prompt(SIZING_NONCE, budget.normal_bytes())?;
+    let mandatory_bytes =
+        CanonicalRequest::decode(&serde_json::to_vec(&minimum).map_err(|_| "E_INVALID_REQUEST")?)?
+            .browser_prompt(SIZING_NONCE, budget.summary_bytes())?
+            .len();
+    let operating_ceiling = mandatory_bytes
+        .saturating_add(budget.normal_bytes())
+        .min(budget.summary_bytes());
+    if request
+        .browser_prompt(SIZING_NONCE, operating_ceiling)
+        .is_ok()
+    {
+        return Ok(false);
+    }
+    summary.browser_prompt(SIZING_NONCE, budget.summary_bytes())?;
     Ok(true)
 }
 
@@ -142,24 +140,37 @@ mod tests {
     }
 
     #[test]
-    fn irreducible_policy_user_content_and_pending_calls_do_not_offer_recovery() {
+    fn mandatory_policy_tools_and_pending_calls_do_not_cause_compaction_loops() {
         let mut payload = json!({"model":"webbridge/test","input":[{"role":"user","content":"a".repeat(400_000)}]});
-        assert_eq!(check(&payload), Err("E_CONTEXT_BUDGET"));
+        assert_eq!(check(&payload), Ok(false));
         payload["input"] = json!([{"role":"assistant","content":"old answer"}]);
         payload["instructions"] = json!("a".repeat(400_000));
-        assert_eq!(check(&payload), Err("E_CONTEXT_BUDGET"));
+        assert_eq!(check(&payload), Ok(false));
         payload.as_object_mut().unwrap().remove("instructions");
         payload["tools"] = json!([{"type":"function","name":"fixture","parameters":{"type":"object","description":"*".repeat(70_000)}}]);
-        assert_eq!(check(&payload), Err("E_CONTEXT_BUDGET"));
+        assert_eq!(check(&payload), Ok(false));
         payload.as_object_mut().unwrap().remove("tools");
         payload["input"] = json!([{"type":"custom_tool_call","name":"apply_patch","call_id":"pending","input":"a".repeat(400_000)}]);
-        assert_eq!(check(&payload), Err("E_CONTEXT_BUDGET"));
+        assert_eq!(check(&payload), Ok(false));
         // Once the result is present, the old tool transcript is summarizable.
         payload["input"]
             .as_array_mut()
             .unwrap()
             .push(json!({"type":"custom_tool_call_output","call_id":"pending","output":"DENIED"}));
         assert_eq!(check(&payload), Ok(true));
+    }
+
+    #[test]
+    fn large_native_policy_and_registry_leave_room_for_history() {
+        let mut payload = json!({"model":"webbridge/test",
+            "instructions":"p".repeat(180_000),
+            "tools":[{"type":"function","name":"fixture","parameters":{"type":"object","description":"d".repeat(90_000)}}],
+            "input":[{"role":"user","content":"Keep the current task"},{"role":"assistant","content":"h".repeat(400_000)}]});
+        assert_eq!(check(&payload), Ok(true));
+        payload["input"][1]["content"] = json!("Summary preserving the task");
+        assert_eq!(check(&payload), Ok(false));
+        payload["instructions"] = json!("p".repeat(1_100_000));
+        assert_eq!(check(&payload), Err("E_CONTEXT_BUDGET"));
     }
 
     #[test]

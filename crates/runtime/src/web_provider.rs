@@ -332,7 +332,13 @@ impl CoordinatorProvider {
             if checkpoint.is_some() {
                 decoded
                     .browser_prompt("00000000000000000000000000000000", budget.summary_bytes())?;
-            } else if crate::context_budget::needs_compaction(&payload, &decoded, budget)? {
+            } else if match crate::context_budget::needs_compaction(&payload, &decoded, budget) {
+                Ok(needed) => needed,
+                Err(code) => {
+                    self.coordinator.record_context_shape(&payload).await;
+                    return Err(code);
+                }
+            } {
                 // Only the reviewed SSE contract has native recovery evidence.
                 // JSON callers and unqualified codecs keep the explicit local error.
                 if !decoded.stream {

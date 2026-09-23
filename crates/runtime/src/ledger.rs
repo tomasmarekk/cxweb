@@ -115,6 +115,19 @@ impl Ledger {
         }).await
     }
 
+    #[cfg(windows)]
+    pub(crate) async fn record_context_shape(
+        &self,
+        sizes: std::collections::BTreeMap<&'static str, usize>,
+    ) -> Result<(), &'static str> {
+        let encoded = serde_json::to_string(&sizes).map_err(|_| "E_LEDGER_DIAGNOSTIC")?;
+        self.run(move |connection| {
+            connection.execute_batch("CREATE TABLE IF NOT EXISTS context_diagnostics (id INTEGER PRIMARY KEY, sizes TEXT NOT NULL, observed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)").map_err(|_| "E_LEDGER_SCHEMA")?;
+            connection.execute("INSERT INTO context_diagnostics(sizes) VALUES(?1)", [encoded]).map_err(|_| "E_LEDGER_WRITE")?;
+            Ok(())
+        }).await
+    }
+
     pub async fn admit(
         &self,
         request: &str,

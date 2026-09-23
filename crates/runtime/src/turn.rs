@@ -151,6 +151,28 @@ impl Coordinator {
             .await
     }
 
+    #[cfg(windows)]
+    pub(crate) async fn record_context_shape(&self, payload: &serde_json::Value) {
+        let mut sizes = std::collections::BTreeMap::new();
+        for field in ["instructions", "tools", "input"] {
+            sizes.insert(field, payload[field].to_string().len());
+        }
+        for role in ["user", "developer", "system", "assistant"] {
+            let bytes = payload["input"]
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter(|item| item["role"] == role)
+                        .map(|item| item.to_string().len())
+                        .sum()
+                })
+                .unwrap_or(0);
+            sizes.insert(role, bytes);
+        }
+        let _ = self.ledger.record_context_shape(sizes).await;
+    }
+
     pub(crate) async fn execute_with_progress(
         &self,
         input: TurnInput,
