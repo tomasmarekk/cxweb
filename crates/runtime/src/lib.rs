@@ -65,6 +65,7 @@ mod request_body;
 pub mod scheduler;
 #[cfg(windows)]
 pub mod setup_owner;
+mod staged_compaction;
 pub mod turn;
 pub mod web_provider;
 #[cfg(windows)]

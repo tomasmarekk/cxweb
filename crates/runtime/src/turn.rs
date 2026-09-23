@@ -92,6 +92,13 @@ impl BrowserRequest {
 /// cannot select a key, scope or ciphertext, and sealing precedes durable completion.
 pub(crate) trait CheckpointEncoder: Send + Sync {
     fn seal(&self, summary: &str, pending: &[serde_json::Value]) -> Result<String, &'static str>;
+    fn restore_summary(
+        &self,
+        _token: &str,
+        _pending: &[serde_json::Value],
+    ) -> Result<String, &'static str> {
+        Err("E_CHECKPOINT_SUMMARY")
+    }
 }
 #[derive(Clone)]
 pub struct Delivery {

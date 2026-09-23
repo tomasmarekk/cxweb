@@ -96,6 +96,24 @@ impl BoundCheckpoint {
 }
 
 impl CheckpointEncoder for BoundCheckpoint {
+    fn restore_summary(&self, token: &str, pending: &[Value]) -> Result<String, &'static str> {
+        let plaintext = self
+            .codec
+            .unseal(&self.binding(), token)
+            .map_err(|_| "E_NONPORTABLE_CONTEXT")?;
+        let value =
+            strict_json::parse(&plaintext, 2 * 1024 * 1024).map_err(|_| "E_NONPORTABLE_CONTEXT")?;
+        let checkpoint: Checkpoint =
+            serde_json::from_value(value).map_err(|_| "E_NONPORTABLE_CONTEXT")?;
+        if checkpoint.version != 1 || checkpoint.pending_calls != pending {
+            return Err("E_CHECKPOINT_PENDING_TOOLS");
+        }
+        let summary =
+            serde_json::to_string(&checkpoint.summary).map_err(|_| "E_CHECKPOINT_SUMMARY")?;
+        Summary::parse(&summary, pending)?;
+        Ok(summary)
+    }
+
     fn seal(&self, summary: &str, pending: &[Value]) -> Result<String, &'static str> {
         let summary = Summary::parse(summary, pending)?;
         let checkpoint = Checkpoint {

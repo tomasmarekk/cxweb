@@ -365,19 +365,18 @@ impl CoordinatorProvider {
         };
         let scope = serde_json::to_vec(&session).map_err(|_| "E_PROVIDER_SCOPE")?;
         let request_id = digest(&[&scope, identity.turn.as_bytes(), &bytes]);
-        let delivery = self
-            .coordinator
-            .execute_with_progress(
-                TurnInput {
-                    request_id,
-                    session,
-                    bytes,
-                },
-                request.cancellation,
-                checkpoint,
-                request.progress,
-            )
-            .await?;
+        let delivery = crate::staged_compaction::execute(
+            &self.coordinator,
+            TurnInput {
+                request_id,
+                session,
+                bytes,
+            },
+            request.cancellation,
+            checkpoint,
+            request.progress,
+        )
+        .await?;
         #[cfg(windows)]
         if let Some(fixture) = &self.native_fixture {
             fixture.check_delivery(&delivery.json)?;
@@ -464,6 +463,7 @@ mod tests {
         waiting: bool,
         observing: Notify,
         prompt: Mutex<Value>,
+        prompts: Mutex<Vec<Value>>,
         compact: std::sync::atomic::AtomicBool,
         answer_bytes: AtomicUsize,
         mismatched_effort: std::sync::atomic::AtomicBool,
@@ -502,6 +502,10 @@ mod tests {
                 .store(prompt.contains("Use kind=checkpoint."), Ordering::SeqCst);
             *self.prompt.lock().unwrap() =
                 serde_json::from_str(prompt.split_once("\nCLIENT_DATA_JSON\n").unwrap().1).unwrap();
+            self.prompts
+                .lock()
+                .unwrap()
+                .push(self.prompt.lock().unwrap().clone());
             for forbidden in [
                 "NATIVE_SECRET",
                 "RAW_SESSION",
@@ -580,6 +584,7 @@ mod tests {
             waiting,
             observing: Notify::new(),
             prompt: Mutex::new(Value::Null),
+            prompts: Mutex::new(Vec::new()),
             compact: std::sync::atomic::AtomicBool::new(false),
             answer_bytes: AtomicUsize::new(0),
             mismatched_effort: std::sync::atomic::AtomicBool::new(false),
@@ -599,6 +604,86 @@ mod tests {
         )
         .unwrap();
         (provider, browser)
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn staged_compaction_covers_source_and_does_not_retry_uncertain_stages() {
+        let directory =
+            std::env::temp_dir().join(format!("cxweb-staged-{:032x}", rand::random::<u128>()));
+        cxweb_platform::state::protected_directory(&directory).unwrap();
+        let pending = json!({"type":"custom_tool_call","call_id":"pending","name":"apply_patch","input":"exact pending argument"});
+        let payload = json!({"model":"webbridge/test","reasoning":{"effort":"medium"},
+            "client_metadata":{"private":"PRIVATE_METADATA"},
+            "input":[{"role":"user","content":"Keep original state"},
+            {"role":"assistant","content":"history漢字".repeat(35_000)},pending,{"type":"compaction_trigger"}]});
+        let expected = CanonicalRequest::decode_compaction(&serde_json::to_vec(&payload).unwrap())
+            .unwrap()
+            .browser_prompt(
+                "00000000000000000000000000000000",
+                crate::context_budget::HARD_PROMPT_BYTES,
+            )
+            .unwrap();
+        let expected = expected.split_once("\nCLIENT_DATA_JSON\n").unwrap().1;
+        for uncertain in [false, true] {
+            let (provider, browser) = provider_fixture(false);
+            browser
+                .uncertain_submission
+                .store(uncertain, Ordering::SeqCst);
+            let provider = provider.with_installed_context(&directory).await.unwrap();
+            let (parts, _) =
+                request("http://127.0.0.1:12345", "staged", "window", false).into_parts();
+            let identity = WebIdentity::from_headers(&parts.headers);
+            let result = provider
+                .execute(WebRequest {
+                    payload: payload.clone(),
+                    identity,
+                    compact: false,
+                    cancellation: tokio_util::sync::CancellationToken::new(),
+                    transport: crate::gateway::WebTransport::Http,
+                    progress: None,
+                })
+                .await;
+            if uncertain {
+                assert_eq!(result.err(), Some("E_SUBMISSION_UNCERTAIN"));
+                assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
+                continue;
+            }
+            let response: Value = serde_json::from_slice(
+                &result
+                    .unwrap()
+                    .into_body()
+                    .collect()
+                    .await
+                    .unwrap()
+                    .to_bytes(),
+            )
+            .unwrap();
+            assert_eq!(response["output"][0]["type"], "compaction");
+            let prompts = browser.prompts.lock().unwrap();
+            assert!(prompts.len() > 1);
+            let mut actual = String::new();
+            for (index, prompt) in prompts.iter().enumerate() {
+                let history = prompt["history"].as_array().unwrap();
+                let fragment = history.iter().find(|item| item["role"] == "user").unwrap();
+                let fragment: Value =
+                    serde_json::from_str(fragment["content"].as_str().unwrap()).unwrap();
+                actual.push_str(fragment["source_fragment"].as_str().unwrap());
+                assert_eq!(history.last().unwrap(), &pending);
+                if index > 0 {
+                    assert!(
+                        history[0]["content"]
+                            .as_str()
+                            .unwrap()
+                            .contains("Preserve fixture goal")
+                    );
+                }
+            }
+            assert_eq!(actual, expected);
+            assert!(!actual.contains("PRIVATE_METADATA"));
+        }
+        std::fs::remove_file(directory.join("checkpoint-key.dpapi")).unwrap();
+        std::fs::remove_dir(directory).unwrap();
     }
 
     #[cfg(windows)]
@@ -732,6 +817,8 @@ mod tests {
                 .starts_with("wbr1:")
         );
         assert!(!String::from_utf8_lossy(&bytes).contains("Preserve fixture goal"));
+        let first_sends = browser.sends.load(Ordering::SeqCst);
+        assert!(first_sends > 1, "large compaction must use multiple stages");
         let replay = provider
             .execute(make_request(compact, "compact", "old", "task"))
             .await
@@ -740,7 +827,7 @@ mod tests {
             replay.into_body().collect().await.unwrap().to_bytes(),
             bytes
         );
-        assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
+        assert_eq!(browser.sends.load(Ordering::SeqCst), first_sends);
         let output =
             json!({"type":"custom_tool_call_output","call_id":"pending","output":"DENIED"});
         let continuation = json!({"model":"webbridge/test","instructions":"Current policy","input":[{"role":"user","content":"Read only"},item,output]});
@@ -753,7 +840,7 @@ mod tests {
             ))
             .await;
         assert_eq!(invalid_task.err(), Some("E_NONPORTABLE_CONTEXT"));
-        assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
+        assert_eq!(browser.sends.load(Ordering::SeqCst), first_sends);
         // Restoring an authenticated call must not make arbitrary late results
         // valid. Reject mismatched, repeated or wrong-kind results before send.
         for (case, items) in [
@@ -779,7 +866,7 @@ mod tests {
                 Some("E_CHECKPOINT_PENDING_TOOLS"),
                 "{case}"
             );
-            assert_eq!(browser.sends.load(Ordering::SeqCst), 1, "{case}");
+            assert_eq!(browser.sends.load(Ordering::SeqCst), first_sends, "{case}");
         }
         provider
             .execute(make_request(
@@ -850,7 +937,7 @@ mod tests {
                 .err(),
             Some("E_NONPORTABLE_CONTEXT")
         );
-        assert_eq!(browser.sends.load(Ordering::SeqCst), 3);
+        assert_eq!(browser.sends.load(Ordering::SeqCst), first_sends + 2);
         std::fs::remove_file(directory.join("checkpoint-key.dpapi")).unwrap();
         std::fs::remove_dir(directory).unwrap();
     }
