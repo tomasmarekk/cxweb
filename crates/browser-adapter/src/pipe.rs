@@ -1243,7 +1243,11 @@ impl ManagedBrowser {
                     std::thread::sleep(Duration::from_millis(100));
                 }
             }
-            if surface.account.is_none() && surface.diagnostic.settings_available {
+            // A personal context has no workspace ID. It still requires the
+            // independent settings identity even when the menu exposes email.
+            if (surface.account.is_none() || surface.workspace.is_none())
+                && surface.diagnostic.settings_available
+            {
                 let settings_opened =
                     self.dom(page, include_str!("dom/open_account_settings.js"), vec![])? == true;
                 surface.diagnostic.settings_opened = settings_opened;
@@ -3223,6 +3227,40 @@ mod tests {
         );
         assert!(loaded, "managed Chrome did not render the fetch result");
     }
+    #[test]
+    #[ignore = "requires installed Chrome; uses a fresh offscreen fixture profile"]
+    fn menu_email_does_not_skip_personal_context_settings_evidence() {
+        let executable = cxweb_platform::state::installed_browser().unwrap();
+        let profile = std::env::temp_dir().join(format!(
+            "cxweb-scope-email-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        cxweb_platform::state::protected_directory(&profile).unwrap();
+        let mut browser = ManagedBrowser::launch_offscreen(&executable, &profile).unwrap();
+        let page = browser.open_hidden_page("about:blank", true).unwrap();
+        let frame = browser
+            .call("Page.getFrameTree", json!({}), Some(&page.session))
+            .unwrap();
+        browser.call("Page.setDocumentContent", json!({"frameId": frame["frameTree"]["frame"]["id"], "html": include_str!("dom/fixture.html")}), Some(&page.session)).unwrap();
+        browser.dom(&page, "function () { for (const node of document.querySelectorAll('[data-workspace-id]')) node.removeAttribute('data-workspace-id'); const email = document.createElement('span'); email.textContent = 'fixture@example.invalid'; document.getElementById('account-menu').append(email); return true; }", vec![]).unwrap();
+        let scope = browser.account_scope(&page).unwrap();
+        assert_eq!(scope.account.as_deref(), Some("fixture@example.invalid"));
+        assert!(scope.workspace.is_none());
+        assert_eq!(scope.diagnostic.account_candidates, 1);
+        assert!(scope.diagnostic.settings_opened);
+        assert!(scope.diagnostic.settings_account_selected);
+        assert_eq!(scope.diagnostic.settings_account_candidates, 1);
+        // Missing corroboration must still fail; observing an email alone is
+        // never enough to claim a verified personal workspace.
+        assert!(!scope.default_workspace);
+        browser.close_page(page).unwrap();
+        browser.close().unwrap();
+    }
+
     // Run the same ignored test directly and through an interactive-token
     // scheduled task. An MSIX parent must not select a different saved profile.
     #[test]
