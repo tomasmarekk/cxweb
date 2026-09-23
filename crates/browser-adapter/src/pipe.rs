@@ -2455,6 +2455,91 @@ mod tests {
 
     #[test]
     #[ignore = "requires installed Chrome; uses a fresh offscreen fixture profile"]
+    fn rendered_thinking_failure_is_attributed_through_real_browser_observation() {
+        let executable = cxweb_platform::state::installed_browser().unwrap();
+        let profile = std::env::temp_dir().join(format!(
+            "cxweb-thinking-failure-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        cxweb_platform::state::protected_directory(&profile).unwrap();
+        let mut browser = ManagedBrowser::launch_offscreen(&executable, &profile).unwrap();
+        let page = browser.open_hidden_page("about:blank", true).unwrap();
+        let frame = browser
+            .call("Page.getFrameTree", json!({}), Some(&page.session))
+            .unwrap();
+        let html = r#"<!doctype html><form><button type="button" data-testid="model-switcher-dropdown-button" aria-haspopup="menu">Fixture</button><textarea id="prompt-textarea"></textarea></form><main><div data-turn-id-container="u"><div data-message-author-role="user">Exact fixture</div></div><div id="failure">Thinking failed</div></main>"#;
+        browser
+            .call(
+                "Page.setDocumentContent",
+                json!({"frameId":frame["frameTree"]["frame"]["id"],"html":html}),
+                Some(&page.session),
+            )
+            .unwrap();
+        let baseline = Baseline {
+            ids: vec![],
+            selected_model: "Fixture".into(),
+            composer_empty: true,
+            generating: false,
+        };
+        let mut tracker = TurnTracker::new(baseline.clone(), "Fixture").unwrap();
+        tracker.begin_submission().unwrap();
+        let failure = browser.observe(&page, &baseline, "Exact fixture").unwrap();
+        assert!(failure.user_matches);
+        assert!(failure.generation_failed);
+        assert!(!failure.generating);
+        assert!(!failure.completion_control);
+        assert_eq!(
+            tracker.observe(failure).err(),
+            Some("E_CHATGPT_THINKING_FAILED")
+        );
+        browser
+            .dom(
+                &page,
+                "function () { document.querySelector('#failure').hidden = true; return true; }",
+                vec![],
+            )
+            .unwrap();
+        assert!(
+            !browser
+                .observe(&page, &baseline, "Exact fixture")
+                .unwrap()
+                .generation_failed
+        );
+        browser.close_page_checked(&page).unwrap();
+
+        // A failed surface must be releasable before a new one can carry the
+        // same native turn to a validated answer.
+        let recovered = browser.open_hidden_page("about:blank", true).unwrap();
+        let frame = browser
+            .call("Page.getFrameTree", json!({}), Some(&recovered.session))
+            .unwrap();
+        let html = r#"<!doctype html><form><button type="button" data-testid="model-switcher-dropdown-button" aria-haspopup="menu">Fixture</button><textarea id="prompt-textarea"></textarea></form><main><div data-turn-id-container="u2"><div data-message-author-role="user">Exact fixture</div></div><div data-turn-id-container="a2"><div data-message-author-role="assistant"><div class="markdown">{"protocol":"webbridge.tool.v1","kind":"final","text":"Recovered"}</div></div><button data-testid="copy-turn-action-button">Copy</button></div></main>"#;
+        browser
+            .call(
+                "Page.setDocumentContent",
+                json!({"frameId":frame["frameTree"]["frame"]["id"],"html":html}),
+                Some(&recovered.session),
+            )
+            .unwrap();
+        let mut tracker = TurnTracker::new(baseline.clone(), "Fixture").unwrap();
+        tracker.begin_submission().unwrap();
+        let answer = browser
+            .observe(&recovered, &baseline, "Exact fixture")
+            .unwrap();
+        assert!(!answer.generation_failed);
+        assert!(
+            matches!(tracker.observe(answer).unwrap(), Progress::Completed(text) if text == r#"{"protocol":"webbridge.tool.v1","kind":"final","text":"Recovered"}"#)
+        );
+        browser.close_page_checked(&recovered).unwrap();
+        browser.close().unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires installed Chrome; uses a fresh offscreen fixture profile"]
     fn answer_projection_preserves_dom_whitespace_inside_json_strings() {
         let executable = cxweb_platform::state::installed_browser().unwrap();
         let profile = std::env::temp_dir().join(format!(
