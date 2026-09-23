@@ -2,6 +2,8 @@
 #[cfg(windows)]
 pub mod atomic_file;
 #[cfg(windows)]
+pub mod binary_update;
+#[cfg(windows)]
 pub mod browser_process;
 #[cfg(windows)]
 mod browser_window;

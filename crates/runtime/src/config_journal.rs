@@ -154,6 +154,32 @@ impl ConfigJournal {
         Self::attachment_target(directory, true)
     }
 
+    pub(crate) fn runtime_update_target(directory: &Path) -> io::Result<Option<(String, PathBuf)>> {
+        let Some((installation, _)) = Self::control_target(directory)? else {
+            return Ok(None);
+        };
+        let snapshot = Snapshot::capture(&directory.join("integration.json"))?;
+        let record: Record = serde_json::from_value(
+            strict_json::parse(snapshot.original(), 2 * 1024 * 1024).map_err(|_| invalid())?,
+        )
+        .map_err(|_| invalid())?;
+        if record.id != installation {
+            return Err(invalid());
+        }
+        let scheduler = record.scheduler.as_ref().ok_or_else(invalid)?;
+        let receipt = scheduler.receipt.as_ref().ok_or_else(invalid)?;
+        if scheduler.name != task_name(&installation)?
+            || !receipt.matches_plan(&installation, &scheduler.planned_xml)?
+        {
+            return Err(invalid());
+        }
+        let executable = directory.join("cxweb-daemon.exe");
+        receipt
+            .reopen(&installation)?
+            .verify_executable(&executable)?;
+        Ok(Some((installation, executable)))
+    }
+
     fn attachment_target(
         directory: &Path,
         uninstall: bool,

@@ -338,6 +338,35 @@ impl RegisteredRuntime {
             }
         })
     }
+    pub fn verify_executable(&self, expected: &Path) -> io::Result<()> {
+        self.with_task(|_, task| {
+            // SAFETY: read-only inspection of the exact receipt-owned task.
+            let path = unsafe {
+                let actions = task
+                    .Definition()
+                    .map_err(com_error)?
+                    .Actions()
+                    .map_err(com_error)?;
+                let mut count = 0;
+                actions.Count(&mut count).map_err(com_error)?;
+                if count != 1 {
+                    return Err(io::Error::other("E_TASK_CHANGED"));
+                }
+                let action: IExecAction = actions
+                    .get_Item(1)
+                    .map_err(com_error)?
+                    .cast()
+                    .map_err(com_error)?;
+                let mut path = BSTR::new();
+                action.Path(&mut path).map_err(com_error)?;
+                path.to_string()
+            };
+            if Path::new(&path).canonicalize()? != expected.canonicalize()? {
+                return Err(io::Error::other("E_TASK_CHANGED"));
+            }
+            Ok(())
+        })
+    }
     /// Caller must also establish that no clients retain the route. This method
     /// never terminates the action and refuses running or queued instances.
     pub fn remove_stopped(&self) -> io::Result<()> {

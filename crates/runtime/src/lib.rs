@@ -64,6 +64,8 @@ mod reasoning_qualification;
 #[cfg(windows)]
 pub mod remote_control;
 mod request_body;
+#[cfg(windows)]
+pub mod runtime_update;
 pub mod scheduler;
 #[cfg(windows)]
 pub mod setup_owner;

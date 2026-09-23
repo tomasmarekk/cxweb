@@ -10,6 +10,8 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Install the adjacent bundled runtime for its next launch; preserve live processes.
+    StageRuntimeUpdate,
     /// Clear the dedicated ChatGPT browser profile after every connection is removed.
     ClearLocalSession,
     /// Restore cxweb-owned routing at idle before removing the desktop payload.
@@ -174,6 +176,18 @@ enum BrowserAction {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match Args::parse().command {
+        Command::StageRuntimeUpdate => {
+            #[cfg(windows)]
+            {
+                let report = cxweb_runtime::runtime_update::stage_installed_payload().await?;
+                print_json(&serde_json::to_value(&report)?);
+                if report.restart_required {
+                    std::process::exit(3010);
+                }
+            }
+            #[cfg(not(windows))]
+            return Err("installed runtime updates require Windows".into());
+        }
         Command::ClearLocalSession => {
             #[cfg(windows)]
             {

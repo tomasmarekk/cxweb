@@ -29,8 +29,11 @@ $cases = @(
     @{ Name='remove-clear-refused'; Hook='PREUNINSTALL'; Exit=0; Update=0; Clear=$true; ClearExit=1; Success=$false; Called=$true; Args='clear-local-session' },
     @{ Name='update-does-not-clear'; Hook='PREUNINSTALL'; Exit=1; Update=1; Clear=$true; Success=$true; Called=$false },
     @{ Name='update-retains-connection'; Hook='PREUNINSTALL'; Exit=1; Update=1; Success=$true; Called=$false },
-    @{ Name='install-idle'; Hook='PREINSTALL'; Exit=0; Update=0; Success=$true; Called=$true; Args='prepare-uninstall --check' },
-    @{ Name='install-busy'; Hook='PREINSTALL'; Exit=1; Update=0; Success=$false; Called=$true; Args='prepare-uninstall --check' },
+    @{ Name='install-idle'; Hook='PREINSTALL'; Exit=0; Update=0; Success=$true; Called=$false },
+    @{ Name='install-unavailable-host'; Hook='PREINSTALL'; Exit=1; Update=0; Success=$true; Called=$false },
+    @{ Name='payload-first-install'; Hook='POSTINSTALL'; Exit=0; Update=0; Success=$true; Called=$true; Args='stage-runtime-update' },
+    @{ Name='payload-update'; Hook='POSTINSTALL'; Exit=3010; Update=1; Success=$true; Called=$true; Args='stage-runtime-update'; Restart=$true },
+    @{ Name='payload-refused'; Hook='POSTINSTALL'; Exit=1; Update=1; Success=$false; Called=$true; Args='stage-runtime-update' },
     @{ Name='first-install'; Hook='PREINSTALL'; Exit=0; Update=0; Missing=$true; Success=$true; Called=$false }
 )
 $template = @'
@@ -48,6 +51,10 @@ Section
   !insertmacro NSIS_HOOK_@HOOK@
   FileOpen $2 "$INSTDIR\continued.txt" w
   FileWrite $2 "continued"
+  FileClose $2
+  IfRebootFlag 0 +4
+  FileOpen $2 "$INSTDIR\restart.txt" w
+  FileWrite $2 "restart"
   FileClose $2
 SectionEnd
 '@
@@ -69,9 +76,10 @@ foreach ($case in $cases) {
     $process.Refresh()
     $continued = Test-Path -LiteralPath (Join-Path $caseDir 'continued.txt')
     $called = Test-Path -LiteralPath (Join-Path $caseDir 'called.txt')
-    if ($continued -ne $case.Success -or ($process.ExitCode -eq 0) -ne $case.Success -or $called -ne $case.Called) {
+    if ($continued -ne $case.Success -or (($process.ExitCode -eq 0) -or ($case.Restart -and $process.ExitCode -eq 3010)) -ne $case.Success -or $called -ne $case.Called) {
         throw "Installer control-flow mismatch: $($case.Name)"
     }
+    if ((Test-Path -LiteralPath (Join-Path $caseDir 'restart.txt')) -ne [bool]$case.Restart) { throw "Installer restart flag mismatch: $($case.Name)" }
     if ($called -and (Get-Content -LiteralPath (Join-Path $caseDir 'called.txt') -Raw) -cne $case.Args) {
         throw "Installer arguments mismatch: $($case.Name)"
     }

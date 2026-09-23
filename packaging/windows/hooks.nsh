@@ -1,6 +1,20 @@
 ; The installed desktop payload is separate from the private supervised host.
 ; Keep its journal and compatibility listener. Session removal is a separate opt-in.
 !include "FileFunc.nsh"
+!macro NSIS_HOOK_POSTINSTALL
+  nsExec::ExecToStack '"$INSTDIR\cxweb.exe" stage-runtime-update'
+  Pop $0
+  Pop $1
+  ${If} $0 == 3010
+    SetRebootFlag true
+    DetailPrint "Runtime update installed. Restart Windows to use the new runtime; existing tasks continue until restart."
+    SetErrorLevel 3010
+  ${ElseIf} $0 != 0
+    MessageBox MB_OK|MB_ICONEXCLAMATION "The desktop files were installed, but the private runtime update could not be completed. Existing connections were preserved. Run this installer again to retry; do not assume the running runtime has been updated." /SD IDOK
+    SetErrorLevel 1
+    Abort
+  ${EndIf}
+!macroend
 !macro NSIS_HOOK_PREUNINSTALL
   ${If} $UpdateMode <> 1
     nsExec::ExecToStack '"$INSTDIR\cxweb.exe" prepare-uninstall'
@@ -40,14 +54,7 @@
 !macroend
 
 !macro NSIS_HOOK_PREINSTALL
-  ${If} ${FileExists} "$INSTDIR\cxweb.exe"
-    nsExec::ExecToStack '"$INSTDIR\cxweb.exe" prepare-uninstall --check'
-    Pop $0
-    Pop $1
-    ${If} $0 != 0
-      MessageBox MB_OK|MB_ICONEXCLAMATION "cxweb is busy or a connection needs attention. Finish active tasks and check cxweb before installing this version." /SD IDOK
-      SetErrorLevel 1
-      Abort
-    ${EndIf}
-  ${EndIf}
+  ; No running host is stopped or disconnected by an update. POSTINSTALL
+  ; validates journal/scheduler ownership and preserves the mapped old image,
+  ; so an unavailable or busy old host must not block delivering its repair.
 !macroend
