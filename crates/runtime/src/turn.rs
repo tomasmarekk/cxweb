@@ -474,22 +474,22 @@ impl Coordinator {
                     "E_CANCELLED_STOP_UNCONFIRMED"
                 });
             }
-            let observation = match tokio::time::timeout(
-                Duration::from_secs(5),
-                self.browser.observe(prepared.handle.clone()),
-            )
-            .await
-            {
-                Ok(Ok(observation)) => observation,
-                failure => {
-                    let _: Result<(), _> = tracker.fail("E_BROWSER_OBSERVATION");
+            // The driver bounds individual transport operations. A second,
+            // shorter deadline here can abort a healthy queued DOM read while
+            // its CDP operations are still running. Keep one read in flight;
+            // cancellation still stops this same submission without resending.
+            let observed = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => continue,
+                result = self.browser.observe(prepared.handle.clone()) => result,
+            };
+            let observation = match observed {
+                Ok(observation) => observation,
+                Err(error) => {
+                    let _: Result<(), _> = tracker.fail(error);
                     self.ledger.transition(id, tracker.state()).await?;
                     self.stop(&prepared.handle).await;
-                    return Err(if matches!(failure, Ok(Err("E_BROWSER_RATE_LIMITED"))) {
-                        "E_BROWSER_RATE_LIMITED"
-                    } else {
-                        "E_BROWSER_OBSERVATION"
-                    });
+                    return Err(error);
                 }
             };
             let observed_summary = observation.summary.clone();
@@ -691,6 +691,7 @@ mod tests {
     enum Mode {
         LimitedSubmit,
         LimitedObserve,
+        SlowObserve,
         Final,
         Tool,
         Invalid,
@@ -816,6 +817,7 @@ mod tests {
                 return Box::pin(async { Err("E_BROWSER_RATE_LIMITED") });
             }
             let nonce = self.nonce.lock().unwrap().clone();
+            let slow = matches!(self.mode, Mode::SlowObserve);
             let thinking_failed = matches!(self.mode, Mode::ThinkingAlways)
                 || (matches!(self.mode, Mode::ThinkingThenTool)
                     && self.sends.load(Ordering::SeqCst) == 1)
@@ -849,6 +851,9 @@ mod tests {
                 "assistant-new"
             };
             Box::pin(async move {
+                if slow {
+                    tokio::time::sleep(Duration::from_secs(12)).await;
+                }
                 Ok(Observation {
                     user_id: Some("user-new".into()),
                     user_matches: true,
@@ -1107,6 +1112,47 @@ mod tests {
         assert!(task.await.unwrap().is_ok());
         assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
         assert_eq!(browser.stops.load(Ordering::SeqCst), 0);
+        assert_eq!(browser.releases.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn slow_observation_does_not_abort_or_resubmit_generation() {
+        let browser = MockBrowser::new(Mode::SlowObserve);
+        let coordinator = Coordinator::new(Ledger::in_memory(), browser.clone());
+        let task =
+            tokio::spawn(
+                async move { coordinator.execute(input(), CancellationToken::new()).await },
+            );
+        browser.observing.notified().await;
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(6)).await;
+        tokio::task::yield_now().await;
+        assert!(!task.is_finished());
+        assert!(task.await.unwrap().is_ok());
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
+        assert_eq!(browser.stops.load(Ordering::SeqCst), 0);
+        assert_eq!(browser.releases.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn cancellation_interrupts_pending_observation_without_resubmission() {
+        let browser = MockBrowser::new(Mode::SlowObserve);
+        let coordinator = Coordinator::new(Ledger::in_memory(), browser.clone());
+        let cancel = CancellationToken::new();
+        let worker_cancel = cancel.clone();
+        let task = tokio::spawn(async move { coordinator.execute(input(), worker_cancel).await });
+        browser.observing.notified().await;
+        cancel.cancel();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), task)
+                .await
+                .unwrap()
+                .unwrap()
+                .err(),
+            Some("E_CANCELLED")
+        );
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 1);
+        assert_eq!(browser.stops.load(Ordering::SeqCst), 1);
         assert_eq!(browser.releases.load(Ordering::SeqCst), 1);
     }
 

@@ -286,6 +286,18 @@ fn confirm_scope_read<T>(
 
 // Browser errors can contain transport text. Export only reviewed fixed codes.
 pub(crate) fn browser_error(error: &std::io::Error, fallback: &'static str) -> &'static str {
+    if fallback == "E_BROWSER_OBSERVATION" {
+        if error.kind() == std::io::ErrorKind::TimedOut {
+            return "E_BROWSER_TRANSPORT_TIMEOUT";
+        }
+        match error.to_string().as_str() {
+            "E_BROWSER_ADAPTER" => return "E_BROWSER_ADAPTER",
+            "E_BROWSER_UTF16" => return "E_BROWSER_UTF16",
+            "E_BROWSER_RESULT_DEPTH" => return "E_BROWSER_RESULT_DEPTH",
+            "browser operation rejected" => return "E_BROWSER_OPERATION_REJECTED",
+            _ => {}
+        }
+    }
     if error.to_string() == "E_BROWSER_RATE_LIMITED" {
         "E_BROWSER_RATE_LIMITED"
     } else {
@@ -830,6 +842,27 @@ mod tests {
 
     #[test]
     fn temporary_chat_errors_preserve_fixed_causes_only() {
+        assert_eq!(
+            browser_error(
+                &std::io::Error::new(std::io::ErrorKind::TimedOut, "private transport detail"),
+                "E_BROWSER_OBSERVATION"
+            ),
+            "E_BROWSER_TRANSPORT_TIMEOUT"
+        );
+        assert_eq!(
+            browser_error(
+                &std::io::Error::other("E_BROWSER_ADAPTER"),
+                "E_BROWSER_OBSERVATION"
+            ),
+            "E_BROWSER_ADAPTER"
+        );
+        assert_eq!(
+            browser_error(
+                &std::io::Error::other("E_BROWSER_ADAPTER private data"),
+                "E_BROWSER_OBSERVATION"
+            ),
+            "E_BROWSER_OBSERVATION"
+        );
         let limited = std::io::Error::other("E_BROWSER_RATE_LIMITED");
         assert_eq!(
             browser_error(&limited, "E_SESSION_SCOPE"),
