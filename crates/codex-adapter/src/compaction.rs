@@ -18,9 +18,10 @@ pub struct Summary {
 
 impl Summary {
     pub fn parse(text: &str, pending: &[Value]) -> Result<Self, &'static str> {
-        let value =
-            strict_json::parse(text.as_bytes(), 256 * 1024).map_err(|_| "E_CHECKPOINT_SUMMARY")?;
-        let summary: Self = serde_json::from_value(value).map_err(|_| "E_CHECKPOINT_SUMMARY")?;
+        let value = strict_json::parse(text.as_bytes(), 256 * 1024)
+            .map_err(|_| "E_CHECKPOINT_SUMMARY_JSON")?;
+        let summary: Self =
+            serde_json::from_value(value).map_err(|_| "E_CHECKPOINT_SUMMARY_SCHEMA")?;
         let lists = [
             &summary.constraints,
             &summary.changed_files,
@@ -38,7 +39,7 @@ impl Summary {
                         .any(|s| s.trim().is_empty() || s.len() > 32 * 1024)
             })
         {
-            return Err("E_CHECKPOINT_SUMMARY");
+            return Err("E_CHECKPOINT_SUMMARY_BOUNDS");
         }
         let expected: BTreeSet<_> = pending
             .iter()
@@ -117,6 +118,23 @@ pub fn pending_calls(history: &[Value]) -> Result<Vec<Value>, &'static str> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn summary_failures_identify_structure_without_exporting_content() {
+        assert!(matches!(
+            Summary::parse("private invalid text", &[]),
+            Err("E_CHECKPOINT_SUMMARY_JSON")
+        ));
+        assert!(matches!(
+            Summary::parse(r#"{"goal":"private goal"}"#, &[]),
+            Err("E_CHECKPOINT_SUMMARY_SCHEMA")
+        ));
+        let empty = json!({"goal":"", "constraints":[], "changed_files":[], "decisions":[], "outstanding_work":[], "test_results":[], "unresolved_tool_ids":[]});
+        assert!(matches!(
+            Summary::parse(&empty.to_string(), &[]),
+            Err("E_CHECKPOINT_SUMMARY_BOUNDS")
+        ));
+    }
 
     #[test]
     fn unresolved_calls_survive_exactly_and_ambiguous_results_fail() {

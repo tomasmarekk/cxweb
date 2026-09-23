@@ -240,9 +240,19 @@ enum Envelope {
     Checkpoint {
         protocol: String,
         turn_nonce: String,
-        summary: String,
+        summary: CheckpointSummary,
     },
 }
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum CheckpointSummary {
+    // Accept previously produced checkpoints while new prompts use one JSON
+    // layer. Semantic validation remains in Summary::parse for both forms.
+    Encoded(String),
+    Structured(serde_json::Map<String, Value>),
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Call {
@@ -325,9 +335,16 @@ fn validate_body(
     context: &Context<'_>,
 ) -> Result<ValidatedOutput, ProtocolError> {
     match (context.purpose, envelope) {
-        (Purpose::Compaction, Envelope::Checkpoint { summary, .. })
-            if !summary.is_empty() && summary.len() <= 2 * 1024 * 1024 =>
-        {
+        (Purpose::Compaction, Envelope::Checkpoint { summary, .. }) => {
+            let summary = match summary {
+                CheckpointSummary::Encoded(text) => text,
+                CheckpointSummary::Structured(object) => {
+                    serde_json::to_string(&object).map_err(|_| ProtocolError::InvalidEnvelope)?
+                }
+            };
+            if summary.is_empty() || summary.len() > 2 * 1024 * 1024 {
+                return Err(ProtocolError::InvalidEnvelope);
+            }
             Ok(ValidatedOutput::Checkpoint(summary))
         }
         (Purpose::Normal, Envelope::Final { text, .. }) => {

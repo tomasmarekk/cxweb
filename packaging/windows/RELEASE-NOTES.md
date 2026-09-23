@@ -7,6 +7,9 @@ The preference is saved per connection and applies to both Codex App and CLI.
 The default, **Same as task**, preserves existing behavior. A running compaction
 finishes with its original choice; changing the preference does not cancel it.
 Unavailable saved choices are reported explicitly rather than silently replaced.
+New summaries use a direct JSON object in a code block, avoiding fragile double
+JSON escaping; previously encoded summaries remain readable with the same strict
+field and pending-tool validation.
 
 Large context recovery splits historical content into bounded summarization
 stages and preserves pending tool calls and their results. Installed connections

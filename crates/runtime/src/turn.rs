@@ -1412,7 +1412,7 @@ mod tests {
         }
         for (mode, expected) in [
             (Mode::Checkpoint, "E_CHECKPOINT_KEY"),
-            (Mode::BadCheckpoint, "E_CHECKPOINT_SUMMARY"),
+            (Mode::BadCheckpoint, "E_CHECKPOINT_SUMMARY_JSON"),
             (Mode::Final, "E_TOOL_ENVELOPE_PURPOSE"),
         ] {
             let browser = MockBrowser::new(mode);
