@@ -24,6 +24,7 @@ function (baselineIds, expectedPrompt) {
   const content = answer.content;
   const generating = !!document.querySelector('[data-testid="stop-button"]');
   const complete = !!assistant?.querySelector('[data-testid="copy-turn-action-button"]');
+  const generationFailed = readGenerationFailure(user, assistant);
   const userContent = user?.querySelector('[data-message-author-role="user"]') ?? user;
   // Collapsed messages contain their own expand/copy controls. Compare the
   // message text, not those localized control labels. Keep the source DOM
@@ -53,9 +54,11 @@ function (baselineIds, expectedPrompt) {
   let prefix = 0;
   while (prefix < plain.length && prefix < expected.length && plain[prefix] === expected[prefix]) prefix++;
   const characterKind = c => c === undefined ? 0 : c === '\n' ? 1 : c === '\r' ? 2 : c === ' ' ? 3 : c === '\t' ? 4 : c === '\u00a0' ? 5 : 6;
-  const transport = readAnswerTransport(content);
+  // A terminal ChatGPT error takes precedence over any partially rendered
+  // answer. Its text is not a protocol reply and may contain incomplete UTF-16.
+  const transport = generationFailed ? { text: '', fenced: false } : readAnswerTransport(content);
   let text = transport.text;
-  const answerRendered = content?.innerText ?? '';
+  const answerRendered = generationFailed ? '' : content?.innerText ?? '';
   const answerDomDiffers = text !== answerRendered;
   if (text.length > 4 * 1024 * 1024) throw new Error('E_PAYLOAD_LIMIT');
   // A renderer may expose half a character before an already-rendered suffix
@@ -75,7 +78,7 @@ function (baselineIds, expectedPrompt) {
     pendingUtf16 = true;
   }
   return {
-    summary: readPublicSummary(assistant, content),
+    summary: generationFailed ? [] : readPublicSummary(assistant, content),
     attribution_diagnostic: {
       expected_length: expected.length, plain_length: plain.length, rendered_length: rendered.length,
       common_prefix_length: prefix, actual_character_kind: characterKind(plain[prefix]), expected_character_kind: characterKind(expected[prefix]),
@@ -96,10 +99,10 @@ function (baselineIds, expectedPrompt) {
     assistant_id: assistant?.getAttribute('data-turn-id-container') ?? null,
     text,
     generating,
-    generation_failed: readGenerationFailure(user, assistant, generating, complete),
-    completion_control: complete && answer.candidates === 1,
+    generation_failed: generationFailed,
+    completion_control: !generationFailed && complete && answer.candidates === 1,
     fenced_output: transport.fenced,
     selected_model: model.textContent.trim().slice(0, 120),
-    ambiguous: users.length > 1 || assistants.length > 1 || (complete && !generating && answer.candidates !== 1) || afterUser.some(node => node !== user && (node.matches(userSelector) || node.querySelector(userSelector)))
+    ambiguous: users.length > 1 || assistants.length > 1 || (complete && !generating && !generationFailed && answer.candidates !== 1) || afterUser.some(node => node !== user && (node.matches(userSelector) || node.querySelector(userSelector)))
   };
 }

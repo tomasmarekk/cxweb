@@ -2509,6 +2509,34 @@ mod tests {
                 .unwrap()
                 .generation_failed
         );
+        browser
+            .dom(
+                &page,
+                "function () { const assistant=document.createElement('div'); assistant.setAttribute('data-turn-id-container','a'); assistant.innerHTML='<div data-message-author-role=\"assistant\"><div class=\"markdown\"></div></div><button data-testid=\"copy-turn-action-button\">Copy</button>'; assistant.querySelector('.markdown').textContent=String.fromCharCode(0xd83e); document.querySelector('main').append(assistant); document.querySelector('#failure').hidden=false; return true; }",
+                vec![],
+            )
+            .unwrap();
+        let partial_failure = browser.observe(&page, &baseline, "Exact fixture").unwrap();
+        assert!(partial_failure.generation_failed);
+        assert!(!partial_failure.ambiguous);
+        assert!(!partial_failure.completion_control);
+        let mut tracker = TurnTracker::new(baseline.clone(), "Fixture").unwrap();
+        tracker.begin_submission().unwrap();
+        assert_eq!(
+            tracker.observe(partial_failure).err(),
+            Some("E_CHATGPT_THINKING_FAILED")
+        );
+        browser
+            .dom(
+                &page,
+                "function () { document.querySelector('#failure').hidden=true; const retry=document.createElement('button'); retry.dataset.testid='regenerate-thread-error-button'; retry.textContent='Try again'; document.querySelector('[data-turn-id-container=\"a\"]').append(retry); const staleStop=document.createElement('button'); staleStop.dataset.testid='stop-button'; document.querySelector('form').append(staleStop); return true; }",
+                vec![],
+            )
+            .unwrap();
+        let retry_control = browser.observe(&page, &baseline, "Exact fixture").unwrap();
+        assert!(retry_control.generation_failed);
+        assert!(retry_control.generating);
+        assert!(!retry_control.ambiguous);
         browser.close_page_checked(&page).unwrap();
 
         // A failed surface must be releasable before a new one can carry the
