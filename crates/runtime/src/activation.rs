@@ -137,6 +137,8 @@ impl PreparedInstallation {
             Coordinator::new(ledger, Arc::new(session.driver.clone())).with_consumer(consumer);
         let provider =
             CoordinatorProvider::new(coordinator, scope, vec![session.route.id.clone()])?
+                .with_installed_context(&self.directory)
+                .await?
                 .with_catalog(1, qualified)?;
         if session.driver.is_closed() {
             return Err("E_BROWSER_CLOSED");

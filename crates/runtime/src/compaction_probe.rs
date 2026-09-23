@@ -154,16 +154,19 @@ async fn run_inner(
         .first()
         .filter(|_| binding.routes.len() == 1)
         .ok_or("E_MODEL_UNAVAILABLE")?;
-    let installation = binding.installation.clone();
-    let key_path = directory.join("compaction-probe-key.bin");
-    let key = tokio::task::spawn_blocking(move || {
-        crate::checkpoint::Codec::load_or_create(&key_path, &installation)
-    })
-    .await
-    .map_err(|_| "E_CHECKPOINT_KEY")??;
-    // This clone retains the installed coordinator/ledger. Its codec is never
-    // assigned to the production provider or advertised in the installed catalog.
-    let provider = provider.with_checkpoints(Arc::new(key), CatalogCodec::CliModelInfoV1)?;
+    let provider = if provider.checkpoints_enabled() {
+        provider
+    } else {
+        let installation = binding.installation.clone();
+        let key_path = directory.join("compaction-probe-key.bin");
+        let key = tokio::task::spawn_blocking(move || {
+            crate::checkpoint::Codec::load_or_create(&key_path, &installation)
+        })
+        .await
+        .map_err(|_| "E_CHECKPOINT_KEY")??;
+        // Legacy, unqualified providers are cloned for this isolated probe only.
+        provider.with_checkpoints(Arc::new(key), CatalogCodec::CliModelInfoV1)?
+    };
     let task = format!("compaction-probe-{:032x}", rand::random::<u128>());
     let marker = format!("CXWEB_CHECKPOINT_{:032x}", rand::random::<u128>());
     let payload = json!({"model":route.id,"reasoning":{"effort":route.effort},"stream":false,"tools":[],"input":[

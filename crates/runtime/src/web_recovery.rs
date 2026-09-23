@@ -268,8 +268,10 @@ impl Receipt {
             // Reuse the original scope and ledger so completed deliveries replay
             // and interrupted submissions remain uncertain instead of resending.
             let coordinator = Coordinator::new(ledger, Arc::new(driver.clone()));
-            let provider =
-                CoordinatorProvider::new(coordinator, scope, routes)?.with_catalog(1, catalogs)?;
+            let provider = CoordinatorProvider::new(coordinator, scope, routes)?
+                .with_installed_context(&directory)
+                .await?
+                .with_catalog(1, catalogs)?;
             Ok((
                 Arc::new(ObservedProvider::new(
                     Arc::new(provider.clone()),

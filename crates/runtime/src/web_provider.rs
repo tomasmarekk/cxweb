@@ -202,6 +202,37 @@ impl CoordinatorProvider {
         Ok(self)
     }
 
+    #[cfg(windows)]
+    pub(crate) fn checkpoints_enabled(&self) -> bool {
+        self.checkpoints.is_some()
+    }
+
+    /// Installed App and CLI share one checkpoint domain and persistent key.
+    /// Never regenerate an unreadable key: saved tasks must remain authenticated.
+    #[cfg(windows)]
+    pub(crate) async fn with_installed_context(
+        self,
+        directory: &std::path::Path,
+    ) -> Result<Self, &'static str> {
+        let installation = self.scope.installation.clone();
+        let key_path = directory.join("checkpoint-key.dpapi");
+        let key = tokio::task::spawn_blocking(move || {
+            crate::checkpoint::Codec::load_or_create(&key_path, &installation)
+        })
+        .await
+        .map_err(|_| "E_CHECKPOINT_KEY")??;
+        self.with_checkpoints(
+            Arc::new(key),
+            cxweb_codex_adapter::catalog_codec::CatalogCodec::CliModelInfoV1,
+        )?
+        .with_context_budget(
+            cxweb_codex_adapter::context_budget::LocalContextBudget::new(
+                256 * 1024,
+                cxweb_codex_adapter::context_budget::MAX_PROMPT_BYTES,
+            )?,
+        )
+    }
+
     fn prepare_payload(
         &self,
         payload: &mut Value,
@@ -574,10 +605,6 @@ mod tests {
             rand::random::<u128>()
         ));
         cxweb_platform::state::protected_directory(&directory).unwrap();
-        let key_path = directory.join("key.dpapi");
-        let key = Arc::new(
-            crate::checkpoint::Codec::load_or_create(&key_path, "fixture-installation").unwrap(),
-        );
         let unqualified = provider.clone();
         assert!(
             unqualified
@@ -587,16 +614,7 @@ mod tests {
                 )
                 .is_err()
         );
-        let provider = provider
-            .with_checkpoints(
-                key,
-                cxweb_codex_adapter::catalog_codec::CatalogCodec::CliModelInfoV1,
-            )
-            .unwrap()
-            .with_context_budget(
-                cxweb_codex_adapter::context_budget::LocalContextBudget::DIAGNOSTIC,
-            )
-            .unwrap();
+        let provider = provider.with_installed_context(&directory).await.unwrap();
         let budget = cxweb_codex_adapter::context_budget::LocalContextBudget::DIAGNOSTIC;
         assert!(provider.clone().with_context_budget(budget).is_err());
         let codec = cxweb_codex_adapter::catalog_codec::CatalogCodec::CliModelInfoV1;
@@ -776,6 +794,24 @@ mod tests {
                 .unwrap()
                 .contains("Preserve fixture goal")
         );
+        // A newly constructed installed owner must reuse the key and accept
+        // the task checkpoint after restart, without depending on a client build.
+        let (restored, restored_browser) = provider_fixture(false);
+        let restored = restored.with_installed_context(&directory).await.unwrap();
+        restored
+            .execute(make_request(
+                continuation.clone(),
+                "after-restart",
+                "next",
+                "task",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(restored_browser.sends.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            restored_browser.prompt.lock().unwrap()["history"][2],
+            pending
+        );
         // A later compaction authenticates the previous checkpoint, sees the
         // subsequent denial, and does not carry the resolved call forward again.
         let mut recompact = continuation.clone();
@@ -809,7 +845,7 @@ mod tests {
             Some("E_NONPORTABLE_CONTEXT")
         );
         assert_eq!(browser.sends.load(Ordering::SeqCst), 3);
-        std::fs::remove_file(key_path).unwrap();
+        std::fs::remove_file(directory.join("checkpoint-key.dpapi")).unwrap();
         std::fs::remove_dir(directory).unwrap();
     }
     fn fixture(waiting: bool) -> (Gateway, Arc<Browser>) {
