@@ -16,7 +16,8 @@ pub fn show(app: &tauri::AppHandle) {
 pub fn install_tray(app: &tauri::App) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "show-panel", "Open cxweb", true, None::<&str>)?;
     let hide = MenuItem::with_id(app, "hide-panel", "Hide window", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &hide])?;
+    let quit = MenuItem::with_id(app, "quit-panel", "Quit cxweb window", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open, &hide, &quit])?;
     let mut tray = TrayIconBuilder::with_id("cxweb-panel")
         .tooltip("cxweb — Open connection status")
         .menu(&menu)
@@ -28,6 +29,9 @@ pub fn install_tray(app: &tauri::App) -> tauri::Result<()> {
                     let _ = window.hide();
                 }
             }
+            // The panel owns no generation process. Exiting it must leave the
+            // supervised runtime and active Codex requests running.
+            "quit-panel" => app.exit(0),
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
