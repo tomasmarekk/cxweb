@@ -222,109 +222,132 @@ impl Coordinator {
             }
             Admission::Existing(_) => return Err("E_REQUEST_ALREADY_ADMITTED"),
         }
-        let mut prepared = match tokio::time::timeout(
-            Duration::from_secs(90),
-            self.browser.prepare_with_effort(
-                input.session.clone(),
-                request.request.requested_effort.clone(),
-            ),
-        )
-        .await
-        {
-            Ok(Ok(prepared)) => prepared,
-            failed => {
-                self.ledger
-                    .transition(&input.request_id, TurnState::Failed)
-                    .await?;
-                return Err(match failed {
-                    Ok(Err(code)) => code,
-                    _ => "E_BROWSER_PREPARE",
-                });
-            }
-        };
-        let mut retries = 0;
-        let mut resumed = None;
-        loop {
-            let result = self
-                .run_prepared(
-                    &input.request_id,
-                    &input.session,
-                    &request,
-                    &prepared,
-                    &cancel,
-                    checkpoint.as_deref(),
-                    progress.clone(),
-                    &mut publication,
-                    resumed,
-                    retries < MAX_EXPLICIT_FAILURE_RETRIES,
-                )
-                .await;
-            // Never start another page until the failed page has been closed.
-            let released = tokio::time::timeout(
-                BROWSER_RELEASE_TIMEOUT,
-                self.browser.release(prepared.handle),
+        let _ = self
+            .ledger
+            .record_shape(
+                &input.request_id,
+                input.bytes.len(),
+                request.prompt.len(),
+                checkpoint.is_some(),
             )
             .await;
-            if result.as_ref().err().copied() == Some("E_CHATGPT_THINKING_FAILED")
-                && retries < MAX_EXPLICIT_FAILURE_RETRIES
+        let result = async {
+            let mut prepared = match tokio::time::timeout(
+                Duration::from_secs(90),
+                self.browser.prepare_with_effort(
+                    input.session.clone(),
+                    request.request.requested_effort.clone(),
+                ),
+            )
+            .await
             {
-                if !matches!(released, Ok(Ok(()))) {
+                Ok(Ok(prepared)) => prepared,
+                failed => {
                     self.ledger
                         .transition(&input.request_id, TurnState::Failed)
                         .await?;
-                    return Err("E_WEB_CLEANUP_UNCONFIRMED");
+                    return Err(match failed {
+                        Ok(Err(code)) => code,
+                        _ => "E_BROWSER_PREPARE",
+                    });
                 }
-                resumed = match self
-                    .ledger
-                    .admit(&input.request_id, &input.session, &input.bytes)
-                    .await?
-                {
-                    Admission::Existing(state @ (TurnState::Submitted | TurnState::Generating)) => {
-                        Some(state)
-                    }
-                    _ => return Err("E_TURN_STATE"),
-                };
-                if cancel.is_cancelled() {
-                    self.ledger
-                        .transition(&input.request_id, TurnState::Cancelled)
-                        .await?;
-                    return Err("E_CANCELLED");
-                }
-                retries += 1;
-                tokio::select! {
-                    _ = cancel.cancelled() => {
-                        self.ledger.transition(&input.request_id, TurnState::Cancelled).await?;
-                        return Err("E_CANCELLED");
-                    }
-                    _ = tokio::time::sleep(Duration::from_millis(500 * retries as u64)) => (),
-                }
-                prepared = match tokio::time::timeout(
-                    Duration::from_secs(90),
-                    self.browser.prepare_with_effort(
-                        input.session.clone(),
-                        request.request.requested_effort.clone(),
-                    ),
+            };
+            let mut retries = 0;
+            let mut resumed = None;
+            loop {
+                let _ = self.ledger.record_attempt(&input.request_id).await;
+                let result = self
+                    .run_prepared(
+                        &input.request_id,
+                        &input.session,
+                        &request,
+                        &prepared,
+                        &cancel,
+                        checkpoint.as_deref(),
+                        progress.clone(),
+                        &mut publication,
+                        resumed,
+                        retries < MAX_EXPLICIT_FAILURE_RETRIES,
+                    )
+                    .await;
+                // Never start another page until the failed page has been closed.
+                let released = tokio::time::timeout(
+                    BROWSER_RELEASE_TIMEOUT,
+                    self.browser.release(prepared.handle),
                 )
-                .await
+                .await;
+                if result.as_ref().err().copied() == Some("E_CHATGPT_THINKING_FAILED")
+                    && retries < MAX_EXPLICIT_FAILURE_RETRIES
                 {
-                    Ok(Ok(prepared)) => prepared,
-                    failure => {
+                    if !matches!(released, Ok(Ok(()))) {
                         self.ledger
                             .transition(&input.request_id, TurnState::Failed)
                             .await?;
-                        return Err(match failure {
-                            Ok(Err(code)) => code,
-                            _ => "E_BROWSER_PREPARE",
-                        });
+                        return Err("E_WEB_CLEANUP_UNCONFIRMED");
                     }
-                };
-                continue;
+                    resumed = match self
+                        .ledger
+                        .admit(&input.request_id, &input.session, &input.bytes)
+                        .await?
+                    {
+                        Admission::Existing(
+                            state @ (TurnState::Submitted | TurnState::Generating),
+                        ) => Some(state),
+                        _ => return Err("E_TURN_STATE"),
+                    };
+                    if cancel.is_cancelled() {
+                        self.ledger
+                            .transition(&input.request_id, TurnState::Cancelled)
+                            .await?;
+                        return Err("E_CANCELLED");
+                    }
+                    retries += 1;
+                    tokio::select! {
+                        _ = cancel.cancelled() => {
+                            self.ledger.transition(&input.request_id, TurnState::Cancelled).await?;
+                            return Err("E_CANCELLED");
+                        }
+                        _ = tokio::time::sleep(Duration::from_millis(500 * retries as u64)) => (),
+                    }
+                    prepared = match tokio::time::timeout(
+                        Duration::from_secs(90),
+                        self.browser.prepare_with_effort(
+                            input.session.clone(),
+                            request.request.requested_effort.clone(),
+                        ),
+                    )
+                    .await
+                    {
+                        Ok(Ok(prepared)) => prepared,
+                        failure => {
+                            self.ledger
+                                .transition(&input.request_id, TurnState::Failed)
+                                .await?;
+                            return Err(match failure {
+                                Ok(Err(code)) => code,
+                                _ => "E_BROWSER_PREPARE",
+                            });
+                        }
+                    };
+                    continue;
+                }
+                if let Ok(delivery) = &result {
+                    self.cache(replay_key, delivery.clone())?;
+                }
+                return result;
             }
-            if let Ok(delivery) = &result {
-                self.cache(replay_key, delivery.clone())?;
-            }
-            return result;
         }
+        .await;
+        // Only the newly admitted owner records a terminal outcome. A duplicate
+        // request must not overwrite the still-running owner's diagnostics.
+        let _ = self
+            .ledger
+            .record_result(
+                &input.request_id,
+                result.as_ref().err().copied().unwrap_or("OK"),
+            )
+            .await;
+        result
     }
     #[allow(clippy::too_many_arguments)]
     async fn run_prepared(

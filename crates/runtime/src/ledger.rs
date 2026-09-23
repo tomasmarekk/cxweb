@@ -42,6 +42,15 @@ impl Ledger {
               state TEXT NOT NULL,
               revision INTEGER NOT NULL DEFAULT 0,
               created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS turn_diagnostics (
+              request_id TEXT PRIMARY KEY,
+              input_bytes INTEGER NOT NULL,
+              prompt_bytes INTEGER NOT NULL,
+              checkpoint INTEGER NOT NULL,
+              attempts INTEGER NOT NULL DEFAULT 0,
+              result_code TEXT,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );",
             )
             .map_err(|_| "E_LEDGER_SCHEMA")?;
@@ -61,6 +70,51 @@ impl Ledger {
         .await
         .map_err(|_| "E_LEDGER_WORKER")?
     }
+    /// Bounded structural evidence only: never persist prompt text, session IDs,
+    /// account data, tool arguments or model output in diagnostics.
+    pub(crate) async fn record_shape(
+        &self,
+        request: &str,
+        input_bytes: usize,
+        prompt_bytes: usize,
+        checkpoint: bool,
+    ) -> Result<(), &'static str> {
+        let request = hash(request.as_bytes());
+        let input_bytes = i64::try_from(input_bytes).map_err(|_| "E_LEDGER_WRITE")?;
+        let prompt_bytes = i64::try_from(prompt_bytes).map_err(|_| "E_LEDGER_WRITE")?;
+        self.run(move |connection| {
+            connection.execute("INSERT OR IGNORE INTO turn_diagnostics(request_id,input_bytes,prompt_bytes,checkpoint) VALUES(?1,?2,?3,?4)", params![request,input_bytes,prompt_bytes,checkpoint]).map_err(|_| "E_LEDGER_WRITE")?;
+            Ok(())
+        }).await
+    }
+
+    pub(crate) async fn record_attempt(&self, request: &str) -> Result<(), &'static str> {
+        let request = hash(request.as_bytes());
+        self.run(move |connection| {
+            connection.execute("UPDATE turn_diagnostics SET attempts=attempts+1, updated_at=CURRENT_TIMESTAMP WHERE request_id=?1", [request]).map_err(|_| "E_LEDGER_WRITE")?;
+            Ok(())
+        }).await
+    }
+
+    pub(crate) async fn record_result(
+        &self,
+        request: &str,
+        code: &'static str,
+    ) -> Result<(), &'static str> {
+        if code.len() > 80
+            || !code
+                .bytes()
+                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+        {
+            return Err("E_LEDGER_DIAGNOSTIC");
+        }
+        let request = hash(request.as_bytes());
+        self.run(move |connection| {
+            connection.execute("UPDATE turn_diagnostics SET result_code=?2, updated_at=CURRENT_TIMESTAMP WHERE request_id=?1 AND result_code IS NULL", params![request,code]).map_err(|_| "E_LEDGER_WRITE")?;
+            Ok(())
+        }).await
+    }
+
     pub async fn admit(
         &self,
         request: &str,
@@ -151,6 +205,44 @@ fn decode(state: &str) -> Result<TurnState, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn diagnostics_keep_only_shape_and_first_terminal_outcome() {
+        let ledger = Ledger::in_memory();
+        let request = "private-request-id";
+        ledger
+            .record_shape(request, 1234, 2048, true)
+            .await
+            .unwrap();
+        ledger.record_attempt(request).await.unwrap();
+        ledger.record_attempt(request).await.unwrap();
+        ledger
+            .record_result(request, "E_CHATGPT_THINKING_FAILED")
+            .await
+            .unwrap();
+        ledger
+            .record_result(request, "E_REQUEST_ALREADY_ADMITTED")
+            .await
+            .unwrap();
+        assert!(
+            ledger
+                .record_result(request, "private account@example.invalid")
+                .await
+                .is_err()
+        );
+        let connection = ledger.connection.lock().unwrap();
+        let row = connection.query_row("SELECT request_id,input_bytes,prompt_bytes,checkpoint,attempts,result_code FROM turn_diagnostics", [], |row| Ok((row.get::<_,String>(0)?,row.get::<_,i64>(1)?,row.get::<_,i64>(2)?,row.get::<_,bool>(3)?,row.get::<_,i64>(4)?,row.get::<_,String>(5)?))).unwrap();
+        assert_eq!(
+            row,
+            (
+                hash(request.as_bytes()),
+                1234,
+                2048,
+                true,
+                2,
+                "E_CHATGPT_THINKING_FAILED".into()
+            )
+        );
+    }
     fn session() -> SessionKey {
         SessionKey {
             installation: "i".into(),
