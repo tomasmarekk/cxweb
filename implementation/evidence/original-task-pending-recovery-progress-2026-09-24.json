@@ -1,0 +1,60 @@
+{
+  "schema": "cxweb.original-task-recovery.v1",
+  "task": "01a0d008-3ab7-7542-8d84-0fe6362657a4",
+  "turn": "01a0d266-96f6-7450-a4de-98c4676b63eb",
+  "completed": false,
+  "diagnostic_native_command_executed": false,
+  "effort": "max",
+  "stages": [
+    {
+      "checkpoint": 1,
+      "attempts": 1,
+      "result": "OK",
+      "updated_at": "2026-09-24 07:52:30"
+    },
+    {
+      "checkpoint": 1,
+      "attempts": 1,
+      "result": "OK",
+      "updated_at": "2026-09-24 07:52:45"
+    },
+    {
+      "checkpoint": 1,
+      "attempts": 1,
+      "result": "OK",
+      "updated_at": "2026-09-24 07:53:00"
+    },
+    {
+      "checkpoint": 1,
+      "attempts": 1,
+      "result": "OK",
+      "updated_at": "2026-09-24 07:53:16"
+    },
+    {
+      "checkpoint": 1,
+      "attempts": 1,
+      "result": "OK",
+      "updated_at": "2026-09-24 07:53:31"
+    },
+    {
+      "checkpoint": 1,
+      "attempts": 1,
+      "result": "OK",
+      "updated_at": "2026-09-24 07:53:52"
+    },
+    {
+      "checkpoint": 1,
+      "attempts": 1,
+      "result": "OK",
+      "updated_at": "2026-09-24 07:54:09"
+    },
+    {
+      "checkpoint": 1,
+      "attempts": 0,
+      "result": "E_BROWSER_RATE_LIMITED",
+      "updated_at": "2026-09-24 07:54:11"
+    }
+  ],
+  "failure": "E_BROWSER_RATE_LIMITED",
+  "note": "Provider requested a few minutes of cooldown. Failed stage had no submission."
+}

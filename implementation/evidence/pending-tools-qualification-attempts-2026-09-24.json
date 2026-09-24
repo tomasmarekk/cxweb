@@ -100,6 +100,12 @@
       "rejected_action": "final_claimed_no_current_coding_task",
       "latest_user_request_present": true,
       "cleanup_confirmed": true
+    },
+    {
+      "kind": "native-app-websocket-conversation",
+      "result": "E_NATIVE_PROBE_ACTION",
+      "rejected_action": "claimed_test_passed_before_test_command",
+      "cleanup_confirmed": true
     }
   ]
 }
