@@ -17,6 +17,25 @@ pub struct Summary {
 }
 
 impl Summary {
+    /// New model summaries contain prose only. Execution identity belongs to the
+    /// validated native history, never to a probabilistic summary. Legacy model
+    /// summaries remain accepted only when their explicit IDs match exactly.
+    pub fn from_model(text: &str, pending: &[Value]) -> Result<Self, &'static str> {
+        let mut value = strict_json::parse(text.as_bytes(), 256 * 1024)
+            .map_err(|_| "E_CHECKPOINT_SUMMARY_JSON")?;
+        let object = value.as_object_mut().ok_or("E_CHECKPOINT_SUMMARY_SCHEMA")?;
+        if !object.contains_key("unresolved_tool_ids") {
+            if pending_calls(pending)? != pending {
+                return Err("E_CHECKPOINT_PENDING_TOOLS");
+            }
+            object.insert(
+                "unresolved_tool_ids".into(),
+                Value::Array(pending.iter().map(|call| call["call_id"].clone()).collect()),
+            );
+        }
+        Self::parse(&value.to_string(), pending)
+    }
+
     pub fn parse(text: &str, pending: &[Value]) -> Result<Self, &'static str> {
         let value = strict_json::parse(text.as_bytes(), 256 * 1024)
             .map_err(|_| "E_CHECKPOINT_SUMMARY_JSON")?;
@@ -118,6 +137,37 @@ pub fn pending_calls(history: &[Value]) -> Result<Vec<Value>, &'static str> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn prose_summary_cannot_drop_or_invent_native_pending_execution() {
+        let summary = json!({"goal":"Continue after results arrive", "constraints":[], "changed_files":[], "decisions":[], "outstanding_work":["Await native results"], "test_results":[]});
+        let calls = vec![
+            json!({"type":"function_call","call_id":"mcp-1","name":"mcp.read","arguments":"{\"path\":\"fixture\"}"}),
+            json!({"type":"custom_tool_call","call_id":"patch-2","name":"apply_patch","input":"literal\n🦀"}),
+        ];
+        let parsed = Summary::from_model(&summary.to_string(), &calls).unwrap();
+        assert_eq!(parsed.unresolved_tool_ids, ["mcp-1", "patch-2"]);
+        let sealed = serde_json::to_string(&parsed).unwrap();
+        assert!(Summary::parse(&sealed, &calls).is_ok());
+        assert!(Summary::parse(&sealed, &[]).is_err());
+        assert!(Summary::parse(&summary.to_string(), &calls).is_err());
+        assert!(
+            Summary::from_model(&summary.to_string(), &[])
+                .unwrap()
+                .unresolved_tool_ids
+                .is_empty()
+        );
+        let mut invented = summary.clone();
+        invented["unresolved_tool_ids"] = json!(["invented"]);
+        assert!(Summary::from_model(&invented.to_string(), &calls).is_err());
+        assert!(
+            Summary::from_model(&summary.to_string(), &[calls[0].clone(), calls[0].clone()])
+                .is_err()
+        );
+        let mut unknown = summary;
+        unknown["extra"] = json!(true);
+        assert!(Summary::from_model(&unknown.to_string(), &calls).is_err());
+    }
 
     #[test]
     fn summary_failures_identify_structure_without_exporting_content() {

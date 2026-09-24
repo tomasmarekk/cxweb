@@ -702,8 +702,9 @@ mod tests {
                 let prompt = self.prompt.lock().unwrap();
                 json!({"protocol":"webbridge.tool.v1","turn_nonce":nonce,"kind":"tool_calls","calls":[{"tool_key":prompt["tools"][0]["tool_key"],"input":input}]}).to_string()
             } else if self.compact.load(Ordering::SeqCst) {
-                let prompt = self.prompt.lock().unwrap();
-                let summary = json!({"goal":"Preserve fixture goal","constraints":["Read only"],"changed_files":[],"decisions":[],"outstanding_work":["Await pending result"],"test_results":["Previous read denied"],"unresolved_tool_ids":prompt["unresolved_tool_ids"]});
+                // The model supplies prose; the runtime must preserve pending
+                // executions without asking the model to reproduce their IDs.
+                let summary = json!({"goal":"Preserve fixture goal","constraints":["Read only"],"changed_files":[],"decisions":[],"outstanding_work":["Await pending result"],"test_results":["Previous read denied"]});
                 json!({"protocol":"webbridge.tool.v1","turn_nonce":nonce,"kind":"checkpoint","summary":summary.to_string()}).to_string()
             } else {
                 let size = self.answer_bytes.load(Ordering::SeqCst);

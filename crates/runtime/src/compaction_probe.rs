@@ -18,6 +18,7 @@ struct Report {
     checkpoint_encrypted: bool,
     replay_identical: bool,
     exact_continuation: bool,
+    pending_result_continuation: bool,
     cleanup_confirmed: bool,
     native_client_tested: bool,
     output_shape: Option<Value>,
@@ -173,6 +174,7 @@ async fn run_inner(
         {"role":"user","content":"Remember the exact result of the completed fixture read. Preserve it verbatim in the checkpoint for the next question. Never run a tool to recover it."},
         {"type":"function_call","call_id":"fixture-read","name":"fixture_read","arguments":"{}"},
         {"type":"function_call_output","call_id":"fixture-read","output":marker},
+        {"type":"custom_tool_call","call_id":"fixture-pending","name":"fixture_pending","input":"Synthetic pending execution; do not run"},
         {"type":"compaction_trigger"}
     ]});
     report.stage = "checkpoint";
@@ -198,6 +200,7 @@ async fn run_inner(
     report.stage = "continuation";
     report.save(directory).await?;
     let resumed = json!({"model":route.id,"reasoning":{"effort":route.effort},"stream":false,"tools":[],"input":[item,
+        {"type":"custom_tool_call_output","call_id":"fixture-pending","output":"DENIED: synthetic fixture; no execution occurred"},
         {"role":"user","content":"Return exactly the complete line from the earlier fixture read. Use only the checkpoint, without tools or extra text."}
     ]});
     let answer = execute(
@@ -209,6 +212,7 @@ async fn run_inner(
         return Err("E_COMPACTION_RECALL");
     }
     report.exact_continuation = true;
+    report.pending_result_continuation = true;
     report.stage = "completed";
     Ok(())
 }

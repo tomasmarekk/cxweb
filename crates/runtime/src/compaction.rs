@@ -118,7 +118,7 @@ impl CheckpointEncoder for BoundCheckpoint {
     }
 
     fn seal(&self, summary: &str, pending: &[Value]) -> Result<String, &'static str> {
-        let summary = Summary::parse(summary, pending)?;
+        let summary = Summary::from_model(summary, pending)?;
         let checkpoint = Checkpoint {
             version: 1,
             summary,
