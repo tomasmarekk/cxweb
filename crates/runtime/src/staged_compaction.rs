@@ -13,6 +13,20 @@ pub(crate) const MAX_SOURCE_BYTES: usize = 8 * 1024 * 1024;
 const NONCE: &str = "00000000000000000000000000000000";
 const STAGE_BYTES: usize = 256 * 1024;
 const SOURCE_BYTES: usize = 128 * 1024;
+
+fn stage_key(
+    session: &cxweb_domain::SessionKey,
+    binding: &str,
+    bytes: &[u8],
+) -> Result<String, &'static str> {
+    let scope = serde_json::to_vec(session).map_err(|_| "E_PROVIDER_SCOPE")?;
+    Ok(format!(
+        "checkpoint-source-v1:{:x}:{:x}:{:x}",
+        Sha256::digest(scope),
+        Sha256::digest(binding.as_bytes()),
+        Sha256::digest(bytes)
+    ))
+}
 const INSTRUCTIONS: &str = "The historical task is carried by the ordered source fragments and the prior summary. Staging metadata is not a new task.";
 
 struct StageEncoder(Arc<dyn CheckpointEncoder>);
@@ -48,7 +62,7 @@ fn stage(
     }
     history.push(
         json!({"role":"user","content":serde_json::to_string(&json!({
-        "source_start_byte":start,"source_end_byte":end,"source_total_bytes":source.len(),
+        "source_start_byte":start,"source_end_byte":end,
         "final_fragment":end == source.len(),"source_fragment":&source[start..end]
     })).map_err(|_| "E_CHECKPOINT_SUMMARY")?}),
     );
@@ -134,18 +148,30 @@ pub(crate) async fn execute(
             input.request_id,
             Sha256::digest(&bytes)
         );
-        let delivery = coordinator
-            .execute_with_progress(
-                TurnInput {
-                    request_id,
-                    session: input.session.clone(),
-                    bytes,
-                },
-                cancellation.clone(),
-                Some(stage_encoder.clone()),
-                if final_stage { progress.clone() } else { None },
-            )
-            .await?;
+        let cache_key = checkpoint
+            .cache_binding()
+            .map(|binding| stage_key(&input.session, &binding, &bytes))
+            .transpose()?;
+        let cached = match &cache_key {
+            Some(key) => coordinator.cached_stage(key)?,
+            None => None,
+        };
+        let delivery = if let Some(delivery) = cached {
+            delivery
+        } else {
+            coordinator
+                .execute_with_progress(
+                    TurnInput {
+                        request_id,
+                        session: input.session.clone(),
+                        bytes,
+                    },
+                    cancellation.clone(),
+                    Some(stage_encoder.clone()),
+                    if final_stage { progress.clone() } else { None },
+                )
+                .await?
+        };
         let response = strict_json::parse(delivery.json.as_bytes(), 2 * 1024 * 1024)?;
         let output = response["output"]
             .as_array()
@@ -159,6 +185,13 @@ pub(crate) async fn execute(
             .ok_or("E_CHECKPOINT_SUMMARY")?;
         // Authenticate even the final stage before exposing any checkpoint.
         previous = Some(checkpoint.restore_summary(token, pending)?);
+        // Cache only a completed, authenticated checkpoint. The key includes
+        // the complete scope, selected model/effort, exact fragment, previous
+        // summary and pending calls. A changed suffix reuses only identical
+        // earlier stages; failed/uncertain sends never enter this cache.
+        if let Some(key) = cache_key {
+            coordinator.remember_stage(key, delivery.clone())?;
+        }
         if final_stage {
             return Ok(delivery);
         }
@@ -170,6 +203,48 @@ pub(crate) async fn execute(
 mod tests {
     use super::*;
     use serde_json::Value;
+
+    #[test]
+    fn cached_stages_are_bound_to_every_scope_field_codec_and_exact_input() {
+        let session = cxweb_domain::SessionKey {
+            installation: "i".into(),
+            native_session: "s".into(),
+            account_scope: "a".into(),
+            workspace_scope: "w".into(),
+            route: "webbridge/test".into(),
+            epoch: 1,
+        };
+        let key = stage_key(&session, "codec-and-original-task-route", b"exact stage").unwrap();
+        for field in [
+            "installation",
+            "native_session",
+            "account_scope",
+            "workspace_scope",
+            "route",
+            "epoch",
+        ] {
+            let mut value = serde_json::to_value(&session).unwrap();
+            value[field] = if field == "epoch" {
+                json!(2)
+            } else {
+                json!("different")
+            };
+            let changed = serde_json::from_value(value).unwrap();
+            assert_ne!(
+                key,
+                stage_key(&changed, "codec-and-original-task-route", b"exact stage").unwrap(),
+                "{field}"
+            );
+        }
+        assert_ne!(
+            key,
+            stage_key(&session, "other-codec-or-task-route", b"exact stage").unwrap()
+        );
+        assert_ne!(
+            key,
+            stage_key(&session, "codec-and-original-task-route", b"changed stage").unwrap()
+        );
+    }
 
     #[test]
     fn fragments_cover_unicode_source_exactly_and_keep_pending_calls() {

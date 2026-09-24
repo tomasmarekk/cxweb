@@ -96,6 +96,9 @@ impl BoundCheckpoint {
 }
 
 impl CheckpointEncoder for BoundCheckpoint {
+    fn cache_binding(&self) -> Option<String> {
+        serde_json::to_string(&(&self.session, &self.codec_id)).ok()
+    }
     fn response_model(&self) -> Option<&str> {
         Some(&self.session.route)
     }

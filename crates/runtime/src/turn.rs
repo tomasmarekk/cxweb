@@ -91,6 +91,9 @@ impl BrowserRequest {
 /// Runtime-owned encryption bound to one qualified task and codec. The model
 /// cannot select a key, scope or ciphertext, and sealing precedes durable completion.
 pub(crate) trait CheckpointEncoder: Send + Sync {
+    fn cache_binding(&self) -> Option<String> {
+        None
+    }
     fn response_model(&self) -> Option<&str> {
         None
     }
@@ -124,6 +127,7 @@ pub struct Coordinator {
     scheduler: Scheduler,
     browser: Arc<dyn BrowserDriver>,
     replay: Arc<Mutex<VecDeque<(String, Delivery)>>>,
+    stage_cache: Arc<Mutex<VecDeque<(String, Delivery)>>>,
     #[cfg(windows)]
     _consumer: Option<crate::generation_handoff::ConsumerLease>,
 }
@@ -134,9 +138,43 @@ impl Coordinator {
             scheduler: Scheduler::default(),
             browser,
             replay: Arc::default(),
+            stage_cache: Arc::default(),
             #[cfg(windows)]
             _consumer: None,
         }
+    }
+    pub(crate) fn cached_stage(&self, key: &str) -> Result<Option<Delivery>, &'static str> {
+        Ok(self
+            .stage_cache
+            .lock()
+            .map_err(|_| "E_REPLAY_STATE")?
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, delivery)| {
+                let mut delivery = delivery.clone();
+                delivery.live_verified = false;
+                delivery
+            }))
+    }
+
+    pub(crate) fn remember_stage(
+        &self,
+        key: String,
+        delivery: Delivery,
+    ) -> Result<(), &'static str> {
+        let mut cache = self.stage_cache.lock().map_err(|_| "E_REPLAY_STATE")?;
+        const LIMIT: usize = 16 * 1024 * 1024;
+        if delivery.bytes() > LIMIT {
+            return Ok(());
+        }
+        cache.retain(|(k, _)| k != &key);
+        while cache.len() >= 128
+            || cache.iter().map(|(_, d)| d.bytes()).sum::<usize>() + delivery.bytes() > LIMIT
+        {
+            cache.pop_front();
+        }
+        cache.push_back((key, delivery));
+        Ok(())
     }
     /// The detached coordinator retains exclusive session use through cancellation
     /// cleanup, even if its gateway or requesting UI has already disappeared.
@@ -926,6 +964,40 @@ mod tests {
     }
     fn input() -> TurnInput {
         TurnInput { request_id:"request-1".into(), session:SessionKey { installation:"i".into(),native_session:"s".into(),account_scope:"a".into(),workspace_scope:"w".into(),route:"webbridge/test".into(),epoch:0 }, bytes:json!({"model":"webbridge/test","input":"synthetic task","tools":[{"type":"function","name":"read_file","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}}]}).to_string().into_bytes() }
+    }
+
+    #[test]
+    fn completed_stage_cache_is_bounded_and_not_fresh_browser_evidence() {
+        let coordinator = Coordinator::new(
+            Ledger::in_memory(),
+            MockBrowser::new(Mode::ThinkingThenTool),
+        );
+        let delivery = Delivery {
+            json: "sealed fixture".into(),
+            sse: String::new(),
+            live_verified: true,
+        };
+        for index in 0..129 {
+            coordinator
+                .remember_stage(index.to_string(), delivery.clone())
+                .unwrap();
+        }
+        assert!(coordinator.cached_stage("0").unwrap().is_none());
+        let cached = coordinator.cached_stage("128").unwrap().unwrap();
+        assert_eq!(cached.json, delivery.json);
+        assert!(!cached.live_verified);
+        coordinator
+            .remember_stage(
+                "oversized".into(),
+                Delivery {
+                    json: "x".repeat(16 * 1024 * 1024 + 1),
+                    sse: String::new(),
+                    live_verified: true,
+                },
+            )
+            .unwrap();
+        assert!(coordinator.cached_stage("oversized").unwrap().is_none());
+        assert!(coordinator.cached_stage("128").unwrap().is_some());
     }
 
     #[tokio::test]

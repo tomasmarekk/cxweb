@@ -1,11 +1,29 @@
 Windows x64 preview of cxweb, connecting ChatGPT web models to Codex App and Codex CLI.
 
-This update fixes an account-verification failure that could occur when ChatGPT
-took more than ten seconds to load its account information. An incomplete read
-now receives one confirmation even after a slow first read. This does not resend
-a message, switch accounts, or bypass a browser verification challenge. Private
-diagnostics distinguish incomplete account information from an observed identity
-mismatch to make any recurrence actionable.
+This update makes pending tool-call identity runtime-owned during compaction.
+The model summarizes task state; cxweb preserves the exact unresolved native
+calls and their arguments in the authenticated checkpoint. The model no longer
+has to reproduce internal call IDs. Existing checkpoints remain readable, and
+unknown, duplicate or mismatched tool results are still rejected.
+
+Large compaction sources can now reach the existing staged summarizer before
+the one-message browser ceiling is applied. Every submitted stage remains
+bounded; this does not truncate history or increase the browser message limit.
+It addresses the case where a large completed tool result caused an immediate
+E_CONTEXT_BUDGET despite the history being suitable for staged compaction.
+
+Within a running runtime, a later attempt can reuse already completed summary
+stages for the same authenticated task and identical source. Appending history
+recomputes the changed suffix instead of resending every earlier fragment.
+Account/workspace/model/codec changes prevent reuse. The bounded cache does not
+survive a runtime restart and never stores failed or uncertain submissions.
+
+Qualification for this update includes passing Rust workspace tests and a live
+encrypted checkpoint/replay/continuation with a pending tool result. The original
+long-running App task completed seven summary stages before ChatGPT imposed a
+temporary Too many requests restriction; its final continuation is not yet
+verified. Strict native coding fixtures also rejected premature or non-exact
+model outputs. This preview is not a claim of complete live coding qualification.
 
 The **Compaction model** selector in cxweb lets you choose from
 the verified WebGPT models and reasoning levels offered by your account. For

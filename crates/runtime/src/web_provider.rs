@@ -931,7 +931,7 @@ mod tests {
             )
             .unwrap();
             assert_eq!(response["output"][0]["type"], "compaction");
-            let prompts = browser.prompts.lock().unwrap();
+            let prompts = browser.prompts.lock().unwrap().clone();
             assert!(prompts.len() > 1);
             let mut actual = String::new();
             for (index, prompt) in prompts.iter().enumerate() {
@@ -952,6 +952,48 @@ mod tests {
             }
             assert_eq!(actual, expected);
             assert!(!actual.contains("PRIVATE_METADATA"));
+            let initial_sends = browser.sends.load(Ordering::SeqCst);
+            drop(prompts);
+            for (label, append, foreign) in [
+                ("same-source", false, false),
+                ("new-suffix", true, false),
+                ("other-task", false, true),
+            ] {
+                let mut next = payload.clone();
+                if append {
+                    let items = next["input"].as_array_mut().unwrap();
+                    items.insert(
+                        items.len() - 1,
+                        json!({"role":"user","content":"Additional current request"}),
+                    );
+                }
+                let (parts, _) =
+                    request("http://127.0.0.1:12345", label, "window", false).into_parts();
+                let mut identity = WebIdentity::from_headers(&parts.headers).unwrap();
+                if foreign {
+                    identity.native_session.push_str("-different");
+                }
+                let before = browser.sends.load(Ordering::SeqCst);
+                provider
+                    .execute(WebRequest {
+                        payload: next,
+                        identity: Some(identity),
+                        compact: false,
+                        cancellation: tokio_util::sync::CancellationToken::new(),
+                        transport: crate::gateway::WebTransport::Http,
+                        progress: None,
+                    })
+                    .await
+                    .unwrap();
+                let sent = browser.sends.load(Ordering::SeqCst) - before;
+                if foreign {
+                    assert_eq!(sent, initial_sends);
+                } else if append {
+                    assert!(sent > 0 && sent < initial_sends);
+                } else {
+                    assert_eq!(sent, 0);
+                }
+            }
         }
         std::fs::remove_file(directory.join("checkpoint-key.dpapi")).unwrap();
         std::fs::remove_dir(directory).unwrap();
