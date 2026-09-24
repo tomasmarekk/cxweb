@@ -98,10 +98,20 @@ fn continuation(bytes: &[u8], marker: &str) -> bool {
         .ok()
         .is_some_and(|response| {
             response["output"].as_array().is_some_and(|output| {
-                output.len() == 1
-                    && output[0]["type"] == "message"
-                    && output[0]["role"] == "assistant"
-                    && output[0]["content"].as_array().is_some_and(|content| {
+                let item = match output.as_slice() {
+                    [item] => item,
+                    [reasoning, item]
+                        if response["id"].as_str().is_some_and(|id| {
+                            crate::native_fixture::public_reasoning(reasoning, id)
+                        }) =>
+                    {
+                        item
+                    }
+                    _ => return false,
+                };
+                item["type"] == "message"
+                    && item["role"] == "assistant"
+                    && item["content"].as_array().is_some_and(|content| {
                         content.len() == 1
                             && content[0]["type"] == "output_text"
                             && content[0]["text"] == marker
@@ -236,5 +246,29 @@ mod tests {
             .unwrap()
             .push(json!({"type":"function_call"}));
         assert!(!continuation(invalid.to_string().as_bytes(), "marker"));
+    }
+
+    #[test]
+    fn exact_recall_allows_only_response_bound_public_reasoning() {
+        let reasoning = json!({"id":"fixture_reasoning","type":"reasoning","summary":[{"type":"summary_text","text":"Checking remembered result"}]});
+        let answer = json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"marker"}]});
+        let valid = json!({"id":"fixture","output":[reasoning,answer]});
+        assert!(continuation(valid.to_string().as_bytes(), "marker"));
+        assert!(!continuation(valid.to_string().as_bytes(), "other"));
+        for output in [
+            json!([reasoning]),
+            json!([answer, reasoning]),
+            json!([reasoning, answer, answer]),
+        ] {
+            assert!(!continuation(
+                json!({"id":"fixture","output":output})
+                    .to_string()
+                    .as_bytes(),
+                "marker"
+            ));
+        }
+        let mut foreign = valid;
+        foreign["id"] = json!("other-response");
+        assert!(!continuation(foreign.to_string().as_bytes(), "marker"));
     }
 }

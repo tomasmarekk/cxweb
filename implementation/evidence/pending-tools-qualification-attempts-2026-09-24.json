@@ -1,0 +1,30 @@
+{
+  "schema": "cxweb.pending-tools-evidence.v1",
+  "source": "2dd45f13869d1d2a4b9700ca9eba309f4a921470",
+  "attempts": [
+    {
+      "kind": "synthetic-pending",
+      "result": "E_BROWSER_TEMPORARY_OBSERVATION",
+      "submissions": 0
+    },
+    {
+      "kind": "native-app-websocket",
+      "result": "E_NATIVE_PROBE_ACTION",
+      "rejected_step": 5,
+      "rejected_action": "final_message_instead_of_test_command",
+      "compaction_requests": 1,
+      "checkpoint_recall_verified": true,
+      "post_compaction_patch_file_created": true,
+      "post_compaction_test_verified": false,
+      "cleanup_confirmed": true
+    },
+    {
+      "kind": "synthetic-pending",
+      "result": "E_COMPACTION_RECALL",
+      "encrypted_checkpoint": true,
+      "identical_replay": true,
+      "cleanup_confirmed": true,
+      "note": "Verifier incorrectly rejected response-bound public reasoning; exact final answer not retained, so success is not inferred."
+    }
+  ]
+}

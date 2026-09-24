@@ -372,7 +372,7 @@ impl Fixture {
 // A public reasoning item is metadata, not an additional tool operation.
 // Accept only the exact shape our wire encoder emits, with bounded text and
 // response-scoped identity. The action that follows retains its full policy.
-fn public_reasoning(item: &Value, response_id: &str) -> bool {
+pub(crate) fn public_reasoning(item: &Value, response_id: &str) -> bool {
     item.as_object().is_some_and(|object| object.len() == 3)
         && item["type"] == "reasoning"
         && item["id"] == format!("{response_id}_reasoning")
