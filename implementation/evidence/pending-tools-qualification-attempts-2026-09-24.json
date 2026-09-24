@@ -92,6 +92,14 @@
       "native_tools_available": 10,
       "post_compaction_patch_verified": true,
       "cleanup_confirmed": true
+    },
+    {
+      "kind": "native-app-websocket-windows-command",
+      "result": "E_NATIVE_PROBE_ACTION",
+      "rejected_step": 4,
+      "rejected_action": "final_claimed_no_current_coding_task",
+      "latest_user_request_present": true,
+      "cleanup_confirmed": true
     }
   ]
 }
