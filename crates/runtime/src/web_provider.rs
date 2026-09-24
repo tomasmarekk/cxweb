@@ -512,6 +512,10 @@ impl CoordinatorProvider {
         object.remove("stream");
         object.remove("client_metadata");
         let bytes = serde_json::to_vec(&payload).map_err(|_| "E_INVALID_REQUEST")?;
+        #[cfg(windows)]
+        if let Some(fixture) = &self.native_fixture {
+            fixture.capture_request(&payload);
+        }
         let session = SessionKey {
             installation: self.scope.installation.clone(),
             native_session: identity.native_session,

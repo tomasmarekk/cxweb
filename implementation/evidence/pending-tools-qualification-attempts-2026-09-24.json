@@ -75,6 +75,23 @@
       "checkpoint_recall_verified": true,
       "post_compaction_test_verified": false,
       "cleanup_confirmed": true
+    },
+    {
+      "kind": "native-app-websocket-sequencing",
+      "result": "E_NATIVE_PROBE_ACTION",
+      "rejected_step": 4,
+      "rejected_action": "repeated_previous_recall_answer",
+      "cleanup_confirmed": true
+    },
+    {
+      "kind": "native-app-websocket-request-capture",
+      "result": "E_NATIVE_PROBE_ACTION",
+      "rejected_step": 5,
+      "rejected_action": "equivalent_windows_path_separators_in_exact_test_command",
+      "latest_user_request_present": true,
+      "native_tools_available": 10,
+      "post_compaction_patch_verified": true,
+      "cleanup_confirmed": true
     }
   ]
 }

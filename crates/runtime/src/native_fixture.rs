@@ -15,7 +15,7 @@ pub(crate) const READ_ACK: &str = "cxweb tool result recorded";
 pub(crate) const TEST_PASSED: &str = "cxweb fixture tests passed";
 pub(crate) const TEST_FAILED: &str = "cxweb fixture tests failed";
 pub(crate) const BROKEN_OUTPUT: &str = "incorrect fixture output";
-pub(crate) const TEST: &str = "if ((Get-Content -LiteralPath './probe-output.txt' -Raw -ErrorAction Stop) -ceq (Get-Content -LiteralPath './probe-input.txt' -Raw -ErrorAction Stop)) { Write-Output 'cxweb fixture tests passed'; exit 0 } else { Write-Output 'cxweb fixture tests failed'; exit 1 }";
+pub(crate) const TEST: &str = "if ((Get-Content -LiteralPath '.\\probe-output.txt' -Raw -ErrorAction Stop) -ceq (Get-Content -LiteralPath '.\\probe-input.txt' -Raw -ErrorAction Stop)) { Write-Output 'cxweb fixture tests passed'; exit 0 } else { Write-Output 'cxweb fixture tests failed'; exit 1 }";
 const ERROR: &str = "E_NATIVE_PROBE_ACTION";
 
 pub(crate) struct Fixture {
@@ -221,6 +221,11 @@ impl Fixture {
     }
     pub fn rejection_diagnostic(&self) -> Option<Value> {
         self.rejection.lock().ok().and_then(|value| value.clone())
+    }
+    pub fn capture_request(&self, payload: &Value) {
+        if self.capture_rejection {
+            let _ = std::fs::write(self.cwd.join("request.private.json"), payload.to_string());
+        }
     }
     fn record_rejection(&self, response: &Value, step: usize) {
         // Explicit opt-in, isolated synthetic fixture only. Never included in
