@@ -6,6 +6,10 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
+// Local source buffer only, never a browser message. Each encoded stage still
+// passes STAGE_BYTES. Large completed tool results can exceed one page budget.
+pub(crate) const MAX_SOURCE_BYTES: usize = 8 * 1024 * 1024;
+
 const NONCE: &str = "00000000000000000000000000000000";
 const STAGE_BYTES: usize = 256 * 1024;
 const SOURCE_BYTES: usize = 128 * 1024;
@@ -101,7 +105,7 @@ pub(crate) async fn execute(
             .await;
     };
     let original = CanonicalRequest::decode_compaction(&input.bytes)?;
-    let rendered = original.browser_prompt(NONCE, crate::context_budget::HARD_PROMPT_BYTES)?;
+    let rendered = original.browser_prompt(NONCE, MAX_SOURCE_BYTES)?;
     if rendered.len() <= STAGE_BYTES {
         return coordinator
             .execute_with_progress(input, cancellation, Some(checkpoint), progress)

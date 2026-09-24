@@ -475,8 +475,10 @@ impl CoordinatorProvider {
         #[cfg(windows)]
         if let Some(budget) = self.context_budget {
             if checkpoint.is_some() {
-                decoded
-                    .browser_prompt("00000000000000000000000000000000", budget.summary_bytes())?;
+                decoded.browser_prompt(
+                    "00000000000000000000000000000000",
+                    crate::staged_compaction::MAX_SOURCE_BYTES,
+                )?;
             } else if match crate::context_budget::needs_compaction(&payload, &decoded, budget) {
                 Ok(needed) => needed,
                 Err(code) => {
@@ -884,14 +886,15 @@ mod tests {
         let payload = json!({"model":"webbridge/test","reasoning":{"effort":"medium"},
             "client_metadata":{"private":"PRIVATE_METADATA"},
             "input":[{"role":"user","content":"Keep original state"},
-            {"role":"assistant","content":"history漢字".repeat(35_000)},pending,{"type":"compaction_trigger"}]});
+            {"role":"assistant","content":"history漢字".repeat(120_000)},pending,{"type":"compaction_trigger"}]});
         let expected = CanonicalRequest::decode_compaction(&serde_json::to_vec(&payload).unwrap())
             .unwrap()
             .browser_prompt(
                 "00000000000000000000000000000000",
-                crate::context_budget::HARD_PROMPT_BYTES,
+                crate::staged_compaction::MAX_SOURCE_BYTES,
             )
             .unwrap();
+        assert!(expected.len() > crate::context_budget::HARD_PROMPT_BYTES);
         let expected = expected.split_once("\nCLIENT_DATA_JSON\n").unwrap().1;
         for uncertain in [false, true] {
             let (provider, browser) = provider_fixture(false);
@@ -1147,7 +1150,7 @@ mod tests {
             Some("E_CONTEXT_BUDGET")
         );
         assert!(browser.sessions.lock().unwrap().is_empty());
-        let oversized = json!({"model":"webbridge/test","input":[{"role":"user","content":"*".repeat(200_000)},{"type":"compaction_trigger"}]});
+        let oversized = json!({"model":"webbridge/test","input":[{"role":"user","content":"*".repeat(1_500_000)},{"type":"compaction_trigger"}]});
         assert_eq!(
             provider
                 .execute(make_request(oversized, "oversized-compact", "old", "task"))

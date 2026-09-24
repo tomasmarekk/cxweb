@@ -8,7 +8,8 @@ pub(crate) const HARD_PROMPT_BYTES: usize = cxweb_codex_adapter::context_budget:
 #[cfg(any(windows, test))]
 const SIZING_NONCE: &str = "00000000000000000000000000000000";
 
-/// Ask the reviewed client to compact only when a summary request still fits.
+/// Request compaction when the source fits staged processing and the retained
+/// policy, tools and pending execution state still fit a browser message.
 /// This never modifies the submitted transcript or prepares a browser target.
 #[cfg(any(windows, test))]
 pub(crate) fn needs_compaction(
@@ -58,7 +59,8 @@ pub(crate) fn needs_compaction(
     {
         return Ok(false);
     }
-    summary.browser_prompt(SIZING_NONCE, budget.summary_bytes())?;
+    // The full source is not submitted: the staged encoder bounds each page.
+    summary.browser_prompt(SIZING_NONCE, crate::staged_compaction::MAX_SOURCE_BYTES)?;
     Ok(true)
 }
 
@@ -126,6 +128,8 @@ mod tests {
         assert_eq!(check(&payload), Ok(true));
         assert_eq!(payload, original);
         payload["input"][1]["content"] = json!("a".repeat(1_100_000));
+        assert_eq!(check(&payload), Ok(true));
+        payload["input"][1]["content"] = json!("*".repeat(1_500_000));
         assert_eq!(check(&payload), Err("E_CONTEXT_BUDGET"));
         payload["input"][1]["content"] = json!("a".repeat(180_000));
         assert_eq!(check(&payload), Ok(false));
