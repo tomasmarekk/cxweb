@@ -274,9 +274,12 @@ type Reply<T> = oneshot::Sender<Result<T, &'static str>>;
 fn confirm_scope_read<T>(
     mut read: impl FnMut() -> Result<T, &'static str>,
 ) -> Result<T, &'static str> {
-    let started = std::time::Instant::now();
     match read() {
-        Err("E_SESSION_SCOPE") if started.elapsed() < std::time::Duration::from_secs(10) => {
+        // The adapter's first bounded read can already spend ten seconds on
+        // delayed account rows. Its duration must not disable confirmation.
+        // Retry only an incomplete observation, at most once; a positive scope
+        // is compared with the binding by the caller without any retry.
+        Err("E_SESSION_SCOPE") => {
             std::thread::sleep(std::time::Duration::from_millis(200));
             read()
         }
@@ -408,10 +411,7 @@ impl ManagedDriver {
         let installation = binding.installation.clone();
         let mut verify: ScopeVerifier = Box::new(move |browser, page| {
             confirm_scope_read(|| {
-                let surface = browser
-                    .account_scope(page)
-                    .map_err(|error| browser_error(&error, "E_SESSION_SCOPE"))?;
-                let scope = BrowserScope::from_surface(&installation, &surface)?;
+                let scope = BrowserScope::observe(&installation, browser, page)?;
                 Ok((scope.account, scope.workspace))
             })
         });
@@ -432,10 +432,8 @@ impl ManagedDriver {
                                    page: &ManagedPage,
                                    verify: &mut ScopeVerifier| {
                     let (account, workspace) = verify(browser, page)?;
-                    if account != expected_account || workspace != expected_workspace {
-                        return Err("E_SESSION_SCOPE");
-                    }
-                    Ok(())
+                    BrowserScope { account, workspace }
+                        .check_expected(&expected_account, &expected_workspace)
                 };
                 while let Some(command) = incoming.blocking_recv() {
                     match command {
@@ -805,6 +803,23 @@ impl BrowserDriver for ManagedDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slow_incomplete_scope_still_receives_one_confirmation() {
+        let mut calls = 0;
+        let result = confirm_scope_read(|| {
+            calls += 1;
+            if calls == 1 {
+                // Reproduce the adapter's bounded submenu hydration timeout.
+                std::thread::sleep(std::time::Duration::from_millis(10_050));
+                Err("E_SESSION_SCOPE")
+            } else {
+                Ok(("verified-account", "verified-workspace"))
+            }
+        });
+        assert_eq!(result, Ok(("verified-account", "verified-workspace")));
+        assert_eq!(calls, 2);
+    }
 
     #[test]
     fn incomplete_scope_is_confirmed_once_but_observed_identity_and_restrictions_are_not_retried() {

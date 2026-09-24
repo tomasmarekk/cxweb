@@ -18,7 +18,59 @@ fn hash(parts: &[&str]) -> String {
     format!("{:x}", digest.finalize())
 }
 
+fn save_diagnostic(report: serde_json::Value) {
+    if let Ok(paths) = cxweb_platform::state::StatePaths::open()
+        && let Ok(bytes) = serde_json::to_vec_pretty(&report)
+    {
+        let _ = std::fs::write(paths.state.join("scope-read-diagnostic.json"), bytes);
+    }
+}
+
+fn mismatch_diagnostic(account_matches: bool, workspace_matches: bool) -> serde_json::Value {
+    serde_json::json!({
+        "schema": "cxweb.scope-read.v1",
+        "kind": "identity_mismatch",
+        "failure": "E_SESSION_SCOPE",
+        "observed_at": cxweb_platform::clock::utc_timestamp(),
+        "account_matches": account_matches,
+        "workspace_matches": workspace_matches,
+    })
+}
+
 impl BrowserScope {
+    pub fn observe(
+        installation: &str,
+        browser: &mut cxweb_browser_adapter::ManagedBrowser,
+        page: &cxweb_browser_adapter::ManagedPage,
+    ) -> Result<Self, &'static str> {
+        let result = browser
+            .account_scope(page)
+            .map_err(|error| crate::managed_driver::browser_error(&error, "E_SESSION_SCOPE"))
+            .and_then(|surface| Self::from_surface(installation, &surface));
+        if result.is_err() {
+            // Structural evidence only: never persist account values, workspace
+            // names, page text, cookies or raw browser errors.
+            save_diagnostic(serde_json::json!({
+                "schema": "cxweb.scope-read.v1",
+                "kind": "incomplete_observation",
+                "observed_at": cxweb_platform::clock::utc_timestamp(),
+                "failure": result.as_ref().err(),
+                "scope": browser.scope_diagnostic(),
+            }));
+        }
+        result
+    }
+
+    pub fn check_expected(&self, account: &str, workspace: &str) -> Result<(), &'static str> {
+        let account_matches = self.account == account;
+        let workspace_matches = self.workspace == workspace;
+        if account_matches && workspace_matches {
+            return Ok(());
+        }
+        save_diagnostic(mismatch_diagnostic(account_matches, workspace_matches));
+        Err("E_SESSION_SCOPE")
+    }
+
     pub fn from_surface(installation: &str, surface: &ScopeSurface) -> Result<Self, &'static str> {
         let valid = |value: &str| {
             !value.is_empty() && value.len() <= 512 && !value.chars().any(char::is_control)
@@ -67,6 +119,19 @@ impl BrowserScope {
 mod tests {
     use super::*;
     use cxweb_browser_adapter::ScopeDiagnostic;
+
+    #[test]
+    fn mismatch_diagnostics_only_contain_comparison_results() {
+        for account_matches in [true, false] {
+            for workspace_matches in [true, false] {
+                let report = mismatch_diagnostic(account_matches, workspace_matches);
+                assert_eq!(report["kind"], "identity_mismatch");
+                assert_eq!(report["account_matches"], account_matches);
+                assert_eq!(report["workspace_matches"], workspace_matches);
+                assert_eq!(report.as_object().unwrap().len(), 6);
+            }
+        }
+    }
 
     fn surface() -> ScopeSurface {
         ScopeSurface {

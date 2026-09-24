@@ -202,15 +202,8 @@ impl Receipt {
             if !baseline.composer_empty || baseline.generating {
                 return Err("E_BROWSER_BUSY");
             }
-            let surface = browser
-                .account_scope(&page)
-                .map_err(|error| crate::managed_driver::browser_error(&error, "E_SESSION_SCOPE"))?;
-            let current = BrowserScope::from_surface(&self.binding.installation, &surface)?;
-            if current.account != self.binding.account
-                || current.workspace != self.binding.workspace
-            {
-                return Err("E_SESSION_SCOPE");
-            }
+            let current = BrowserScope::observe(&self.binding.installation, &mut browser, &page)?;
+            current.check_expected(&self.binding.account, &self.binding.workspace)?;
             for route in &self.binding.routes {
                 for variant in &route.reasoning {
                     let label = browser
@@ -233,15 +226,8 @@ impl Receipt {
             {
                 return Err("E_TEMPORARY_CHAT");
             }
-            let surface = browser
-                .account_scope(&page)
-                .map_err(|error| crate::managed_driver::browser_error(&error, "E_SESSION_SCOPE"))?;
-            let current = BrowserScope::from_surface(&self.binding.installation, &surface)?;
-            if current.account != self.binding.account
-                || current.workspace != self.binding.workspace
-            {
-                return Err("E_SESSION_SCOPE");
-            }
+            let current = BrowserScope::observe(&self.binding.installation, &mut browser, &page)?;
+            current.check_expected(&self.binding.account, &self.binding.workspace)?;
             if cancellation.is_cancelled() {
                 return Err("E_CANCELLED");
             }
