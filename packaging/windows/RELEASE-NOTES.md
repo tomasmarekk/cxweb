@@ -18,12 +18,13 @@ recomputes the changed suffix instead of resending every earlier fragment.
 Account/workspace/model/codec changes prevent reuse. The bounded cache does not
 survive a runtime restart and never stores failed or uncertain submissions.
 
-Qualification for this update includes passing Rust workspace tests and a live
-encrypted checkpoint/replay/continuation with a pending tool result. The original
-long-running App task completed seven summary stages before ChatGPT imposed a
-temporary Too many requests restriction; its final continuation is not yet
-verified. Strict native coding fixtures also rejected premature or non-exact
-model outputs. This preview is not a claim of complete live coding qualification.
+Qualification includes passing Rust workspace tests and installed App/CLI backend
+checkpoint tests over HTTP and WebSocket with a synthetic browser. A live Codex
+App WebSocket test also passed native file read, compaction, exact result recall,
+native patch and execution of the test command: three actual native tools and
+no provider failures. The following live CLI test was interrupted at compaction
+by ChatGPT's temporary Too many requests restriction. The original long-running
+App task is not yet verified end to end; this remains a preview.
 
 The **Compaction model** selector in cxweb lets you choose from
 the verified WebGPT models and reasoning levels offered by your account. For
