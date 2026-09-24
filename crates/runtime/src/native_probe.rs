@@ -95,6 +95,7 @@ pub(crate) async fn qualify_installed_checkpoint(
             crate::native_fixture::Fixture::new(directory.join("workspace"), marker.clone());
         fixture.checkpoint = true;
         fixture.test = true;
+        fixture.capture_rejection = selected.capture_failure;
         Arc::new(fixture)
     });
     let descriptor = directory.join("runtime/connection.json");

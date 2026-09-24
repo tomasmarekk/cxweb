@@ -19,6 +19,7 @@ pub(crate) const TEST: &str = "if ((Get-Content -LiteralPath './probe-output.txt
 const ERROR: &str = "E_NATIVE_PROBE_ACTION";
 
 pub(crate) struct Fixture {
+    pub capture_rejection: bool,
     pub checkpoint: bool,
     pub denial: bool,
     pub test: bool,
@@ -51,6 +52,7 @@ impl Fixture {
             }
         }
         Self {
+            capture_rejection: false,
             checkpoint: false,
             denial: false,
             test: false,
@@ -221,6 +223,14 @@ impl Fixture {
         self.rejection.lock().ok().and_then(|value| value.clone())
     }
     fn record_rejection(&self, response: &Value, step: usize) {
+        // Explicit opt-in, isolated synthetic fixture only. Never included in
+        // exported diagnostics or enabled on a user's production task.
+        if self.capture_rejection {
+            let _ = std::fs::write(
+                self.cwd.join("rejected-response.private.json"),
+                response.to_string(),
+            );
+        }
         let output = response["output"].as_array();
         let public_reasoning_present = output.is_some_and(|items| {
             items.len() == 2

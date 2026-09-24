@@ -25,6 +25,46 @@
       "identical_replay": true,
       "cleanup_confirmed": true,
       "note": "Verifier incorrectly rejected response-bound public reasoning; exact final answer not retained, so success is not inferred."
+    },
+    {
+      "kind": "native-cli-http",
+      "result": "E_NATIVE_PROBE_GENERATION",
+      "action_rejection": {
+        "apply_patch": false,
+        "arguments_object": false,
+        "checkpoint": false,
+        "cmd_matches_read": false,
+        "cmd_matches_test": false,
+        "custom_call": false,
+        "exec_command": false,
+        "function_call": false,
+        "known_present_arguments": [],
+        "login_false": false,
+        "max_output_tokens": null,
+        "message": true,
+        "namespace_allowed": true,
+        "output_count": 2,
+        "public_reasoning_present": true,
+        "reasoning": false,
+        "status_completed": true,
+        "step": 5,
+        "unknown_argument_count": null,
+        "workdir_matches": null,
+        "yield_time_ms": null
+      },
+      "transport": {
+        "checkpoint_continuations": 3,
+        "checkpoint_continuations_with_plaintext_assistant_or_tools": 2,
+        "compaction_requests": 1,
+        "context_refusals": 0,
+        "failures": [
+          "E_NATIVE_PROBE_ACTION"
+        ],
+        "first_checkpoint_continuation_with_plaintext_assistant_or_tools": 0,
+        "native_websocket_frames": 0,
+        "websocket_requests": 0
+      },
+      "cleanup_confirmed": true
     }
   ]
 }
