@@ -1,6 +1,13 @@
 Windows x64 preview of cxweb, connecting ChatGPT web models to Codex App and Codex CLI.
 
-This release adds a **Compaction model** selector directly in cxweb. Choose from
+This update fixes an account-verification failure that could occur when ChatGPT
+took more than ten seconds to load its account information. An incomplete read
+now receives one confirmation even after a slow first read. This does not resend
+a message, switch accounts, or bypass a browser verification challenge. Private
+diagnostics distinguish incomplete account information from an observed identity
+mismatch to make any recurrence actionable.
+
+The **Compaction model** selector in cxweb lets you choose from
 the verified WebGPT models and reasoning levels offered by your account. For
 example, the task can stay on Pro while new context summaries use Medium.
 The preference is saved per connection and applies to both Codex App and CLI.
