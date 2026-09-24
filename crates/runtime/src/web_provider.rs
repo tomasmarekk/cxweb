@@ -940,7 +940,7 @@ mod tests {
                 let fragment: Value =
                     serde_json::from_str(fragment["content"].as_str().unwrap()).unwrap();
                 actual.push_str(fragment["source_fragment"].as_str().unwrap());
-                assert_eq!(history.last().unwrap(), &pending);
+                assert!(!history.contains(&pending));
                 if index > 0 {
                     assert!(
                         history[0]["content"]
@@ -962,6 +962,8 @@ mod tests {
                 let mut next = payload.clone();
                 if append {
                     let items = next["input"].as_array_mut().unwrap();
+                    items[2]["call_id"] = json!("new-pending");
+                    items[2]["input"] = json!("new exact pending argument");
                     items.insert(
                         items.len() - 1,
                         json!({"role":"user","content":"Additional current request"}),
@@ -974,7 +976,9 @@ mod tests {
                     identity.native_session.push_str("-different");
                 }
                 let before = browser.sends.load(Ordering::SeqCst);
-                provider
+                let expected_pending = next["input"][2].clone();
+                let verification_identity = identity.clone();
+                let next_response = provider
                     .execute(WebRequest {
                         payload: next,
                         identity: Some(identity),
@@ -985,6 +989,25 @@ mod tests {
                     })
                     .await
                     .unwrap();
+                let next_response: Value = serde_json::from_slice(
+                    &next_response
+                        .into_body()
+                        .collect()
+                        .await
+                        .unwrap()
+                        .to_bytes(),
+                )
+                .unwrap();
+                let mut continuation = json!({"model":"webbridge/test","input":[next_response["output"][0],{"role":"user","content":"Continue"}]});
+                provider
+                    .prepare_payload(&mut continuation, &verification_identity)
+                    .unwrap();
+                assert!(
+                    continuation["input"]
+                        .as_array()
+                        .unwrap()
+                        .contains(&expected_pending)
+                );
                 let sent = browser.sends.load(Ordering::SeqCst) - before;
                 if foreign {
                     assert_eq!(sent, initial_sends);

@@ -68,3 +68,9 @@ Codex executes tools and enforces its normal permissions.
 
 The installer is unsigned. The accompanying SHA-256 file verifies download
 integrity, not publisher identity. This is a preview, not complete V1 qualification.
+
+Native App follow-up messages now remain exact across automatic compaction.
+Completed summary prefixes are reused when only pending tool state changes;
+the final checkpoint attaches exact native call identities and arguments.
+Current tool schemas remain unchanged in continuation and no longer consume
+summary stages. Provider rate limits are still honored.

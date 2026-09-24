@@ -39,7 +39,10 @@ pub(crate) fn needs_compaction(
     // This projected input is NEVER sent to a model or returned as history.
     let retained: Vec<_> = input
         .iter()
-        .filter(|item| matches!(item["role"].as_str(), Some("user" | "developer" | "system")))
+        .filter(|item| {
+            matches!(item["role"].as_str(), Some("user" | "developer" | "system"))
+                || cxweb_codex_adapter::compaction::is_app_context(item)
+        })
         .cloned()
         .collect();
     let mut minimum = payload.clone();

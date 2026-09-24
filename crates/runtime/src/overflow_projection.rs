@@ -15,6 +15,9 @@ pub(crate) fn plan(payload: &Value) -> Result<Projection, &'static str> {
         .filter(|cut| *cut > 0)
         .ok_or("E_CONTEXT_BUDGET")?;
     let latest_user = input.iter().rposition(|item| item["role"] == "user");
+    let latest_delegation = input
+        .iter()
+        .rposition(cxweb_codex_adapter::compaction::is_app_context);
     let mut compact = payload.clone();
     let mut history = input[..cut].to_vec();
     history.push(json!({"type":"compaction_trigger"}));
@@ -28,6 +31,7 @@ pub(crate) fn plan(payload: &Value) -> Result<Projection, &'static str> {
         .filter(|(index, item)| {
             matches!(item["role"].as_str(), Some("system" | "developer"))
                 || Some(*index) == latest_user
+                || Some(*index) == latest_delegation
         })
         .map(|(_, item)| item.clone())
         .collect();
@@ -46,6 +50,21 @@ pub(crate) fn plan(payload: &Value) -> Result<Projection, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn latest_native_delegation_remains_exact_after_tool_rounds() {
+        let delegation = json!({"type":"function_call_output","namespace":"codex_app","name":"send_message_to_thread","output":"New follow-up request"});
+        let payload = json!({"input":[
+            {"role":"user","content":"Original task"},
+            delegation,
+            {"type":"function_call","call_id":"a","name":"read","arguments":"{}"},
+            {"type":"function_call_output","call_id":"a","output":"Result"}
+        ]});
+        let projection = plan(&payload).unwrap();
+        assert_eq!(projection.continuation["input"][1], delegation);
+        assert_eq!(projection.continuation["input"][3], payload["input"][3]);
+        assert_eq!(projection.checkpoint_index, 2);
+    }
 
     #[test]
     fn projection_keeps_policies_current_user_and_latest_tool_result_exact() {

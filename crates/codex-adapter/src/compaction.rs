@@ -80,7 +80,7 @@ impl Summary {
 }
 
 /// Observed Codex App context, not a receipt for an executed tool call.
-pub(crate) fn is_app_context(item: &Value) -> bool {
+pub fn is_app_context(item: &Value) -> bool {
     item["type"] == "function_call_output"
         && item.get("call_id").is_none()
         && item["namespace"] == "codex_app"
