@@ -638,6 +638,7 @@ mod tests {
         answer_bytes: AtomicUsize,
         mismatched_effort: std::sync::atomic::AtomicBool,
         uncertain_submission: std::sync::atomic::AtomicBool,
+        rate_limit_after: AtomicUsize,
         fixture_call: Mutex<Option<Value>>,
     }
     impl BrowserDriver for Browser {
@@ -703,6 +704,9 @@ mod tests {
         }
         fn observe(&self, _: String) -> BrowserFuture<Observation> {
             self.observing.notify_one();
+            if self.sends.load(Ordering::SeqCst) > self.rate_limit_after.load(Ordering::SeqCst) {
+                return Box::pin(async { Err("E_BROWSER_RATE_LIMITED") });
+            }
             let nonce = self.nonce.lock().unwrap().clone();
             let text = if let Some(input) = self.fixture_call.lock().unwrap().clone() {
                 let prompt = self.prompt.lock().unwrap();
@@ -760,6 +764,7 @@ mod tests {
             answer_bytes: AtomicUsize::new(0),
             mismatched_effort: std::sync::atomic::AtomicBool::new(false),
             uncertain_submission: std::sync::atomic::AtomicBool::new(false),
+            rate_limit_after: AtomicUsize::new(usize::MAX),
             fixture_call: Mutex::new(None),
         });
         let coordinator = Coordinator::new(Ledger::in_memory(), browser.clone());
@@ -1018,6 +1023,64 @@ mod tests {
                 }
             }
         }
+        std::fs::remove_file(directory.join("checkpoint-key.dpapi")).unwrap();
+        std::fs::remove_dir(directory).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn interrupted_stages_reuse_only_completed_prefixes_on_a_new_request() {
+        let directory = std::env::temp_dir().join(format!(
+            "cxweb-rate-recovery-{:032x}",
+            rand::random::<u128>()
+        ));
+        cxweb_platform::state::protected_directory(&directory).unwrap();
+        let (provider, browser) = provider_fixture(false);
+        let provider = provider.with_installed_context(&directory).await.unwrap();
+        let pending = json!({"type":"custom_tool_call","call_id":"pending","name":"apply_patch","input":"exact pending argument"});
+        let payload = json!({"model":"webbridge/test","input":[{"role":"user","content":"Preserve current goal"},
+            {"role":"assistant","content":"ordered source fragment ".repeat(30_000)},pending,{"type":"compaction_trigger"}]});
+        let make = |turn: &str| {
+            let (parts, _) = request("http://127.0.0.1:12345", turn, "window", false).into_parts();
+            WebRequest {
+                payload: payload.clone(),
+                identity: WebIdentity::from_headers(&parts.headers),
+                compact: false,
+                cancellation: tokio_util::sync::CancellationToken::new(),
+                transport: crate::gateway::WebTransport::Http,
+                progress: None,
+            }
+        };
+        browser.rate_limit_after.store(2, Ordering::SeqCst);
+        assert_eq!(
+            provider.execute(make("interrupted")).await.err(),
+            Some("E_BROWSER_RATE_LIMITED")
+        );
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 3);
+        let completed = browser.prompts.lock().unwrap()[..2].to_vec();
+        // Clearing the synthetic service restriction cannot authorize resending
+        // the same failed request. Only an explicit new native request can resume.
+        browser.rate_limit_after.store(usize::MAX, Ordering::SeqCst);
+        assert!(provider.execute(make("interrupted")).await.is_err());
+        assert_eq!(browser.sends.load(Ordering::SeqCst), 3);
+        let verification_identity = make("new-request").identity.unwrap();
+        let response = provider.execute(make("new-request")).await.unwrap();
+        let response: Value =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        let mut continuation = json!({"model":"webbridge/test","input":[response["output"][0],{"role":"user","content":"Continue"}]});
+        provider
+            .prepare_payload(&mut continuation, &verification_identity)
+            .unwrap();
+        assert!(continuation["input"].as_array().unwrap().contains(&pending));
+        let prompts = browser.prompts.lock().unwrap().clone();
+        for prefix in completed {
+            assert_eq!(
+                prompts.iter().filter(|prompt| **prompt == prefix).count(),
+                1
+            );
+        }
+        assert!(prompts.len() > 3);
         std::fs::remove_file(directory.join("checkpoint-key.dpapi")).unwrap();
         std::fs::remove_dir(directory).unwrap();
     }
