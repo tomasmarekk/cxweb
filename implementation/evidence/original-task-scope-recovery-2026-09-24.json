@@ -1,0 +1,139 @@
+{
+  "schema": "cxweb.original-task-scope-recovery.v1",
+  "date": "2026-09-24",
+  "thread_id": "01a0d008-3ab7-7542-8d84-0fe6362657a4",
+  "turn_id": "01a0d1ea-6f07-7ec3-b30d-dbbac4d6538a",
+  "native_turn_status": "completed",
+  "native_turn_error": null,
+  "duration_ms": 804195,
+  "expected_marker_verified": true,
+  "goal_recall_verified": true,
+  "task_effort": "max",
+  "compaction_effort": "medium",
+  "requests": [
+    {
+      "created_at": "2026-09-24 05:36:37",
+      "state": "\"completed\"",
+      "attempts": 1,
+      "result_code": "OK",
+      "updated_at": "2026-09-24 05:37:23",
+      "checkpoint": 1
+    },
+    {
+      "created_at": "2026-09-24 05:37:23",
+      "state": "\"completed\"",
+      "attempts": 1,
+      "result_code": "OK",
+      "updated_at": "2026-09-24 05:38:51",
+      "checkpoint": 1
+    },
+    {
+      "created_at": "2026-09-24 05:38:51",
+      "state": "\"completed\"",
+      "attempts": 1,
+      "result_code": "OK",
+      "updated_at": "2026-09-24 05:40:40",
+      "checkpoint": 1
+    },
+    {
+      "created_at": "2026-09-24 05:40:40",
+      "state": "\"completed\"",
+      "attempts": 1,
+      "result_code": "OK",
+      "updated_at": "2026-09-24 05:42:51",
+      "checkpoint": 1
+    },
+    {
+      "created_at": "2026-09-24 05:42:51",
+      "state": "\"completed\"",
+      "attempts": 1,
+      "result_code": "OK",
+      "updated_at": "2026-09-24 05:44:58",
+      "checkpoint": 1
+    },
+    {
+      "created_at": "2026-09-24 05:44:58",
+      "state": "\"completed\"",
+      "attempts": 1,
+      "result_code": "OK",
+      "updated_at": "2026-09-24 05:46:59",
+      "checkpoint": 1
+    },
+    {
+      "created_at": "2026-09-24 05:46:59",
+      "state": "\"completed\"",
+      "attempts": 1,
+      "result_code": "OK",
+      "updated_at": "2026-09-24 05:48:59",
+      "checkpoint": 1
+    },
+    {
+      "created_at": "2026-09-24 05:48:59",
+      "state": "\"completed\"",
+      "attempts": 1,
+      "result_code": "OK",
+      "updated_at": "2026-09-24 05:50:01",
+      "checkpoint": 0
+    }
+  ],
+  "original_failure_surface_captured": false,
+  "prior_failure_before_send": true,
+  "three_hour_soak_performed": false,
+  "final_health": {
+    "active_web_turns": 0,
+    "components": {
+      "browser": {
+        "code": null,
+        "evidence": "passive_browser",
+        "observed_at": "2026-09-24T05:50:01.301Z",
+        "state": "healthy"
+      },
+      "codex_app": {
+        "code": null,
+        "evidence": "request_success",
+        "observed_at": "2026-09-24T05:50:01.301Z",
+        "state": "healthy"
+      },
+      "codex_cli": {
+        "code": null,
+        "evidence": "client_handshake",
+        "observed_at": "2026-09-24T05:49:58.277Z",
+        "state": "healthy"
+      },
+      "config": {
+        "code": null,
+        "evidence": "local_probe",
+        "observed_at": "2026-09-24T05:53:09.012Z",
+        "state": "healthy"
+      },
+      "native_upstream": {
+        "code": null,
+        "evidence": "local_probe",
+        "observed_at": "2026-09-24T05:50:04.736Z",
+        "state": "healthy"
+      },
+      "runtime": {
+        "code": null,
+        "evidence": "local_probe",
+        "observed_at": "2026-09-24T05:53:09.012Z",
+        "state": "healthy"
+      },
+      "web_auth": {
+        "code": null,
+        "evidence": "passive_browser",
+        "observed_at": "2026-09-24T05:50:01.301Z",
+        "state": "healthy"
+      },
+      "web_models": {
+        "code": null,
+        "evidence": "passive_browser",
+        "observed_at": "2026-09-24T05:50:01.301Z",
+        "state": "healthy"
+      }
+    },
+    "overall": "ready",
+    "revision": 80,
+    "schema_version": "webbridge.health.v1",
+    "suggested_action": "none"
+  }
+}
