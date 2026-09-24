@@ -65,6 +65,16 @@
         "websocket_requests": 0
       },
       "cleanup_confirmed": true
+    },
+    {
+      "kind": "native-app-websocket-private-diagnostic",
+      "result": "E_NATIVE_PROBE_ACTION",
+      "rejected_step": 4,
+      "rejected_action": "dependent_patch_and_test_batched_before_patch_result",
+      "compaction_requests": 1,
+      "checkpoint_recall_verified": true,
+      "post_compaction_test_verified": false,
+      "cleanup_confirmed": true
     }
   ]
 }
